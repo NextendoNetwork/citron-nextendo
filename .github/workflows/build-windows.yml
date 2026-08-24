@@ -1,0 +1,219 @@
+name: Build Citron (Windows)
+
+concurrency:
+  group: build-windows-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  check-version:
+    name: Check if new version available
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.compare.outputs.should_build }}
+      new_hash: ${{ steps.head.outputs.hash_short }}
+      new_hash_full: ${{ steps.head.outputs.hash_full }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get current commit hash
+        id: head
+        run: |
+          echo "hash_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "hash_full=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+      - name: Get last built version
+        id: last_built
+        run: |
+          LAST_HASH=$(cat LATEST_VERSION | tr -d '\n' || echo "none")
+          echo "last_hash=$LAST_HASH" >> $GITHUB_OUTPUT
+      - name: Check if release exists
+        id: release_check
+        run: |
+          if gh release view nightly-windows --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+      - name: Compare versions
+        id: compare
+        run: |
+          if [ "${{ steps.head.outputs.hash_short }}" != "${{ steps.last_built.outputs.last_hash }}" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          elif [ "${{ steps.release_check.outputs.exists }}" != "true" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-clangtron:
+    name: "Citron Build (Windows clang-cl - x64)"
+    needs: [check-version]
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 240
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Get Version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(git rev-parse --short HEAD)
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+
+      # windows-latest ships VS2022 without the clang-cl component by default -- add it via
+      # the already-installed VS instance's own installer, matching what a fresh local
+      # "Desktop development with C++" + "C++ Clang Compiler for Windows" install gives you.
+      - name: Add clang-cl component to Visual Studio
+        shell: powershell
+        run: |
+          $vsInstaller = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -property installationPath
+          & $vsInstaller modify --installPath "$vsPath" --add Microsoft.VisualStudio.Component.VC.Llvm.Clang --quiet --norestart --wait
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { throw "VS modify failed with exit code $LASTEXITCODE" }
+
+      - name: Setup MSYS2 (CLANG64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: true
+          install: >-
+            mingw-w64-clang-x86_64-ninja
+            mingw-w64-clang-x86_64-nasm
+            mingw-w64-clang-x86_64-glslang
+            mingw-w64-clang-x86_64-sccache
+
+      - name: Setup native Windows Python
+        uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: "3.12"
+
+      - name: Verify Strawberry Perl is present
+        shell: bash
+        run: |
+          test -x "/c/Strawberry/perl/bin/perl.exe" || {
+            echo "::error::Strawberry Perl not found at the expected windows-latest image path."
+            exit 1
+          }
+
+      - name: Cache CPM sources (includes Qt/FFmpeg/OpenSSL)
+        uses: actions/cache@v4
+        with:
+          path: D:/a/_temp/msys64/home/**/.cache/cpm
+          key: clangcl-cpm-${{ runner.os }}-${{ hashFiles('CMakeModules/dependencies.cmake', 'vcpkg.json', 'build-clangtron-windows.sh') }}
+          restore-keys: |
+            clangcl-cpm-${{ runner.os }}-
+
+      - name: Setup Clangtron Build Environment
+        shell: "msys2 {0}"
+        run: |
+          chmod +x build-clangtron-windows.sh
+          PYTHON_EXECUTABLE="$(cygpath -u '${{ steps.python.outputs.python-path }}')" \
+            ./build-clangtron-windows.sh setup --compiler clang-cl
+
+      - name: Build Citron (clang-cl)
+        shell: "msys2 {0}"
+        env:
+          MSYSTEM: CLANG64
+        run: |
+          export CITRON_BUILD_TYPE=Nightly
+          export PYTHON_EXECUTABLE="$(cygpath -u '${{ steps.python.outputs.python-path }}')"
+          ./build-clangtron-windows.sh use --compiler clang-cl --pgo none --lto none
+
+      - name: Package Windows Build (clang-cl)
+        shell: bash
+        run: |
+          mkdir -p dist
+          BIN_DIR="./build/clang-cl/use"
+          if [ ! -d "$BIN_DIR" ]; then
+            echo "::error::Build output not found at $BIN_DIR"
+            exit 1
+          fi
+          cd "$BIN_DIR"
+          rm -rf user backup update_result.txt update_helper_log.txt
+          7z a -tzip "${GITHUB_WORKSPACE}/dist/Citron-windows-nightly-${{ steps.version.outputs.VERSION }}-x64-clangcl.zip" .
+
+      - name: Upload Windows Build (clang-cl)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Citron-Windows-Nightly-ClangCL-x64
+          path: "dist/*.zip"
+
+  release:
+    if: ${{ github.ref_name == 'main' }}
+    name: "Release"
+    needs: [check-version, build-clangtron]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: Citron-Windows-Nightly-ClangCL-x64
+          path: ./release-artifacts
+      - name: Get Version from Filename
+        shell: bash
+        run: |
+          FILENAME=$(basename "$(ls ./release-artifacts/Citron-windows-nightly-*-x64-clangcl.zip)")
+          VERSION=${FILENAME#Citron-windows-nightly-}
+          VERSION=${VERSION%-x64-clangcl.zip}
+          echo "APP_VERSION=${VERSION}" >> $GITHUB_ENV
+      - name: Delete Previous Release
+        run: gh release delete "nightly-windows" --repo "${{ github.repository }}" --cleanup-tag -y || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set Build Date
+        run: echo "BUILD_DATE=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+      - name: Release Artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Continuous Build (Windows Nightly: ${{ env.APP_VERSION }})"
+          tag_name: "nightly-windows"
+          prerelease: false
+          files: |
+            release-artifacts/*-x64-clangcl.zip
+          body: |
+            **Citron Commit:** [`${{ needs.check-version.outputs.new_hash }}`](https://github.com/${{ github.repository }}/commit/${{ needs.check-version.outputs.new_hash_full }})
+
+            **Build Details:**
+            - Platform: Windows (x64)
+            - Toolchain: clang-cl (native Windows, CPM dependencies)
+            - Build Type: Nightly
+            - Date: ${{ env.BUILD_DATE }}
+      - name: Update LATEST_VERSION
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo "${{ env.APP_VERSION }}" > LATEST_VERSION
+          git add LATEST_VERSION
+          git commit -m "Update LATEST_VERSION to ${{ env.APP_VERSION }} [skip ci]" || exit 0
+          for i in {1..5}; do
+            git pull --rebase origin main && git push && break || sleep 2
+          done
+
+      - name: Post to Discord
+        if: success()
+        run: |
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/tag/nightly-windows"
+          DATE=$(date +'%Y-%m-%d')
+          WEBHOOK_URL="${{ secrets.DISCORD_WEBHOOK }}"
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "DISCORD_WEBHOOK is not set; skipping Discord notification."
+            exit 0
+          fi
+          curl -H "Content-Type: application/json" \
+               -d "{\"content\":\"🪟 **New Windows Build Available!**\n\n📦 **Version:** \`${{ env.APP_VERSION }}\`\n📅 **Date:** ${DATE}\n🔧 **Toolchain:** clang-cl (native)\n🔗 **Download:** $DOWNLOAD_URL\"}" \
+               "$WEBHOOK_URL"

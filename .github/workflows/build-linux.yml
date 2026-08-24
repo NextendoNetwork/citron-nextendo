@@ -1,0 +1,204 @@
+name: Build Citron (Linux)
+
+concurrency:
+  group: build-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  check-version:
+    name: Check if new version available
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.compare.outputs.should_build }}
+      new_hash: ${{ steps.head.outputs.hash_short }}
+      new_hash_full: ${{ steps.head.outputs.hash_full }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get current commit hash
+        id: head
+        run: |
+          echo "hash_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "hash_full=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Get last built version
+        id: last_built
+        run: |
+          LAST_HASH=$(cat LATEST_VERSION 2>/dev/null | tr -d '\n' || echo "none")
+          echo "last_hash=$LAST_HASH" >> $GITHUB_OUTPUT
+          echo "Last built hash: $LAST_HASH"
+
+      - name: Check if release exists
+        id: release_check
+        run: |
+          if gh release view nightly-linux --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Release exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Release does not exist"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Compare versions
+        id: compare
+        run: |
+          if [ "${{ steps.head.outputs.hash_short }}" != "${{ steps.last_built.outputs.last_hash }}" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "✅ New version detected - will build"
+          elif [ "${{ steps.release_check.outputs.exists }}" != "true" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "✅ No release exists - will build"
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "⏭️ No changes - skipping build"
+          fi
+
+  build:
+    name: "${{ matrix.name }}"
+    needs: [check-version]
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "Citron Build (Normal x86_64)"
+            os: ubuntu-latest
+            artifact_suffix: "_x86_64"
+            script_suffix: ""
+            build_arg: ""
+          - name: "Citron Build (Optimized x86_64)"
+            os: ubuntu-latest
+            artifact_suffix: "_v3"
+            script_suffix: "_v3"
+            build_arg: "v3"
+          - name: "Citron Build (aarch64)"
+            os: ubuntu-24.04-arm
+            artifact_suffix: "_aarch64"
+            script_suffix: ""
+            build_arg: ""
+
+    container: ghcr.io/pkgforge-dev/archlinux:latest
+
+    steps:
+      - name: Install Git
+        run: pacman -Syu --noconfirm --needed git
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Add Git Safe Directory
+        run: git config --global --add safe.directory "$PWD"
+
+      - name: Install dependencies
+        run: chmod +x ./get-dependencies.sh && ./get-dependencies.sh
+
+      - name: Build Citron from source
+        run: |
+          NPROC_VAL=$(nproc --all)
+          JOBS_VAL=$((NPROC_VAL > 4 ? 4 : NPROC_VAL))
+          chmod +x ./build-citron.sh
+          JOBS=${JOBS_VAL} DEVEL=false ./build-citron.sh ${{ matrix.build_arg }}
+
+      - name: Package AppImage with Correct Name
+        run: |
+          GIT_SHA=$(git rev-parse --short HEAD)
+          export APP_VERSION="${GIT_SHA}"
+          export VERSION="${GIT_SHA}"
+          export ARCH_SUFFIX="${{ matrix.script_suffix }}"
+          export DEVEL="false"
+          chmod +x ./package-citron.sh
+          ./package-citron.sh
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Artifacts${{ matrix.artifact_suffix }}
+          path: dist/
+
+  release:
+    if: ${{ github.ref_name == 'main' }}
+    name: "release"
+    needs: [check-version, build]
+    permissions:
+      actions: read
+      security-events: write
+      contents: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set Version
+        id: version
+        run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Artifacts*
+          merge-multiple: true
+          path: .
+
+      - name: Del Previous Release
+        run: gh release delete "nightly-linux" --repo "${GITHUB_REPOSITORY}" --cleanup-tag -y && sleep 5
+        env:
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        continue-on-error: true
+
+      - name: Set Build Date
+        run: echo "BUILD_DATE=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: "Continuous Build (Linux Nightly: ${{ steps.version.outputs.sha }})"
+          tag_name: "nightly-linux"
+          prerelease: false
+          draft: false
+          generate_release_notes: false
+          make_latest: false
+          files: |
+            *.AppImage*
+            *.tar.zst
+          body: |
+            **Citron Commit:** [`${{ needs.check-version.outputs.new_hash }}`](https://github.com/${{ github.repository }}/commit/${{ needs.check-version.outputs.new_hash_full }})
+
+            **Build Details:**
+            - Platform: Linux (x86_64, x86_64_v3, aarch64)
+            - Format: AppImage + tar.zst packages
+            - Build Type: Release with optimizations
+            - Date: ${{ env.BUILD_DATE }}
+
+      - name: Update LATEST_VERSION
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo "${{ steps.version.outputs.sha }}" > LATEST_VERSION
+          git add LATEST_VERSION
+          git commit -m "Update LATEST_VERSION to ${{ steps.version.outputs.sha }} [skip ci]" || exit 0
+          for i in {1..5}; do
+            git pull --rebase origin main && git push && break || sleep 2
+          done
+
+      - name: Post to Discord
+        if: success()
+        run: |
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/tag/nightly-linux"
+          DATE=$(date +'%Y-%m-%d')
+          WEBHOOK_URL="${{ secrets.DISCORD_WEBHOOK }}"
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "DISCORD_WEBHOOK is not set; skipping Discord notification."
+            exit 0
+          fi
+          curl -H "Content-Type: application/json" \
+               -d "{\"content\":\"🐧 **New Linux Build Available!**\n\n📦 **Version:** \`${{ steps.version.outputs.sha }}\`\n📅 **Date:** ${DATE}\n🔗 **Download:** $DOWNLOAD_URL\n\n✨ Includes x86_64, x86_64_v3 & aarch64 builds!\"}" \
+               "$WEBHOOK_URL"
