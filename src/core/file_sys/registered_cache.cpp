@@ -1249,9 +1249,18 @@ void ExternalContentProvider::Refresh() {
     }
 }
 
-void ExternalContentProvider::ScanDirectory(const VirtualDir& dir) {
+void ExternalContentProvider::ScanDirectory(const VirtualDir& dir, size_t depth) {
     if (dir == nullptr)
         return;
+
+    // Real-world external content folders can contain junctions/symlinks the VFS layer has no
+    // way to detect as such -- a link back to an ancestor would recurse forever without a cap.
+    static constexpr size_t MaxScanDepth = 16;
+    if (depth >= MaxScanDepth) {
+        LOG_WARNING(Service_FS, "Directory nesting exceeds {} levels, not scanning further: {}",
+                    MaxScanDepth, dir->GetFullPath());
+        return;
+    }
 
     LOG_INFO(Service_FS, "Scanning directory: {}", dir->GetFullPath());
 
@@ -1267,7 +1276,12 @@ void ExternalContentProvider::ScanDirectory(const VirtualDir& dir) {
     }
 
     for (const auto& subdir : dir->GetSubdirectories()) {
-        ScanDirectory(subdir);
+        try {
+            ScanDirectory(subdir, depth + 1);
+        } catch (const std::exception& e) {
+            LOG_ERROR(Service_FS, "Skipping unreadable subdirectory '{}': {}", subdir->GetName(),
+                      e.what());
+        }
     }
 }
 

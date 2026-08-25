@@ -323,7 +323,7 @@ public:
     bool HasMultipleVersions(u64 title_id, ContentRecordType type) const;
 
 private:
-    void ScanDirectory(const VirtualDir& dir);
+    void ScanDirectory(const VirtualDir& dir, size_t depth = 0);
     void ProcessNSP(const VirtualFile& file);
     void ProcessXCI(const VirtualFile& file);
 
