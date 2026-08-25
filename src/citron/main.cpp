@@ -169,6 +169,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "citron/nextendo_population_dialog.h"
 #include "citron/nextendo_controller.h"
 #include "citron/nextendo_online_counts.h"
+#include "citron/nzp_online_count.h"
 #include "citron/nextendo_population_history.h"
 #include "citron/nextendo_save_sync.h"
 #include "citron/nextendo_toast.h"
@@ -1302,6 +1303,7 @@ void GMainWindow::InitializeWidgets() {
     nextendo_controller = new NextendoController(*system, this, this);
     nextendo_toast = new NextendoToast(this);
     Nextendo::OnlineCounts::Start(this);
+    Nextendo::NzpOnlineCount::Start(this);
     Nextendo::PopulationHistory::Start(this);
 
     // Create status bar

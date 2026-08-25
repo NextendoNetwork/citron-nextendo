@@ -35,7 +35,9 @@
 
 #include "audio_core/audio_core.h"
 #include "common/fs/fs.h"
+#include "common/fs/path_util.h"
 #include "common/logging.h"
+#include "common/nextendo_account.h"
 #include "common/settings.h"
 #include "common/settings_enums.h"
 #include "common/string_util.h"
@@ -448,6 +450,9 @@ struct System::Impl {
             game_info.version = title_version;
             room_member->SendGameInfo(game_info);
         }
+
+        Common::NextendoAccount::WriteGuestBridge(
+            Common::FS::GetCitronPath(Common::FS::CitronPath::SDMCDir));
 
         status = SystemResultStatus::Success;
         return status;

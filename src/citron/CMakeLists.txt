@@ -292,6 +292,8 @@ add_executable(citron
     nextendo_population_dialog.h
     nextendo_population_history.cpp
     nextendo_population_history.h
+    nzp_online_count.cpp
+    nzp_online_count.h
     nextendo_save_sync.cpp
     nextendo_save_sync.h
     nextendo_toast.cpp

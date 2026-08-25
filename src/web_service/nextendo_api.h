@@ -149,6 +149,9 @@ std::string HashBcatSeedHex(const std::vector<u8>& data);
 // Public, unauthenticated. Maps lowercase-hex title id -> currently connected player count.
 std::map<std::string, int> GetOnlineCounts();
 
+// Public, unauthenticated. Total players in Nazi Zombies Portable's own nextendo-nzp server.
+int GetNzpOnlineCount();
+
 // Downloads this title's cloud save. title_id_hex is 16 hex digits. nullopt when there is no
 // cloud save stored yet, the account can't use cloud saves (guest), or the request failed.
 std::optional<std::vector<u8>> PullSave(const std::string& title_id_hex);

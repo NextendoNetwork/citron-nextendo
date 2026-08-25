@@ -134,4 +134,20 @@ void Clear() {
     void(FS::RemoveFile(FilePath()));
 }
 
+void WriteGuestBridge(const std::filesystem::path& sdmc_root) {
+    std::lock_guard lock{g_mutex};
+    EnsureLoaded();
+
+    const auto bridge_path = sdmc_root / "config" / "nextendo" / "session.txt";
+    if (g_pid == 0) {
+        void(FS::RemoveFile(bridge_path)); // not linked -- clear any stale bridge
+        return;
+    }
+
+    void(FS::CreateParentDirs(bridge_path));
+    const std::string contents =
+        fmt::format("pid={}\nusername={}\ntoken={}\n", g_pid, g_username, g_token);
+    void(FS::WriteStringToFile(bridge_path, FS::FileType::TextFile, contents));
+}
+
 } // namespace Common::NextendoAccount

@@ -574,6 +574,28 @@ std::map<std::string, int> GetOnlineCounts() {
     return out;
 }
 
+int GetNzpOnlineCount() {
+    const char* env = std::getenv("NZP_API"); // test VPS by default
+    const std::string base_url = (env && *env) ? env : "http://144.202.45.50:8090";
+
+    httplib::Client client{base_url};
+    client.set_connection_timeout(3);
+    client.set_read_timeout(3);
+    const auto result = client.Get("/online-count");
+    if (!result || result->status != 200) {
+        return 0;
+    }
+    try {
+        const auto json = nlohmann::json::parse(result->body);
+        if (const auto it = json.find("count"); it != json.end() && it->is_number_integer()) {
+            return it->get<int>();
+        }
+    } catch (const nlohmann::json::exception& e) {
+        LOG_WARNING(WebService, "Unexpected nzp online-count response: {}", e.what());
+    }
+    return 0;
+}
+
 Profile GetProfile() {
     Profile out;
 

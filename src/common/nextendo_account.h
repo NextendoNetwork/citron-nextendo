@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <filesystem>
 #include <string>
 #include "common/common_types.h"
 
@@ -27,5 +28,9 @@ u64 GetGeneration();
 void Save(u64 pid, std::string_view username, std::string_view friend_code,
           std::string_view token);
 void Clear();
+
+// Mirrors the link state onto the guest SD card (sdmc_root/config/nextendo/session.txt) so
+// homebrew can read its signed-in identity with a plain fopen(), no BAAS id_token needed.
+void WriteGuestBridge(const std::filesystem::path& sdmc_root);
 
 } // namespace Common::NextendoAccount

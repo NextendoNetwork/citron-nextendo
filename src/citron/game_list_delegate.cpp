@@ -38,6 +38,7 @@
 #include "citron/game_list_p.h"
 #include "common/nextendo_compatible_titles.h"
 #include "citron/nextendo_online_counts.h"
+#include "citron/nzp_online_count.h"
 #include "citron/uisettings.h"
 #include "citron/util/image_cache.h"
 #include "common/nextendo_account.h"
@@ -854,18 +855,31 @@ void GameListDelegate::PaintOnline(QPainter* painter, const QRect& rect,
     const u64 program_id = name_index.data(GameListItemPath::ProgramIdRole).toULongLong();
     const auto& table = Nextendo::CompatibleTitles::Table();
     const bool tracked = table.find(program_id) != table.end();
+    // NZP is homebrew: no real title ID, so match it by NACP title string instead.
+    const bool is_nzp =
+        name_index.data(GameListItemPath::TitleRole).toString() == QStringLiteral("Nazi Zombies Portable");
 
-    if (!tracked) {
+    if (!tracked && !is_nzp) {
         // Not a Nextendo title: nothing to add, keep the plain LDN text exactly as before.
         PaintDefault(painter, rect, option, index);
         return;
     }
 
-    const std::string installed_version =
-        name_index.data(GameListItemPath::VersionRole).toString().toStdString();
-    const int players = Nextendo::OnlineCounts::For(program_id);
-    const bool needs_update =
-        !Nextendo::CompatibleTitles::IsVersionOk(program_id, installed_version);
+    int players = 0;
+    bool needs_update = false;
+    QString version_pill_text;
+    if (is_nzp) {
+        players = Nextendo::NzpOnlineCount::Get();
+        version_pill_text = tr("Latest");
+    } else {
+        const std::string installed_version =
+            name_index.data(GameListItemPath::VersionRole).toString().toStdString();
+        players = Nextendo::OnlineCounts::For(program_id);
+        needs_update = !Nextendo::CompatibleTitles::IsVersionOk(program_id, installed_version);
+        if (needs_update) {
+            version_pill_text = tr("Requires %1").arg(QString::fromStdString(table.at(program_id)));
+        }
+    }
 
     const int margin = 10;
     const int pill_h = 20;
@@ -899,9 +913,8 @@ void GameListDelegate::PaintOnline(QPainter* painter, const QRect& rect,
 
     int x = rect.left() + margin;
     x = draw_pill(x, pill_y, tr("Nextendo: %1 online").arg(players), QColor(50, 195, 85));
-    if (needs_update) {
-        const QString required_version = QString::fromStdString(table.at(program_id));
-        draw_pill(x, pill_y, tr("Requires %1").arg(required_version), QColor(0, 190, 255));
+    if (is_nzp || needs_update) {
+        draw_pill(x, pill_y, version_pill_text, QColor(0, 190, 255));
     }
 
     const int ldn_y = pill_y + pill_h + gap;
