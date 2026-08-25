@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <chrono>
-#include <future>
 #include <mutex>
 #include <string_view>
 #include <thread>
@@ -82,30 +81,6 @@ static std::string GetConfiguredIp(const std::string& setting, const char* env_v
     return "127.0.0.1";
 }
 
-// [Nextendo] Resolves `host` on a detached worker and waits at most `timeout_ms` for it. The
-// Tennis GeoDNS delegation only has one nameserver behind it -- if that box is unreachable, a
-// plain getaddrinfo() here would block bsdsocket (single-threaded, see sockets.cpp) for however
-// long the OS resolver takes to give up, stalling every socket call in the game, not just
-// Tennis's. On timeout the worker thread is abandoned (detached) rather than joined; its result
-// is simply discarded when it eventually finishes.
-static std::optional<std::string> ResolveWithTimeout(const std::string& host, int timeout_ms) {
-    auto promise = std::make_shared<std::promise<std::optional<std::string>>>();
-    std::future<std::optional<std::string>> future = promise->get_future();
-    std::thread([host, promise] {
-        auto res = Network::GetAddressInfo(host, std::nullopt);
-        if (res.has_value() && !res.value().empty()) {
-            promise->set_value(Network::IPv4AddressToString(res.value().front().addr.ip));
-        } else {
-            promise->set_value(std::nullopt);
-        }
-    }).detach();
-
-    if (future.wait_for(std::chrono::milliseconds(timeout_ms)) != std::future_status::ready) {
-        return std::nullopt;
-    }
-    return future.get();
-}
-
 static std::optional<std::string> GetNextendoRedirectIp(const std::string& host) {
     if (!Settings::values.enable_nextendo.GetValue()) {
         return std::nullopt;
@@ -119,32 +94,6 @@ static std::optional<std::string> GetNextendoRedirectIp(const std::string& host)
     if (host.starts_with("nncs2-") && host.ends_with(".n.n.srv.nintendo.net")) {
         LOG_INFO(Service, "[Nextendo] Redirecting NAT check host '{}' -> '{}'", host, nat_ip);
         return nat_ip;
-    }
-
-    // [Nextendo] Mario Tennis Aces (NEX server id g23932a00) resolves through a real GeoDNS
-    // hostname instead of the fixed server_ip, so players get routed to whichever of the two
-    // live Tennis nodes is actually closest to them. Gated on server_ip still being the default:
-    // a player who pointed nextendo_server_ip at their own private server must not have Tennis
-    // silently pulled onto our nodes instead (caught by Kazu reviewing the Ryujinx port -- same
-    // bug existed here). NEXTENDO_TENNIS_GEODNS=0 disables this outright. On resolution
-    // failure/timeout this falls through to the normal fixed-IP redirect below rather than
-    // failing the connection.
-    const char* tennis_geodns_env = std::getenv("NEXTENDO_TENNIS_GEODNS");
-    const bool tennis_geodns_disabled = tennis_geodns_env && std::string_view(tennis_geodns_env) == "0";
-    const bool using_official_server = server_ip == Settings::values.nextendo_server_ip.GetDefault();
-    if (using_official_server && !tennis_geodns_disabled &&
-        Common::ToLower(host).find("g23932a00") != std::string::npos) {
-        static constexpr char TennisGeoHost[] = "tennis-geo.nextendo.network";
-        constexpr int kTennisGeoDnsTimeoutMs = 2000;
-        if (auto resolved = ResolveWithTimeout(TennisGeoHost, kTennisGeoDnsTimeoutMs)) {
-            LOG_INFO(Service, "[Nextendo] Redirecting Tennis host '{}' -> GeoDNS '{}' ({})", host,
-                     TennisGeoHost, *resolved);
-            return resolved;
-        }
-        LOG_WARNING(Service,
-                     "[Nextendo] Tennis GeoDNS '{}' didn't resolve within {}ms, falling back to "
-                     "fixed IP '{}'",
-                     TennisGeoHost, kTennisGeoDnsTimeoutMs, server_ip);
     }
 
     if (host == "nintendo.net" || host.ends_with(".nintendo.net") ||
