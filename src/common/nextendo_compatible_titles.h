@@ -28,6 +28,7 @@ inline const std::unordered_map<u64, std::string>& Table() {
         {0x01009b500007c000, "5.5.1"},  // ARMS
         {0x0100bde00862a000, "3.1.1"},  // Mario Tennis Aces
         {0x0100c2500fc20000, "11.3.0"}, // Splatoon 3
+        {0x01009b90006dc000, "3.0.3"},  // Super Mario Maker 2
     };
     return table;
 }
