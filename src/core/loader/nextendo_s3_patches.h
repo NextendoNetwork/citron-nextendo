@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <string_view>
 #include <vector>
 
 #include "common/common_types.h"
@@ -26,6 +27,19 @@ namespace Loader::NextendoS3Patches {
 // nso must be [NSOHeader][decompressed segment data], the exact same layout
 // PatchManager::PatchNSO expects -- this is designed to run right alongside it in nso.cpp,
 // independent of whether normal mod patches applied.
-std::vector<u8> ApplyIfMatch(const std::array<u8, 0x20>& build_id, std::vector<u8> nso);
+// module_name est le NSO en cours de chargement (« rtld », « main », « sdk »). Il ne sert qu'a
+// savoir s'il faut CRIER quand rien ne correspond : les correctifs visent « main », et un « main »
+// dont l'identifiant de build est inconnu veut dire que le jeu tourne SANS eux — c'est-a-dire avec
+// son epinglage de certificat intact, donc sans aucune chance de se connecter a nos serveurs.
+//
+// Pourquoi ce cri existe : le 2026-08-25, Splatoon 3 demarrait sur l'executable du JEU DE BASE
+// (build 19FE149D…) parce que l'ExeFS de la mise a jour 11.3.0 n'etait pas applique. Aucun des
+// trois builds connus ne correspondait, donc zero correctif — EN SILENCE. Le jeu terminait son TLS,
+// refusait le certificat epingle, et abandonnait son propre appel avant d'emettre le moindre
+// HEADERS : un RST_STREAM(REFUSED_STREAM) sur un flux jamais ouvert, et l'erreur 2321-4992. Des
+// semaines d'enquete ont cherche la cause dans gRPC-core et dans l'ordonnanceur du noyau. Une seule
+// ligne d'avertissement ici aurait suffi a l'eviter.
+std::vector<u8> ApplyIfMatch(const std::array<u8, 0x20>& build_id, std::vector<u8> nso,
+                             std::string_view module_name);
 
 } // namespace Loader::NextendoS3Patches

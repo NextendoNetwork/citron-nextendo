@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <chrono>
+#include <cstdlib>
 #include <mutex>
 #include <string_view>
 #include <thread>
@@ -81,8 +82,30 @@ static std::string GetConfiguredIp(const std::string& setting, const char* env_v
     return "127.0.0.1";
 }
 
+// [Nextendo] La redirection est-elle active ?
+//
+// Le reglage « enable_nextendo » n'existe QUE dans la facade Qt (src/citron/main.cpp) : la facade
+// SDL (citron_cmd) ne le cable nulle part et le reecrit a sa valeur par defaut, false, au
+// demarrage. Mesure du 2026-08-25 : lance par citron-cmd, Splatoon 3 a resolu
+// « t-dce9377b-lp1.lp1.t.npln.srv.nintendo.net » vers 34.49.112.177 — le VRAI serveur de Nintendo —
+// alors que le fichier de configuration portait bien enable_nextendo=true.
+//
+// On accepte donc aussi une activation par l'environnement, exactement comme GetConfiguredIp le
+// fait deja pour les deux adresses. Une valeur vide, « 0 », « false » ou « no » ne l'active pas.
+static bool RedirectionNextendoActive() {
+    if (Settings::values.enable_nextendo.GetValue()) {
+        return true;
+    }
+    const char* env = std::getenv("NEXTENDO_ENABLE");
+    if (env == nullptr || *env == '\0') {
+        return false;
+    }
+    const std::string v = Common::ToLower(env);
+    return v != "0" && v != "false" && v != "no" && v != "off";
+}
+
 static std::optional<std::string> GetNextendoRedirectIp(const std::string& host) {
-    if (!Settings::values.enable_nextendo.GetValue()) {
+    if (!RedirectionNextendoActive()) {
         return std::nullopt;
     }
 

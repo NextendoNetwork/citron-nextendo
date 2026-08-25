@@ -2452,6 +2452,22 @@ bool GMainWindow::LoadROM(const QString& filename, Service::AM::FrontendAppletPa
         std::make_unique<QtWebBrowser>(*this),               // Web Browser
     });
 
+    // [Nextendo] Rafraichir les caches de contenu AVANT de charger.
+    //
+    // BootGame() appelle game_list->CancelPopulation() un peu plus haut. Quand citron demarre avec
+    // un chemin de jeu en argument, ce peuplement vient a peine de commencer : l'annuler laisse le
+    // cache du NAND UTILISATEUR incomplet, et PatchManager ne trouve alors aucune mise a jour.
+    //
+    // Mesure du 2026-08-25 sur Splatoon 3 : lance depuis la liste, PatchExeFS rapportait
+    // « found_best=true, best_version=2752512 » et le jeu tournait sur l'executable 11.3.0
+    // (build 28C4287A…). Lance avec le meme fichier en argument, il rapportait
+    // « found_best=false, best_update_raw is NULL » et tournait sur celui du JEU DE BASE
+    // (build 19FE149D…) — donc sans les correctifs integres, donc sans en ligne possible.
+    //
+    // Refresh() est idempotent et ne relit que les repertoires enregistres : sur une liste deja
+    // peuplee il ne coute rien.
+    system->GetContentProvider().Refresh();
+
     const Core::SystemResultStatus result{
         system->Load(*render_window, filename.toStdString(), params)};
 

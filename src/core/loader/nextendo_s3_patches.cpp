@@ -73,7 +73,8 @@ std::vector<u8> ApplyOne(std::vector<u8> nso, std::span<const u8> ips_bytes,
 
 } // namespace
 
-std::vector<u8> ApplyIfMatch(const std::array<u8, 0x20>& build_id, std::vector<u8> nso) {
+std::vector<u8> ApplyIfMatch(const std::array<u8, 0x20>& build_id, std::vector<u8> nso,
+                             std::string_view module_name) {
     const auto build_id_raw = Common::HexToString(build_id);
     const auto build_id_hex = build_id_raw.substr(0, build_id_raw.find_last_not_of('0') + 1);
 
@@ -92,6 +93,19 @@ std::vector<u8> ApplyIfMatch(const std::array<u8, 0x20>& build_id, std::vector<u
         LOG_INFO(Loader, "[Nextendo] Splatoon 3: {} built-in patch(es) applied (build {})",
                  applied_count, build_id_hex);
         return nso;
+    }
+
+    // Rien ne correspond. Sur « main », c'est fatal pour l'en ligne : on le dit fort, une fois.
+    if (module_name == "main") {
+        LOG_ERROR(Loader,
+                  "[Nextendo] Splatoon 3 : AUCUN correctif integre pour ce build ({}). L'en ligne "
+                  "NE FONCTIONNERA PAS : l'epinglage de certificat du jeu reste actif, la "
+                  "connexion "
+                  "NPLN echouera en 2321-4992 apres une poignee de main TLS pourtant reussie. "
+                  "Cause la plus frequente : l'ExeFS de la mise a jour n'est pas applique et c'est "
+                  "l'executable du JEU DE BASE qui tourne. Verifiez que la mise a jour est bien "
+                  "installee ET active pour ce titre.",
+                  build_id_hex);
     }
 
     return nso;
