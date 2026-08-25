@@ -1,6 +1,6 @@
 # Citron Neo — Nextendo Network / NZ:P Edition
 
-A fork of the [Citron](https://git.citron-emu.org/citron/emu) with two
+A fork of the [Citron Neo](https://github.com/citron-neo/emulator) with two
 purposes:
 
 1. **Nextendo Network online play** — connect a Nextendo Network account and play supported titles
