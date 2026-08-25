@@ -49,6 +49,7 @@ class QLabel;
 class MultiplayerState;
 class NextendoAccountDialog;
 class NextendoController;
+class NextendoRoomOverlay;
 class NextendoToast;
 class QPushButton;
 class QProgressDialog;
@@ -463,6 +464,15 @@ private:
     NextendoToast* nextendo_toast = nullptr;
     QDialog* nextendo_signin_dialog = nullptr;
     NextendoAccountDialog* nextendo_account_dialog_instance = nullptr;
+    QString pending_chat_invite_room_id;
+    // The room itself lives in this persistent floating overlay (not tied to any
+    // menu/toast click's lifetime), same pattern as multiplayer_room_overlay below
+    // but for Nextendo chat and not gated on emulation running. The launcher
+    // dialog (Create/Join picker) is transient and only shown when not already
+    // in a room.
+    NextendoRoomOverlay* nextendo_room_overlay = nullptr;
+    void OpenNextendoChatWindow(const QString& auto_join_room_id = {}, u64 invite_pid = 0,
+                                const QString& invite_name = {});
     OverlayDialog* shutdown_dialog{};
     PerformanceOverlay* performance_overlay{};
     MultiplayerRoomOverlay* multiplayer_room_overlay{};

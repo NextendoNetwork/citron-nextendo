@@ -265,7 +265,18 @@ add_executable(citron
     nextendo_account_page_p.h
     nextendo_avatar_cache.cpp
     nextendo_avatar_cache.h
+    nextendo_chat_client.cpp
+    nextendo_chat_client.h
+    nextendo_chat_room.cpp
+    nextendo_chat_room.h
+    nextendo_chat_room.ui
+    nextendo_chat_room_member_delegate.cpp
+    nextendo_chat_room_member_delegate.h
+    nextendo_chat_window.cpp
+    nextendo_chat_window.h
     nextendo_controller.cpp
+    nextendo_room_overlay.cpp
+    nextendo_room_overlay.h
     nextendo_controller.h
     nextendo_friend_delegate.cpp
     nextendo_friend_delegate.h

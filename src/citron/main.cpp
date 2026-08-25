@@ -164,6 +164,8 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "citron/loading_screen.h"
 #include "citron/main.h"
 #include "citron/nextendo_account_dialog.h"
+#include "citron/nextendo_chat_window.h"
+#include "citron/nextendo_room_overlay.h"
 #include "citron/nextendo_population_dialog.h"
 #include "citron/nextendo_controller.h"
 #include "citron/nextendo_online_counts.h"
@@ -1349,6 +1351,15 @@ void GMainWindow::InitializeWidgets() {
     multiplayer_room_overlay = new MultiplayerRoomOverlay(this);
     multiplayer_room_overlay->hide();
 
+    nextendo_room_overlay = new NextendoRoomOverlay(this, nextendo_controller);
+    connect(nextendo_room_overlay, &NextendoRoomOverlay::InvitePickerRequested, this, [this] {
+        NextendoAccountDialog dialog(nextendo_controller, *system, this,
+                                     NextendoAccountDialog::kFriendsPage);
+        connect(&dialog, &NextendoAccountDialog::InviteToChatRequested, this,
+                [this](u64 pid, const QString& name) { OpenNextendoChatWindow({}, pid, name); });
+        dialog.exec();
+    });
+
     vram_overlay = new VramOverlay(this);
     vram_overlay->hide();
 
@@ -2044,18 +2055,38 @@ void GMainWindow::ConnectMenuEvents() {
         }
         NextendoAccountDialog dialog(nextendo_controller, *system, this);
         nextendo_account_dialog_instance = &dialog;
+        connect(&dialog, &NextendoAccountDialog::InviteToChatRequested, this,
+                [this](u64 pid, const QString& name) { OpenNextendoChatWindow({}, pid, name); });
         dialog.exec();
         nextendo_account_dialog_instance = nullptr;
     });
     connect(nextendo_toast, &NextendoToast::clicked, this, [this](NextendoToast::Kind kind) {
-        if (kind != NextendoToast::Kind::Request || !Common::NextendoAccount::IsLinked()) {
+        if (!Common::NextendoAccount::IsLinked()) {
             return;
         }
-        NextendoAccountDialog(nextendo_controller, *system, this, NextendoAccountDialog::kFriendsPage)
-            .exec();
+        if (kind == NextendoToast::Kind::Request) {
+            NextendoAccountDialog dialog(nextendo_controller, *system, this,
+                                         NextendoAccountDialog::kFriendsPage);
+            connect(&dialog, &NextendoAccountDialog::InviteToChatRequested, this,
+                    [this](u64 pid, const QString& name) { OpenNextendoChatWindow({}, pid, name); });
+            dialog.exec();
+        } else if (kind == NextendoToast::Kind::ChatRequest) {
+            OpenNextendoChatWindow(pending_chat_invite_room_id);
+        }
     });
     connect(ui->action_Nextendo_Population, &QAction::triggered, this,
             [this] { NextendoPopulationDialog(this).exec(); });
+    // Prototype: no .ui entry yet (still being pitched for real integration), added here
+    // instead of the designer file to keep this easy to pull out later.
+    auto* action_chat_rooms = ui->menu_NexTendo->addAction(tr("Chat Rooms (Prototype)"));
+    connect(action_chat_rooms, &QAction::triggered, this, [this] {
+        if (!Common::NextendoAccount::IsLinked()) {
+            QMessageBox::information(this, tr("Chat Rooms"),
+                                     tr("Sign in to Nextendo Network first."));
+            return;
+        }
+        OpenNextendoChatWindow();
+    });
     connect(ui->action_Nextendo_Sign_In, &QAction::triggered, nextendo_controller,
             &NextendoController::SignIn);
     connect(ui->action_Nextendo_Sign_Out, &QAction::triggered, nextendo_controller,
@@ -2150,6 +2181,31 @@ void GMainWindow::ConnectMenuEvents() {
                 nextendo_toast->Show(tr("Friend Request Sent!"), friend_code, {},
                                      NextendoToast::Kind::RequestSent);
             });
+    connect(nextendo_controller, &NextendoController::ChatInviteReceived, this,
+            [this](const QString& room_id, const QString& room_name, u64 /*from_pid*/,
+                   const QString& from_name) {
+                nextendo_toast->Show(from_name, tr("invited you to \"%1\"").arg(room_name), {},
+                                     NextendoToast::Kind::ChatRequest);
+                pending_chat_invite_room_id = room_id;
+            });
+    connect(nextendo_controller, &NextendoController::ChatInviteSent, this, [this](u64 /*target_pid*/) {
+        nextendo_toast->Show(tr("Chat Invite Sent!"), {}, {}, NextendoToast::Kind::RequestSent);
+    });
+    connect(nextendo_controller, &NextendoController::ChatMemberJoined, this,
+            [this](const QString& /*room_id*/, u64 /*pid*/, const QString& name) {
+                nextendo_toast->Show(name, tr("joined your chat room"), {},
+                                     NextendoToast::Kind::Online);
+            });
+    connect(nextendo_controller, &NextendoController::ChatBanned, this, [this](const QString& reason) {
+        if (nextendo_room_overlay) {
+            nextendo_room_overlay->hide();
+        }
+        QMessageBox::warning(this, tr("Chat Rooms"),
+                             reason.isEmpty()
+                                 ? tr("You have been banned from using this feature.")
+                                 : tr("You have been banned from using this feature.\n\nReason: %1")
+                                       .arg(reason));
+    });
     connect(nextendo_controller, &NextendoController::QuickStartRequested, this, [this](u64 title_id) {
         const QString path = game_list->GetGamePath(title_id);
         if (!path.isEmpty()) {
@@ -2600,7 +2656,9 @@ void GMainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletP
     }
 
     OfferNextendoByamlDownload(title_id);
-    Nextendo::SaveSync::Pull(*system, title_id);
+    if (Settings::values.nextendo_cloud_sync_enabled.GetValue()) {
+        Nextendo::SaveSync::Pull(*system, title_id);
+    }
 
     if (type == StartGameType::Normal) {
         // Load per game settings if it is a normal boot
@@ -2867,7 +2925,7 @@ void GMainWindow::OnEmulationStopped() {
 #ifdef ENABLE_WEB_SERVICE
     // Only safe past this point: emu_thread has fully exited (no more concurrent guest access to
     // the VFS) and InitializeContentSystem() just rebuilt a fresh save-data factory.
-    {
+    if (Settings::values.nextendo_cloud_sync_enabled.GetValue()) {
         auto save_zip = Nextendo::SaveSync::CaptureForPush(*system, current_title_id);
         if (!save_zip.empty()) {
             std::thread{[title_id = current_title_id, zip = std::move(save_zip)]() mutable {
@@ -5985,6 +6043,36 @@ double GMainWindow::GetEmulationSpeed() const {
     return last_perf_stats.emulation_speed * 100.0;
 }
 
+void GMainWindow::OpenNextendoChatWindow(const QString& auto_join_room_id, u64 invite_pid,
+                                         const QString& invite_name) {
+    if (!auto_join_room_id.isEmpty()) {
+        // Invite-toast click: we already know the room, skip straight to it.
+        nextendo_room_overlay->JoinRoom(auto_join_room_id);
+        return;
+    }
+    if (invite_pid != 0) {
+        // Friends-list invite: create/reuse our own room, then invite once host is confirmed.
+        nextendo_room_overlay->InviteFriendOnJoin(invite_pid, invite_name);
+        nextendo_room_overlay->ShowOverlay();
+        return;
+    }
+    if (nextendo_room_overlay->IsInRoom()) {
+        nextendo_room_overlay->ShowOverlay();
+        return;
+    }
+
+    // Not in a room yet -- show the Create/Join picker. It closes itself once
+    // the overlay confirms a room was actually joined.
+    auto* launcher = new NextendoChatWindow(this);
+    launcher->setAttribute(Qt::WA_DeleteOnClose);
+    connect(launcher, &NextendoChatWindow::CreateRoomRequested, nextendo_room_overlay,
+            &NextendoRoomOverlay::CreateRoom);
+    connect(launcher, &NextendoChatWindow::JoinRoomRequested, nextendo_room_overlay,
+            &NextendoRoomOverlay::JoinRoom);
+    connect(nextendo_room_overlay, &NextendoRoomOverlay::RoomJoined, launcher, &QDialog::accept);
+    launcher->exec();
+}
+
 void GMainWindow::OnAlbum() {
     constexpr u64 AlbumId = static_cast<u64>(Service::AM::AppletProgramId::PhotoViewer);
     auto bis_system = system->GetFileSystemController().GetSystemNANDContents();
@@ -7007,7 +7095,17 @@ void GMainWindow::UpdateUITheme() {
     if (game_list) {
         game_list->RefreshTheme();
     }
- 
+
+    // UISettings::IsDarkTheme() only reflects the value just published above, so this
+    // has to run after it -- multiplayer_room_overlay is constructed once at startup and
+    // otherwise only repaints via a themeChanged signal that's declared but never emitted.
+    if (multiplayer_room_overlay) {
+        multiplayer_room_overlay->UpdateTheme();
+    }
+    if (nextendo_room_overlay) {
+        nextendo_room_overlay->UpdateTheme();
+    }
+
     m_is_updating_theme = false;
 }
 

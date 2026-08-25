@@ -314,6 +314,7 @@ QColor NextendoToast::AccentColor() const {
     case Kind::Offline:
         return QColor(148, 152, 161); // muted gray -- went offline
     case Kind::Request:
+    case Kind::ChatRequest:
         return QColor(180, 120, 240); // purple -- incoming request, wants attention
     case Kind::RequestSent:
         return QColor(100, 149, 237); // blue -- confirmation of your own action
@@ -331,6 +332,8 @@ QString NextendoToast::CategoryLabel() const {
         return tr("FRIEND REQUEST");
     case Kind::RequestSent:
         return tr("REQUEST SENT");
+    case Kind::ChatRequest:
+        return tr("CHAT INVITE");
     }
     return {};
 }

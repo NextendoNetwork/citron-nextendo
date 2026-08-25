@@ -56,6 +56,11 @@ public:
                                    QWidget* parent = nullptr, int initial_page = kHomePage);
     ~NextendoAccountDialog() override;
 
+signals:
+    // Routed up to GMainWindow, which owns the one persistent chat window --
+    // opens/reuses it, creates a room if needed, and sends the invite.
+    void InviteToChatRequested(u64 pid, QString name);
+
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
@@ -68,6 +73,7 @@ private:
     void RefreshPlayers();
     void OnPlayersViewClicked(const QModelIndex& index);
     void ShowPlayersContextMenu(QListView* view, const QPoint& pos);
+    void ShowFriendsContextMenu(const QPoint& pos);
     void OpenReportDialog(u64 pid, const QString& name, const QString& avatar_b64);
     void SetBusy(bool busy);
     void OnAdd();
@@ -184,6 +190,7 @@ private:
     QLabel* cloud_save_title;
     QLabel* cloud_save_status;
     QPushButton* cloud_save_download_button;
+    class QCheckBox* cloud_save_auto_sync_checkbox;
     QWidget* cloud_save_picker_container;
     QHBoxLayout* cloud_save_picker_row;
     QButtonGroup* cloud_save_picker_group;

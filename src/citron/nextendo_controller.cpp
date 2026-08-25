@@ -1,17 +1,23 @@
 // SPDX-FileCopyrightText: Copyright 2026 citron Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdlib>
 #include <thread>
 #include <utility>
 
 #include <QByteArray>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFileInfo>
+#include <QImage>
+#include <QJsonObject>
 #include <QPointer>
 #include <QProcess>
 #include <QUrl>
 
 #include <fmt/format.h>
 
+#include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "common/nextendo_account.h"
 #include "common/nextendo_friends.h"
@@ -22,6 +28,7 @@
 #include "core/file_sys/vfs/vfs.h"
 #include "core/hle/service/acc/profile_manager.h"
 #include "common/nextendo_compatible_titles.h"
+#include "citron/nextendo_chat_client.h"
 #include "citron/nextendo_controller.h"
 #include "citron/nextendo_save_sync.h"
 
@@ -37,12 +44,79 @@ NextendoController::NextendoController(Core::System& system_, QWidget* main_wind
     friend_poll_timer.start();
 
     PollFriends();
+    EnsureChatConnected(); // no-op if not already signed in
+
+    // Covers the "already linked, emulator just relaunched" case -- ProfileManager's own
+    // constructor tries this too, but only if it happens to run after this account was
+    // linked, which isn't guaranteed to be true this session, and it never syncs the avatar.
+    if (Common::NextendoAccount::IsLinked()) {
+        ApplyProfileName(Common::NextendoAccount::GetUsername());
+        SyncProfileAvatar();
+    }
 }
 
 NextendoController::~NextendoController() = default;
 
 bool NextendoController::IsLinked() const {
     return Common::NextendoAccount::IsLinked();
+}
+
+// Prototype chat server, not the official Nextendo fleet -- this only exists on the
+// developer's own test VPS while the feature is being proven out and pitched. No
+// NEXTENDO_API-style restriction is needed here (unlike the account API, this carries
+// no account token, only a bare PID + display name), but an override is still honoured
+// so this can point elsewhere without a rebuild.
+void NextendoController::EnsureChatConnected() {
+    if (!Common::NextendoAccount::IsLinked()) {
+        return;
+    }
+    if (chat_client && chat_client->IsConnected()) {
+        return;
+    }
+    if (!chat_client) {
+        chat_client = new NextendoChatClient(this);
+        connect(chat_client, &NextendoChatClient::MessageReceived, this,
+                [this](const QJsonObject& obj) {
+                    const QString type = obj.value(QStringLiteral("type")).toString();
+                    if (type == QStringLiteral("invite_received")) {
+                        emit ChatInviteReceived(obj.value(QStringLiteral("room_id")).toString(),
+                                                obj.value(QStringLiteral("room_name")).toString(),
+                                                static_cast<u64>(
+                                                    obj.value(QStringLiteral("from_pid")).toDouble()),
+                                                obj.value(QStringLiteral("from_name")).toString());
+                    } else if (type == QStringLiteral("invite_sent")) {
+                        emit ChatInviteSent(static_cast<u64>(
+                            obj.value(QStringLiteral("target_pid")).toDouble()));
+                    } else if (type == QStringLiteral("member_joined")) {
+                        emit ChatMemberJoined(pending_chat_room_id,
+                                              static_cast<u64>(obj.value(QStringLiteral("pid")).toDouble()),
+                                              obj.value(QStringLiteral("name")).toString());
+                    } else if (type == QStringLiteral("room_joined")) {
+                        pending_chat_room_id = obj.value(QStringLiteral("room_id")).toString();
+                    } else if (type == QStringLiteral("banned")) {
+                        emit ChatBanned(obj.value(QStringLiteral("reason")).toString());
+                    }
+                    emit ChatRawMessage(obj);
+                });
+        connect(chat_client, &NextendoChatClient::Connected, this, [this] {
+            chat_client->SendJson(QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("identify")},
+                {QStringLiteral("pid"), static_cast<qint64>(Common::NextendoAccount::GetPid())},
+                {QStringLiteral("name"),
+                 QString::fromStdString(Common::NextendoAccount::GetUsername())},
+            });
+        });
+    }
+
+    QString host = QStringLiteral("144.202.45.50");
+    quint16 port = 8600;
+    if (const char* env = std::getenv("NEXTENDO_CHAT_HOST"); env && *env) {
+        host = QString::fromUtf8(env);
+    }
+    if (const char* env = std::getenv("NEXTENDO_CHAT_PORT"); env && *env) {
+        port = static_cast<quint16>(std::atoi(env));
+    }
+    chat_client->Connect(host, port);
 }
 
 QString NextendoController::ResolveGameName(const std::string& app_id_hex,
@@ -163,11 +237,13 @@ void NextendoController::SignIn() {
                 Common::NextendoAccount::Save(result.pid, result.username, result.friend_code,
                                               result.token);
                 ApplyProfileName(result.username);
+                SyncProfileAvatar();
                 Common::NextendoFriends::SetLocalStatus(Common::NextendoFriends::PresenceOnline);
                 first_poll = true;
                 emit AccountLinked();
                 emit SignInFinished();
                 RefreshFriendCache();
+                EnsureChatConnected();
             },
             Qt::QueuedConnection);
     }}.detach();
@@ -181,11 +257,21 @@ void NextendoController::SignOut() {
     Common::NextendoFriends::Set({});
     last_known_status.clear();
     offline_streak.clear();
+    if (chat_client) {
+        chat_client->Disconnect();
+    }
     emit AccountUnlinked();
 }
 
 void NextendoController::ManualSaveDownload(u64 title_id) {
 #ifdef ENABLE_WEB_SERVICE
+    // Belt-and-suspenders: the dialog already hides this action while any game is running,
+    // but writing into the save directory while the emulated filesystem layer is mounted by
+    // a live session is what actually crashes it, so refuse here regardless of caller.
+    if (system.IsPoweredOn()) {
+        emit StatusChanged(tr("Stop the running game before downloading a cloud save."));
+        return;
+    }
     if (!Nextendo::CompatibleTitles::Table().count(title_id)) {
         emit StatusChanged(tr("This game doesn't support cloud saves."));
         return;
@@ -220,7 +306,13 @@ void NextendoController::ApplyProfileName(const std::string& name) {
         return;
     }
 
-    Service::Account::ProfileManager profile_manager;
+    // This used to construct its own throwaway Service::Account::ProfileManager here, which
+    // re-parses the save file into a brand new object -- separate from system.GetProfileManager(),
+    // the one live instance every running game and the Profile Manager config page actually read
+    // from. Writes landed on disk but never reached the in-memory copy anything else sees, so the
+    // rename appeared to silently do nothing (this was the unresolved half of the earlier Balloon
+    // World self-profile investigation).
+    auto& profile_manager = system.GetProfileManager();
     const auto uuid = profile_manager.GetLastOpenedUser();
     if (uuid.IsInvalid()) {
         return;
@@ -238,6 +330,54 @@ void NextendoController::ApplyProfileName(const std::string& name) {
     profile_manager.SetProfileBase(uuid, profile);
     profile_manager.WriteUserSaveFile();
     LOG_INFO(Frontend, "[Nextendo] Renamed the active profile to the account nickname");
+}
+
+void NextendoController::SyncProfileAvatar() {
+#ifdef ENABLE_WEB_SERVICE
+    if (!Common::NextendoAccount::IsLinked()) {
+        return;
+    }
+    auto& profile_manager = system.GetProfileManager();
+    const auto uuid = profile_manager.GetLastOpenedUser();
+    if (uuid.IsInvalid()) {
+        return;
+    }
+    const u64 pid = Common::NextendoAccount::GetPid();
+    std::thread{[this, uuid, pid, guard = QPointer<NextendoController>(this)] {
+        const std::string b64 = WebService::NextendoApi::GetAvatarByPid(pid);
+        if (b64.empty()) {
+            return;
+        }
+        QMetaObject::invokeMethod(
+            this,
+            [this, guard, uuid, b64] {
+                if (!guard) {
+                    return;
+                }
+                WriteProfileAvatar(uuid, b64);
+            },
+            Qt::QueuedConnection);
+    }}.detach();
+#endif
+}
+
+void NextendoController::WriteProfileAvatar(const Common::UUID& uuid, const std::string& avatar_b64) {
+    QImage image;
+    if (!image.loadFromData(QByteArray::fromBase64(QByteArray::fromStdString(avatar_b64)))) {
+        return;
+    }
+    if (image.width() != 256 || image.height() != 256) {
+        image = image.scaled(256, 256, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+    }
+
+    const auto image_path = QString::fromStdString(Common::FS::PathToUTF8String(
+        Common::FS::GetCitronPath(Common::FS::CitronPath::NANDDir) /
+        fmt::format("system/save/8000000000000010/su/avators/{}.jpg", uuid.FormattedString())));
+
+    QDir{}.mkpath(QFileInfo(image_path).absolutePath());
+    if (image.save(image_path, "JPEG")) {
+        LOG_INFO(Frontend, "[Nextendo] Synced the active profile's avatar from the account");
+    }
 }
 
 void NextendoController::RefreshFriendCache() {

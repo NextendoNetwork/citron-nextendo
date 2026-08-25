@@ -44,10 +44,13 @@ void LoopProcess(Core::System& system) {
     server_manager->RegisterNamedService("nsd:a", std::make_shared<NSD>(system, "nsd:a"));
     server_manager->RegisterNamedService("nsd:u", std::make_shared<NSD>(system, "nsd:u"));
     server_manager->RegisterNamedService("sfdnsres", std::make_shared<SFDNSRES>(system));
-    // [Nextendo] No extra worker threads: matches Ryujinx's single-threaded Bsd service, which
-    // serializes socket IPC in strict arrival order. citron's old 6-thread pool broke that
-    // ordering guarantee (calls could race and complete out of order).
-    server_manager->StartAdditionalHostThreads("bsdsocket", 0);
+    // [Nextendo] A single dedicated thread serializes socket IPC in strict arrival order
+    // (matching Ryujinx's Bsd service), but a blocking call like Accept() on a listening socket
+    // that never gets a connection then starves every other socket operation for as long as it
+    // blocks -- with only one thread, that's forever. Two extra threads gives blocking calls
+    // room to sit without stalling the rest of a title's networking, without reintroducing the
+    // 6-thread pool's larger ordering races.
+    server_manager->StartAdditionalHostThreads("bsdsocket", 2);
 
     // [Nextendo] See sockets.h's declaration comment on SetBsdDeferralEvent.
     Kernel::KEvent* deferral_event{};

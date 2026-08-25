@@ -738,6 +738,11 @@ struct Values {
     Setting<std::string> nextendo_nat_ip{linkage, "164.132.111.120", "nextendo_nat_ip",
                                          Category::Network};
     Setting<std::string> nextendo_pid{linkage, "", "nextendo_pid", Category::Network};
+    // Governs the automatic pull-on-boot/push-on-stop cloud save sync only -- the manual
+    // "Download Save" button in the Nextendo Account dialog is an explicit per-click action
+    // and isn't gated by this, since that's already opt-in every time.
+    Setting<bool> nextendo_cloud_sync_enabled{linkage, true, "nextendo_cloud_sync_enabled",
+                                              Category::Network};
 
     // WebService
     Setting<bool> enable_telemetry{linkage, false, "enable_telemetry", Category::WebService};
