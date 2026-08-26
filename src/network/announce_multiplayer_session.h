@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <thread>
 #include "common/announce_multiplayer_room.h"
@@ -85,7 +86,7 @@ private:
     Common::Event shutdown_event;
     std::mutex callback_mutex;
     std::set<CallbackHandle> error_callbacks;
-    std::unique_ptr<std::thread> announce_multiplayer_thread;
+    std::optional<std::jthread> announce_multiplayer_thread;
 
     /// Backend interface that logs fields
     std::unique_ptr<AnnounceMultiplayerRoom::Backend> backend;

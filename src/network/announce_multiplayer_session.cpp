@@ -52,19 +52,18 @@ WebService::WebResult AnnounceMultiplayerSession::Register() {
 }
 
 void AnnounceMultiplayerSession::Start() {
-    if (announce_multiplayer_thread) {
+    if (announce_multiplayer_thread.has_value()) {
         Stop();
     }
     shutdown_event.Reset();
-    announce_multiplayer_thread =
-        std::make_unique<std::thread>(&AnnounceMultiplayerSession::AnnounceMultiplayerLoop, this);
+    announce_multiplayer_thread.emplace(
+        [this](std::stop_token) { AnnounceMultiplayerLoop(); });
 }
 
 void AnnounceMultiplayerSession::Stop() {
-    if (announce_multiplayer_thread) {
+    if (announce_multiplayer_thread.has_value()) {
         shutdown_event.Set();
-        announce_multiplayer_thread->join();
-        announce_multiplayer_thread.reset();
+        announce_multiplayer_thread.reset(); // jthread: requests stop and joins
         backend->Delete();
         registered = false;
     }
@@ -149,7 +148,7 @@ AnnounceMultiplayerRoom::RoomList AnnounceMultiplayerSession::GetRoomList() {
 }
 
 bool AnnounceMultiplayerSession::IsRunning() const {
-    return announce_multiplayer_thread != nullptr;
+    return announce_multiplayer_thread.has_value();
 }
 
 void AnnounceMultiplayerSession::UpdateCredentials() {
