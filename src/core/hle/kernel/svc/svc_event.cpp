@@ -17,13 +17,21 @@ namespace Kernel::Svc {
 Result SignalEvent(Core::System& system, Handle event_handle) {
     LOG_DEBUG(Kernel_SVC, "called, event_handle=0x{:08X}", event_handle);
 
-    // [Nextendo][DIAG] Reuses the deadline-watch arm/window (see MaybeDelayNplnInit) to catch
-    // Event signals specifically during the npln connection-setup attempt, without spamming
-    // every other Event in the game. Checking whether gRPC-core's poller wakeup mechanism
-    // (embedded wakeup_fd_eventfd.cc likely falls back to a KEvent-based primitive on this
-    // platform rather than a socketpair, per the Twenty-First Update investigation) ever fires.
     // Get the current handle table.
     const KHandleTable& handle_table = GetCurrentProcess(system.Kernel()).GetHandleTable();
+
+    // Fail-safe for system applets
+    const auto program_id = GetCurrentProcess(system.Kernel()).GetProgramId();
+    if ((program_id & 0xFFFFFFFFFFFFFF00ull) == 0x0100000000001000ull) {
+        KScopedAutoObject event = handle_table.GetObject<KEvent>(event_handle);
+        if (event.IsNotNull()) {
+            event->Signal();
+        } else {
+            LOG_WARNING(Kernel_SVC, "SignalEvent best-effort unknown handle=0x{:08X} (ignored)",
+                        event_handle);
+        }
+        R_SUCCEED();
+    }
 
     // Get the event.
     KScopedAutoObject event = handle_table.GetObject<KEvent>(event_handle);
@@ -72,11 +80,6 @@ Result ClearEvent(Core::System& system, Handle event_handle) {
 Result CreateEvent(Core::System& system, Handle* out_write, Handle* out_read) {
     LOG_DEBUG(Kernel_SVC, "called");
 
-    // [Nextendo][DIAG] See the matching note in SignalEvent above.
-    if (IsNextendoDeadlineWatchActive()) {
-        LOG_INFO(Kernel_SVC, "[Nextendo][DIAG] CreateEvent called");
-    }
-
     // Get the kernel reference and handle table.
     auto& kernel = system.Kernel();
     auto& handle_table = GetCurrentProcess(kernel).GetHandleTable();
@@ -114,30 +117,7 @@ Result CreateEvent(Core::System& system, Handle* out_write, Handle* out_read) {
     };
 
     // Add the readable event to the handle table.
-    R_TRY(handle_table.Add(out_read, std::addressof(event->GetReadableEvent())));
-
-    // [Nextendo][DIAG] Log the readable-event object address for correlation against
-    // WaitSynchronization's ONE-SHOT probe diagnostic and SignalEvent's own diagnostic above --
-    // see SignalEvent's comment for why object address, not handle number, is the right key.
-    // Deliberately NOT gated behind IsNextendoDeadlineWatchActive() here (unlike SignalEvent/
-    // WaitSynchronization's diagnostics) -- the specific event this session is chasing is created
-    // well before the deadline watch arms (during early boot, not at npln-connection time), so a
-    // gated log would miss its creation entirely. CreateEvent is not a hot path, safe to always
-    // log with a caller backtrace to identify the creating code.
-    {
-        const auto backtrace = Core::GetBacktrace(&GetCurrentThread(kernel));
-        std::string trace_str;
-        for (const auto& entry : backtrace) {
-            trace_str += fmt::format("\n    {}+0x{:x} ({})", entry.module, entry.offset, entry.name);
-        }
-        LOG_INFO(Kernel_SVC,
-                 "[Nextendo][DIAG] CreateEvent write_handle=0x{:08X} read_handle=0x{:08X} "
-                 "readable_event_obj={} caller backtrace:{}",
-                 *out_write, *out_read,
-                 static_cast<const void*>(std::addressof(event->GetReadableEvent())), trace_str);
-    }
-
-    R_SUCCEED();
+    R_RETURN(handle_table.Add(out_read, std::addressof(event->GetReadableEvent())));
 }
 
 Result SignalEvent64(Core::System& system, Handle event_handle) {
