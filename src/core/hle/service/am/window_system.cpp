@@ -413,6 +413,10 @@ void WindowSystem::ReconcileAppletTreeLocked(Applet* applet, bool is_foreground,
     bool child_obscures = false;
     for (const auto& child : applet->child_applets) {
         std::scoped_lock lk2{child->lock};
+        if (child->is_winding) {
+            child_obscures = true;
+            break;
+        }
         const auto mode = child->library_applet_mode;
         if (child->is_process_running && child->window_visible &&
             (mode == LibraryAppletMode::AllForeground ||
