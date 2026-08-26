@@ -206,8 +206,8 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
                       pi_header[0x0014DD81], pi_header[0x0014DD82], pi_header[0x0014DD83]);
         }
 
-        pi_header =
-            Loader::NextendoS3Patches::ApplyIfMatch(nso_header.build_id, std::move(pi_header));
+        pi_header = Loader::NextendoS3Patches::ApplyIfMatch(nso_header.build_id,
+                                                            std::move(pi_header), name);
 
         if (pi_header.size() > 0x0014DD84) {
             LOG_INFO(Loader, "[Nextendo][DIAG] bytes at 0x157B20/0x14E1B0/0x14DD80 after patch: "
