@@ -186,8 +186,6 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
     // no mod patches exist, and must never go through the mod-patch path at all, since Splatoon 3
     // refuses to boot with any mod enabled (see main.cpp) and these patches need to survive that
     // ban rather than be blocked by it.
-    LOG_INFO(Loader, "[Nextendo][DIAG] S3 patch check: module={}, pm_valid={}, title_id={:016X}",
-              name, pm.has_value(), pm ? pm->GetTitleID() : 0);
     if (pm && pm->GetTitleID() == 0x0100C2500FC20000ULL) {
         std::span<u8> patchable_section(program_image.data() + module_start,
                                         program_image.size() - module_start);
@@ -196,28 +194,8 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
         std::memcpy(pi_header.data() + sizeof(NSOHeader), patchable_section.data(),
                     patchable_section.size());
 
-        if (pi_header.size() > 0x0014DD84) {
-            LOG_INFO(Loader, "[Nextendo][DIAG] bytes at 0x157B20/0x14E1B0/0x14DD80 before patch: "
-                              "{:02X} {:02X} {:02X} {:02X} | {:02X} {:02X} {:02X} {:02X} | "
-                              "{:02X} {:02X} {:02X} {:02X}",
-                      pi_header[0x00157B20], pi_header[0x00157B21], pi_header[0x00157B22],
-                      pi_header[0x00157B23], pi_header[0x0014E1B0], pi_header[0x0014E1B1],
-                      pi_header[0x0014E1B2], pi_header[0x0014E1B3], pi_header[0x0014DD80],
-                      pi_header[0x0014DD81], pi_header[0x0014DD82], pi_header[0x0014DD83]);
-        }
-
         pi_header = Loader::NextendoS3Patches::ApplyIfMatch(nso_header.build_id,
                                                             std::move(pi_header), name);
-
-        if (pi_header.size() > 0x0014DD84) {
-            LOG_INFO(Loader, "[Nextendo][DIAG] bytes at 0x157B20/0x14E1B0/0x14DD80 after patch: "
-                              "{:02X} {:02X} {:02X} {:02X} | {:02X} {:02X} {:02X} {:02X} | "
-                              "{:02X} {:02X} {:02X} {:02X}",
-                      pi_header[0x00157B20], pi_header[0x00157B21], pi_header[0x00157B22],
-                      pi_header[0x00157B23], pi_header[0x0014E1B0], pi_header[0x0014E1B1],
-                      pi_header[0x0014E1B2], pi_header[0x0014E1B3], pi_header[0x0014DD80],
-                      pi_header[0x0014DD81], pi_header[0x0014DD82], pi_header[0x0014DD83]);
-        }
 
         if (pi_header.size() >= sizeof(NSOHeader) &&
             pi_header.size() - sizeof(NSOHeader) == patchable_section.size()) {
