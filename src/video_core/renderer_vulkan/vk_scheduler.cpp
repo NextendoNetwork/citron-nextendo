@@ -8,6 +8,7 @@
 
 #include "video_core/renderer_vulkan/vk_query_cache.h"
 
+#include "common/logging.h"
 #include "common/thread.h"
 #include "common/profiling.h"
 #include "video_core/renderer_vulkan/vk_command_pool.h"
@@ -179,9 +180,16 @@ void Scheduler::WorkerThread(std::stop_token stop_token) {
             // Perform the work, tracking whether the chunk was a submission
             // before executing.
             const bool has_submit = work->HasSubmit();
-            {
+            try {
                 CITRON_PROFILE_SCOPE("Vulkan::WorkerExecute");
                 work->ExecuteAll(current_cmdbuf, current_upload_cmdbuf);
+            } catch (const vk::Exception& exception) {
+                // uncaught here previously took down the whole process via std::terminate
+                LOG_CRITICAL(Render_Vulkan,
+                             "Vulkan worker thread caught a fatal exception, the device is "
+                             "unrecoverable from this point: {}",
+                             exception.what());
+                return;
             }
 
             // If the chunk was a submission, reallocate the command buffer.
