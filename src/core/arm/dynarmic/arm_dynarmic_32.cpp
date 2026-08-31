@@ -174,8 +174,9 @@ public:
     const bool m_debugger_enabled{};
     const bool m_check_memory_access{};
     static constexpr u64 MinimumRunCycles = 10000U;
+    static constexpr u64 kNoCachedCodePage = ~u64{0};
     Dynarmic::CodePage cached_code_page;
-    u64 last_code_addr = 0;
+    u64 last_code_addr = kNoCachedCodePage;
 };
 
 std::shared_ptr<Dynarmic::A32::Jit> ArmDynarmic32::MakeJit(Common::PageTable* page_table) const {
@@ -450,11 +451,14 @@ void ArmDynarmic32::SignalInterrupt(Kernel::KThread* thread) {
 
 void ArmDynarmic32::ClearInstructionCache() {
     CITRON_PROFILE_SCOPE("Dynarmic32::ClearCache");
+    // MemoryReadCode()'s page snapshot goes stale as soon as the guest rewrites that page.
+    m_cb->last_code_addr = DynarmicCallbacks32::kNoCachedCodePage;
     m_jit->ClearCache();
 }
 
 void ArmDynarmic32::InvalidateCacheRange(u64 addr, std::size_t size) {
     CITRON_PROFILE_SCOPE("Dynarmic32::InvalidateCacheRange");
+    m_cb->last_code_addr = DynarmicCallbacks32::kNoCachedCodePage;
     m_jit->InvalidateCacheRange(static_cast<u32>(addr), size);
 }
 
