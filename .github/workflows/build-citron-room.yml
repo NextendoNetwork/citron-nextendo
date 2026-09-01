@@ -28,7 +28,7 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           apt-get install -y --no-install-recommends \
-            build-essential clang lld cmake ninja-build nasm \
+            build-essential g++ clang lld cmake ninja-build nasm \
             libboost-all-dev libssl-dev nlohmann-json3-dev \
             libcurl4-openssl-dev libenet-dev libudev-dev pkg-config \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
