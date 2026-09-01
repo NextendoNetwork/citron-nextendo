@@ -17,6 +17,8 @@ jobs:
       new_hash_full: ${{ steps.head.outputs.hash_full }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Get current commit hash
         id: head
         run: |
@@ -60,6 +62,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Install System Dependencies via Homebrew
         run: |
