@@ -1,0 +1,54 @@
+name: Build citron-room (Linux, minimal)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    name: "citron-room (x86_64)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang lld cmake ninja-build git nasm \
+            libboost-all-dev libssl-dev libfmt-dev nlohmann-json3-dev \
+            libcurl4-openssl-dev libenet-dev pkg-config
+
+      - name: Patch for newer Boost/CMake compatibility
+        run: |
+          find . -type f \( -name '*.cpp' -o -name '*.h' \) | xargs -r sed -i 's/\bboost::asio::io_service\b/boost::asio::io_context/g'
+          find . -type f \( -name '*.cpp' -o -name '*.h' \) | xargs -r sed -i 's/\bboost::asio::io_service::strand\b/boost::asio::strand<boost::asio::io_context::executor_type>/g'
+          find . -type f \( -name '*.cpp' -o -name '*.h' \) | xargs -r sed -i 's|#include *<boost/process/async_pipe.hpp>|#include <boost/process/v1/async_pipe.hpp>|g'
+          find . -type f \( -name '*.cpp' -o -name '*.h' \) | xargs -r sed -i 's/\bboost::process::async_pipe\b/boost::process::v1::async_pipe/g'
+          sed -i '/sse2neon/d' ./src/video_core/CMakeLists.txt
+          sed -i 's/cmake_minimum_required(VERSION 2.8)/cmake_minimum_required(VERSION 3.5)/' externals/xbyak/CMakeLists.txt
+
+      - name: Configure (room server only, no GUI/tests)
+        run: |
+          mkdir build && cd build
+          cmake .. -GNinja \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DENABLE_QT=OFF -DENABLE_SDL2=OFF \
+            -DCITRON_TESTS=OFF -DCITRON_CHECK_SUBMODULES=OFF \
+            -DCITRON_ENABLE_LTO=OFF \
+            -DENABLE_WEB_SERVICE=ON -DENABLE_OPENSSL=ON \
+            -DCMAKE_BUILD_TYPE=Release -DCITRON_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+
+      - name: Build citron-room
+        run: cd build && ninja -j$(nproc) citron-room
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: citron-room-linux-x86_64
+          path: build/bin/citron-room
+          if-no-files-found: error
