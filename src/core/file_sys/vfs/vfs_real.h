@@ -76,6 +76,7 @@ private:
     // silently mismatch if that macro's expansion ever changes.
     using ListLockGuard = std::unique_lock<decltype(list_lock)>;
     size_t num_open_files{};
+    bool in_dtor = false;
 
 private:
     friend class RealVfsFile;
