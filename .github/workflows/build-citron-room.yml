@@ -33,7 +33,7 @@ jobs:
             libcurl4-openssl-dev libenet-dev libudev-dev pkg-config \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
             libavfilter-dev libswresample-dev libavdevice-dev glslang-tools \
-            libx11-dev libwayland-dev
+            libx11-dev libwayland-dev liblz4-dev zlib1g-dev libzstd-dev
 
       - name: Build a modern libfmt from source
         run: |
