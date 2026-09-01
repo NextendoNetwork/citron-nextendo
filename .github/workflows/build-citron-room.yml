@@ -22,7 +22,7 @@ jobs:
             libboost-all-dev libssl-dev libfmt-dev nlohmann-json3-dev \
             libcurl4-openssl-dev libenet-dev libudev-dev pkg-config \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
-            libavfilter-dev libswresample-dev
+            libavfilter-dev libswresample-dev glslang-tools
 
       - name: Patch for newer Boost/CMake compatibility
         run: |
