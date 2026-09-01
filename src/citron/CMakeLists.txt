@@ -274,6 +274,8 @@ add_executable(citron
     nextendo_chat_room_member_delegate.h
     nextendo_chat_window.cpp
     nextendo_chat_window.h
+    linux_crash_handler.cpp
+    linux_crash_handler.h
     nextendo_controller.cpp
     nextendo_room_overlay.cpp
     nextendo_room_overlay.h
