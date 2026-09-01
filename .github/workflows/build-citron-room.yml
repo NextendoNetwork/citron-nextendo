@@ -19,10 +19,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential clang lld cmake ninja-build git nasm \
-            libboost-all-dev libssl-dev libfmt-dev nlohmann-json3-dev \
+            libboost-all-dev libssl-dev nlohmann-json3-dev \
             libcurl4-openssl-dev libenet-dev libudev-dev pkg-config \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
             libavfilter-dev libswresample-dev glslang-tools
+
+      - name: Build a modern libfmt from source
+        run: |
+          git clone --depth 1 --branch 11.1.4 https://github.com/fmtlib/fmt.git /tmp/fmt-src
+          cmake -S /tmp/fmt-src -B /tmp/fmt-build -GNinja \
+            -DCMAKE_BUILD_TYPE=Release -DFMT_TEST=OFF -DFMT_DOC=OFF \
+            -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+          ninja -C /tmp/fmt-build -j$(nproc)
+          sudo ninja -C /tmp/fmt-build install
 
       - name: Patch for newer Boost/CMake compatibility
         run: |
