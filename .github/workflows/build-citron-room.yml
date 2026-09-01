@@ -28,7 +28,7 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           apt-get install -y --no-install-recommends \
-            build-essential g++ clang lld cmake ninja-build nasm \
+            build-essential gcc g++ lld cmake ninja-build nasm \
             libboost-all-dev libssl-dev nlohmann-json3-dev \
             libcurl4-openssl-dev libenet-dev libudev-dev pkg-config \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
@@ -58,7 +58,7 @@ jobs:
         run: |
           mkdir build && cd build
           cmake .. -GNinja \
-            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
             -DENABLE_QT=OFF -DENABLE_SDL2=OFF \
             -DCITRON_TESTS=OFF -DCITRON_CHECK_SUBMODULES=OFF \
             -DCITRON_ENABLE_LTO=OFF \
