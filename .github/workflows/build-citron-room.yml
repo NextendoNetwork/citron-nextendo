@@ -7,33 +7,29 @@ jobs:
   build:
     name: "citron-room (x86_64)"
     runs-on: ubuntu-latest
+    container: ghcr.io/pkgforge-dev/archlinux:latest
     timeout-minutes: 60
     steps:
+      - name: Install Git
+        run: pacman -Syu --noconfirm --needed git
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential clang lld cmake ninja-build git nasm \
-            libboost-all-dev libssl-dev nlohmann-json3-dev \
-            libcurl4-openssl-dev libenet-dev libudev-dev pkg-config \
-            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
-            libavfilter-dev libswresample-dev glslang-tools \
-            libx11-dev libwayland-dev
+      - name: Add Git Safe Directory
+        run: git config --global --add safe.directory "$PWD"
 
-      - name: Build a modern libfmt from source
+      - name: Install dependencies (same set the official Linux nightly build uses)
         run: |
-          git clone --depth 1 --branch 11.1.4 https://github.com/fmtlib/fmt.git /tmp/fmt-src
-          cmake -S /tmp/fmt-src -B /tmp/fmt-build -GNinja \
-            -DCMAKE_BUILD_TYPE=Release -DFMT_TEST=OFF -DFMT_DOC=OFF \
-            -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_SHARED_LIBS=OFF \
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-          ninja -C /tmp/fmt-build -j$(nproc)
-          sudo ninja -C /tmp/fmt-build install
+          pacman -Syu --noconfirm --needed \
+            base-devel boost boost-libs clang cmake curl enet fmt ffmpeg \
+            gcc git glslang glu hidapi libvpx libxi libxkbcommon-x11 libxss \
+            lld llvm nasm ninja nlohmann-json numactl openal patchelf \
+            pulseaudio pulseaudio-alsa unzip vulkan-headers vulkan-mesa-layers \
+            wget xcb-util-cursor xcb-util-image xcb-util-renderutil xcb-util-wm \
+            zip zsync
 
       - name: Patch for newer Boost/CMake compatibility
         run: |
@@ -53,13 +49,12 @@ jobs:
             -DCITRON_TESTS=OFF -DCITRON_CHECK_SUBMODULES=OFF \
             -DCITRON_ENABLE_LTO=OFF \
             -DENABLE_WEB_SERVICE=ON -DENABLE_OPENSSL=ON \
+            -DCMAKE_CXX_FLAGS="-Wno-error -w" -DCMAKE_C_FLAGS="-Wno-error -w" \
             -DCMAKE_BUILD_TYPE=Release -DCITRON_BUILD_TYPE=Release \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
       - name: Build citron-room
-        run: |
-          ulimit -s unlimited
-          cd build && ninja -j$(nproc) citron-room
+        run: cd build && ninja -j$(nproc) citron-room
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
