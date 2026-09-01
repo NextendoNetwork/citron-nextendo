@@ -13,7 +13,7 @@ else
 fi
 
 # --- Source Code Checkout and Versioning ---
-git clone --recursive "https://github.com/CollectingW/emulator.git" ./citron
+git clone --recursive "https://github.com/NextendoNetwork/citron-nextendo.git" ./citron
 cd ./citron
 
 if [ "$DEVEL" = 'true' ]; then
