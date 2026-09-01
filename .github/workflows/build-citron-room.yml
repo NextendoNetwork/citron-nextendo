@@ -57,7 +57,9 @@ jobs:
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
       - name: Build citron-room
-        run: cd build && ninja -j$(nproc) citron-room
+        run: |
+          ulimit -s unlimited
+          cd build && ninja -j$(nproc) citron-room
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
