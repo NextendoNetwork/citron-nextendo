@@ -231,7 +231,9 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #ifdef CITRON_CRASH_DUMPS
 #include "citron/breakpad.h"
 #endif
+#if defined(__unix__) && !defined(__APPLE__)
 #include "citron/linux_crash_handler.h"
+#endif
 
 using namespace Common::Literals;
 
@@ -7367,7 +7369,9 @@ int main(int argc, char* argv[]) {
 #ifdef CITRON_CRASH_DUMPS
     Breakpad::InstallCrashHandler();
 #endif
+#if defined(__unix__) && !defined(__APPLE__)
     LinuxCrashHandler::Install();
+#endif
 
     Common::DetachedTasks detached_tasks;
     Common::ConfigureNvidiaEnvironmentFlags();

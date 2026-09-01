@@ -274,8 +274,6 @@ add_executable(citron
     nextendo_chat_room_member_delegate.h
     nextendo_chat_window.cpp
     nextendo_chat_window.h
-    linux_crash_handler.cpp
-    linux_crash_handler.h
     nextendo_controller.cpp
     nextendo_room_overlay.cpp
     nextendo_room_overlay.h
@@ -377,6 +375,13 @@ if (WIN32)
     add_library(citron_rc OBJECT citron.rc)
     set_target_properties(citron_rc PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
     target_link_libraries(citron PRIVATE citron_rc)
+endif()
+
+if (UNIX AND NOT APPLE)
+    target_sources(citron PRIVATE
+        linux_crash_handler.cpp
+        linux_crash_handler.h
+    )
 endif()
 
 # Qt AUTOGEN/RCC sources are not unity-safe.
