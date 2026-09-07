@@ -19,7 +19,7 @@ namespace Nextendo::CompatibleTitles {
 inline const std::unordered_map<u64, std::string>& Table() {
     static const std::unordered_map<u64, std::string> table{
         {0x0100152000022000, "3.0.5"},  // Mario Kart 8 Deluxe
-        {0x01006a800016e000, "13.0.4"}, // Super Smash Bros. Ultimate
+        {0x01006a800016e000, "13.0.5"}, // Super Smash Bros. Ultimate
         {0x0100f8f0000a2000, "5.5.2"},  // Splatoon 2 (EU)
         {0x01003bc0000a0000, "5.5.2"},  // Splatoon 2 (US)
         {0x01003c700009c800, "5.5.2"},  // Splatoon 2 (JP)
