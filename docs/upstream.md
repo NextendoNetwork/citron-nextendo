@@ -1,0 +1,82 @@
+# Upstream tracking
+
+This fork adds a Nextendo Network client to the Citron Android app. All emulation
+code stays untouched upstream; the fork's own code is confined to the networking,
+account and surrounding UI layers, plus Android build plumbing.
+
+## Upstreams
+
+| Repository | Role | Tracked in |
+| --- | --- | --- |
+| `NextendoNetwork/citron-nextendo` | direct parent (desktop client + core) | `main` |
+| `citron-neo/emulator` | Citron Neo (deep upstream) | via parent |
+
+## Branch model
+
+- `main` — upstream state (keep in sync with `NextendoNetwork/citron-nextendo`).
+- `android-nextendo` — this fork's work, based on `main`.
+
+Merge upstream into `android-nextendo` with plain `git merge` and commit the
+result as a labeled merge commit. Do not rebase `android-nextendo`; rewriting its
+history destroys the three-way merge baseline. Keep merges frequent (1-2 weeks).
+
+```
+git fetch upstream
+git checkout android-nextendo
+git merge upstream/main        # resolve conflicts, commit as "merge: upstream main <hash>"
+```
+
+## What this fork changes
+
+Each commit is prefixed by area. `git log main..android-nextendo --oneline`
+is the authoritative feature list. Reconciliation notes below are for when an
+upstream change touches the same lines.
+
+### Files this fork adds (merge-safe by construction)
+
+| File | Purpose |
+| --- | --- |
+| `src/android/app/src/main/jni/nextendo_jni.cpp` | all Nextendo JNI bindings; own translation unit so upstream `native.cpp` edits never conflict |
+| `src/android/vcpkg-overlay/arm64-osx.cmake`, `host-toolchain.cmake` | macOS host-triplet fix for vcpkg (see build notes) |
+| `src/android/app/src/main/java/.../service/NextendoSignInService.kt` | foreground service keeping the OAuth loopback alive |
+| `.../model/view/SignInStatusSetting.kt`, `.../viewholder/SignInViewHolder.kt`, `list_item_sign_in.xml` | combined sign-in row with status pill |
+| `res/xml/network_security_config.xml` | cleartext to loopback only (OAuth callback) |
+| `res/drawable/bg_online_pill.xml`, `bg_update_pill.xml` | game-list badges |
+| `res/values/strings_nextendo.xml`, `colors_nextendo.xml` | fork strings/colors, kept out of upstream files |
+
+### Shared files this fork edits (conflict-prone)
+
+| File | Change | On conflict |
+| --- | --- | --- |
+| `src/android/app/build.gradle.kts` | `ENABLE_WEB_SERVICE=1`; relative `VCPKG_OVERLAY_TRIPLETS` arg | keep the arg; re-check the option block |
+| `src/android/app/src/main/jni/CMakeLists.txt` | compiles `src/citron/nextendo_save_sync.cpp`; `CITRON_ENABLE_LIBARCHIVE`, `ENABLE_WEB_SERVICE`, `LibArchive`, `nextendo_jni.cpp` | keep the added lines; if upstream refactors the target, re-apply by intent |
+| `src/common/nextendo_account.cpp` | `EnsureLoaded` only caches successful file reads (Android init-order fix) | resolve by intent; upstream may fix this differently |
+| `src/common/settings.h` | `enable_nextendo` default `true` (intentional divergence) | keep ours unless upstream changes the semantics |
+| `src/web_service/nextendo_api.{h,cpp}` | `SetCaCertPathOverride` + CA override in `ApplyCaCertPath` | additive; re-apply if `ApplyCaCertPath` moves |
+| `src/citron/nextendo_save_sync.cpp/h` | compiled unchanged into the Android build (desktop file, zero Qt deps) | if upstream refactors or moves it, update the CMake reference |
+| `src/android/.../AndroidManifest.xml` | foreground-service permissions + service + network security config | keep the additions |
+| `src/android/.../NativeLibrary.kt`, `CitronApplication.kt` | external funs + callbacks + CA export at startup | keep; the Kotlin JNI surface is documented in `nextendo_jni.cpp` |
+| `.../features/settings/*` (Settings, presenter, adapter, fragments) | `SECTION_NEXTENDO`, the sign-in section, `TYPE_SIGN_IN_STATUS`, `onResume` reload, DiffCallback content compare | small anchors; re-apply by intent |
+| `.../adapters/GameAdapter.kt`, `ui/GamesFragment.kt`, `fragments/SearchFragment.kt` | pill binding + 30s count polling | keep the additions |
+
+### Desktop files compiled into the Android build
+
+`src/citron/nextendo_save_sync.cpp` is added to `citron-android` because it has
+no Qt dependency. Any upstream refactor of that file (it lives in the Qt target)
+must be verified against the Android build.
+
+## Intentional divergences
+
+- `enable_nextendo` defaults to on (upstream desktop defaults it off).
+- The macOS vcpkg overlay exists because AGP leaks the NDK clang into `CC/CXX`
+  for the host-triplet detection. If upstream ever fixes this properly, delete
+  the overlay and the gradle argument.
+
+## Publishing
+
+1. Create the GitHub fork of `NextendoNetwork/citron-nextendo`; push `main` and
+   `android-nextendo`.
+2. Releases: tag `android-nextendo` and attach the `app-mainline-release.apk`
+   (see `docs/BUILDING-CITRON-ANDROID`-style notes below if written).
+3. Build on any host: JDK 17, Android SDK (platform 34, NDK 26.1.10909125,
+   cmake 3.22.1). The vcpkg overlay only affects macOS hosts.
