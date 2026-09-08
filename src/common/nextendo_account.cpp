@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include <fmt/format.h>
@@ -34,9 +35,15 @@ void EnsureLoaded() {
     if (g_loaded) {
         return;
     }
-    g_loaded = true;
 
-    const std::string contents = FS::ReadStringFromFile(FilePath(), FS::FileType::TextFile);
+    const auto path = FilePath();
+    const std::string contents = FS::ReadStringFromFile(path, FS::FileType::TextFile);
+    // Only cache the result when the file actually exists. If it is absent (e.g. the app
+    // directory was not initialized yet and the path was relative), retry on the next call
+    // instead of poisoning the account state for the whole process.
+    if (!contents.empty()) {
+        g_loaded = true;
+    }
     std::vector<std::string> lines;
     Common::SplitString(contents, '\n', lines);
 

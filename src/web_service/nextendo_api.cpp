@@ -31,6 +31,12 @@
 
 namespace WebService::NextendoApi {
 
+std::string g_ca_cert_override;
+
+void SetCaCertPathOverride(const std::string& path) {
+    g_ca_cert_override = path;
+}
+
 namespace {
 
 constexpr const char* CanonicalUrl = "https://nextendo.network";
@@ -195,6 +201,10 @@ bool IsLoopback(const std::string& host) {
 // bundle directly. On Windows/macOS there's no equivalent fixed path; leave the client's cert
 // path unset so httplib falls through to its own native cert-store loader for those platforms.
 void ApplyCaCertPath(httplib::Client& client) {
+    if (!g_ca_cert_override.empty() && std::filesystem::exists(g_ca_cert_override)) {
+        client.set_ca_cert_path(g_ca_cert_override);
+        return;
+    }
 #ifdef __linux__
     static constexpr std::array<const char*, 4> candidates{
         "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu/Arch

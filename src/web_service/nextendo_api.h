@@ -34,6 +34,10 @@ struct OnlineStatus {
 // request carries the account token.
 std::string BaseUrl();
 
+// Overrides the CA bundle for the account server's TLS certificate (Android
+// exports the system CA store to a PEM file at startup).
+void SetCaCertPathOverride(const std::string& path);
+
 // Signs in through the user's browser (OAuth loopback + PKCE), so the emulator never sees the
 // e-mail or password: password login on /api/login is website-only, behind a captcha. `open_url` is
 // handed the authorize URL to open. Blocks until the browser reaches the loopback callback.
