@@ -439,6 +439,40 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             }
         }
 
+        // Nextendo presence + play-time + cloud-save sync. Mirrors the desktop's game
+        // start/stop hooks.
+        var sawEmulationStart = false
+        var startElapsedRealtime = 0L
+        emulationViewModel.emulationStarted.collect(viewLifecycleOwner) { started ->
+            if (started) {
+                sawEmulationStart = true
+                startElapsedRealtime = SystemClock.elapsedRealtime()
+                val programId = game.programId.toLongOrNull() ?: 0L
+                if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
+                    NativeLibrary.nextendoPushPresence(2, programId, game.title)
+                    Thread {
+                        NativeLibrary.nextendoCloudSavePull(programId)
+                    }.start()
+                }
+            } else {
+                if (!sawEmulationStart) {
+                    return@collect
+                }
+                sawEmulationStart = false
+                val programId = game.programId.toLongOrNull() ?: 0L
+                if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
+                    val seconds = (SystemClock.elapsedRealtime() - startElapsedRealtime) / 1000
+                    if (programId != 0L && seconds > 0) {
+                        NativeLibrary.nextendoSyncPlayTime(programId, seconds)
+                    }
+                    NativeLibrary.nextendoPushPresence(1, 0, "")
+                    Thread {
+                        NativeLibrary.nextendoCloudSavePush(programId)
+                    }.start()
+                }
+            }
+        }
+
         emulationViewModel.emulationStarted.collect(viewLifecycleOwner) {
             if (it) {
                 binding.drawerLayout.setDrawerLockMode(IntSetting.LOCK_DRAWER.getInt())
