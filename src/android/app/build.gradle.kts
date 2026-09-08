@@ -95,7 +95,7 @@ android {
                 signingConfigs.getByName("default")
             }
 
-            resValue("string", "app_name_suffixed", "citron-neo: The switch fell off")
+            resValue("string", "app_name_suffixed", "Nextendo Citron")
             isDebuggable = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -119,7 +119,7 @@ android {
         // Attaches 'debug' suffix to version and package name, allowing installation alongside the release build.
         debug {
             signingConfig = signingConfigs.getByName("default")
-            resValue("string", "app_name_suffixed", "citron-neo: The switch fell off Debug")
+            resValue("string", "app_name_suffixed", "Nextendo Citron Debug")
             isDebuggable = true
             isJniDebuggable = true
             versionNameSuffix = "-debug"
