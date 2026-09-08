@@ -26,6 +26,7 @@ import org.citron.citron_emu.databinding.ListItemSettingBinding
 import org.citron.citron_emu.databinding.ListItemSettingInputBinding
 import org.citron.citron_emu.databinding.ListItemSettingSwitchBinding
 import org.citron.citron_emu.databinding.ListItemSettingsHeaderBinding
+import org.citron.citron_emu.databinding.ListItemSignInBinding
 import org.citron.citron_emu.features.input.NativeInput
 import org.citron.citron_emu.features.input.model.AnalogDirection
 import org.citron.citron_emu.features.settings.model.AbstractIntSetting
@@ -89,6 +90,10 @@ class SettingsAdapter(
 
             SettingsItem.TYPE_STRING_INPUT -> {
                 StringInputViewHolder(ListItemSettingBinding.inflate(inflater), this)
+            }
+
+            SettingsItem.TYPE_SIGN_IN_STATUS -> {
+                SignInViewHolder(ListItemSignInBinding.inflate(inflater), this)
             }
 
             else -> {
@@ -439,7 +444,11 @@ class SettingsAdapter(
         }
 
         override fun areContentsTheSame(oldItem: SettingsItem, newItem: SettingsItem): Boolean {
-            return oldItem.setting.key == newItem.setting.key
+            // Include type and title so items whose text changes (e.g. the Nextendo
+            // sign-in status) actually rebind.
+            return oldItem.setting.key == newItem.setting.key &&
+                oldItem.type == newItem.type &&
+                oldItem.title == newItem.title
         }
     }
 }

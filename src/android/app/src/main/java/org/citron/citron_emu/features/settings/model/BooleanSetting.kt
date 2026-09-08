@@ -35,6 +35,10 @@ enum class BooleanSetting(override val key: String) : AbstractBooleanSetting {
     ANDROID_ARM64_REGISTER_GUARDS("android_arm64_register_guards"),
     AIRPLANE_MODE("airplane_mode"),
 
+    // Nextendo Network
+    NEXTENDO_ENABLE("enable_nextendo"),
+    NEXTENDO_CLOUD_SYNC("nextendo_cloud_sync_enabled"),
+
     // VRAM Management settings (FIXED: VRAM leak prevention)
     SPARSE_TEXTURE_PRIORITY_EVICTION("sparse_texture_priority_eviction"),
     LOG_VRAM_USAGE("log_vram_usage");

@@ -27,6 +27,15 @@ import org.citron.citron_emu.utils.collect
 
 class SettingsFragment : Fragment() {
     private lateinit var presenter: SettingsFragmentPresenter
+
+    override fun onResume() {
+        super.onResume()
+        // Rebuild the list when returning to the app (e.g. after the Nextendo
+        // OAuth sign-in completed in the browser) so account state is fresh.
+        if (::presenter.isInitialized) {
+            presenter.loadSettingsList()
+        }
+    }
     private var settingsAdapter: SettingsAdapter? = null
 
     private var _binding: FragmentSettingsBinding? = null

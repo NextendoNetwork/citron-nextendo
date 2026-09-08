@@ -100,6 +100,7 @@ class SettingsFragmentPresenter(
             MenuTag.SECTION_INPUT_PLAYER_EIGHT -> addInputPlayer(sl, 7)
             MenuTag.SECTION_THEME -> addThemeSettings(sl)
             MenuTag.SECTION_DEBUG -> addDebugSettings(sl)
+            MenuTag.SECTION_NEXTENDO -> addNextendoNetworkSettings(sl)
             MenuTag.SECTION_NETWORK -> addNetworkSettings(sl)
             MenuTag.SECTION_ZEP_ZONE -> addZepZoneSettings(sl)
             MenuTag.SECTION_APPLETS_ANDROID -> addAppletsAndroidSettings(sl)
@@ -1010,6 +1011,48 @@ class SettingsFragmentPresenter(
                     customChoice = context.getString(R.string.log_filter_custom)
                 )
             )
+        }
+    }
+
+    private fun addNextendoNetworkSettings(sl: ArrayList<SettingsItem>) {
+        sl.apply {
+            add(HeaderSetting(R.string.nextendo_network))
+            val username = NativeLibrary.getNextendoAccountStatus()
+            add(
+                SignInStatusSetting(
+                    signedIn = username.isNotEmpty(),
+                    titleId = if (username.isNotEmpty()) {
+                        R.string.nextendo_sign_out
+                    } else {
+                        R.string.nextendo_sign_in
+                    },
+                    descriptionId = R.string.nextendo_sign_in_description,
+                    statusText = context.getString(
+                        if (username.isNotEmpty()) {
+                            R.string.nextendo_signed_in_as
+                        } else {
+                            R.string.nextendo_not_signed_in
+                        },
+                        username
+                    )
+                ) {
+                    if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
+                        NativeLibrary.nextendoSignOut()
+                        android.widget.Toast.makeText(
+                            context,
+                            R.string.nextendo_signed_out,
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                        loadSettingsList()
+                    } else {
+                        org.citron.citron_emu.service.NextendoSignInService.start(context)
+                    }
+                }
+            )
+            add(BooleanSetting.NEXTENDO_ENABLE.key)
+            add(StringSetting.NEXTENDO_SERVER_IP.key)
+            add(StringSetting.NEXTENDO_NAT_IP.key)
+            add(BooleanSetting.NEXTENDO_CLOUD_SYNC.key)
         }
     }
 

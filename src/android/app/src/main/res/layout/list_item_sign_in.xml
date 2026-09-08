@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="?android:attr/selectableItemBackground"
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center_vertical"
+    android:minHeight="72dp"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:id="@+id/text_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_centerVertical="true"
+        android:layout_toStartOf="@id/chip_status"
+        android:orientation="vertical">
+
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/text_setting_name"
+            style="@style/TextAppearance.Material3.TitleMedium"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="16dp"
+            android:textAlignment="viewStart"
+            android:textSize="17sp"
+            tools:text="Sign in to Nextendo Network" />
+
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/text_setting_description"
+            style="@style/TextAppearance.Material3.BodySmall"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_small"
+            android:textAlignment="viewStart"
+            tools:text="Open your browser to authorize this device" />
+
+    </LinearLayout>
+
+    <com.google.android.material.chip.Chip
+        android:id="@+id/chip_status"
+        style="@style/Widget.Material3.Chip.Filter"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentEnd="true"
+        android:layout_centerVertical="true"
+        android:layout_marginStart="16dp"
+        android:checkable="false"
+        android:clickable="false"
+        android:focusable="false"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        tools:text="Not signed in" />
+
+</RelativeLayout>

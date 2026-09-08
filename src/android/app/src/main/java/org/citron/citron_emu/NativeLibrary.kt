@@ -5,12 +5,16 @@
 package org.citron.citron_emu
 
 import android.content.DialogInterface
+import android.content.Intent
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.text.Html
 import android.text.method.LinkMovementMethod
 import android.view.Surface
 import android.view.View
 import android.widget.TextView
+import android.widget.Toast
 import androidx.annotation.Keep
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import java.lang.ref.WeakReference
@@ -193,6 +197,61 @@ object NativeLibrary {
 
     external fun logSettings()
 
+    external fun nextendoSignIn()
+
+    external fun nextendoSignOut()
+
+    external fun getNextendoAccountStatus(): String
+
+    // GET /api/online-counts as a JSON object keyed by lowercase-hex title id.
+    external fun nextendoOnlineCountsJson(): String
+
+    external fun isNextendoTitle(programId: Long): Boolean
+
+    external fun nextendoRequiredVersion(programId: Long): String
+
+    // status: 0 offline, 1 online, 2 in a game. programId 0 clears the running title.
+    external fun nextendoPushPresence(status: Int, programId: Long, appName: String)
+
+    external fun nextendoSyncPlayTime(programId: Long, seconds: Long)
+
+    // No-op when cloud sync is off, not linked, or the title isn't Nextendo-supported.
+    external fun nextendoCloudSavePull(programId: Long)
+
+    external fun nextendoCloudSavePush(programId: Long)
+
+    // Android has no system CA file OpenSSL can read; the CA store is exported to a PEM.
+    external fun setNextendoCaCertPath(path: String)
+
+    @JvmStatic
+    fun exportNextendoCaCerts(): String {
+        return try {
+            val keystore = java.security.KeyStore.getInstance("AndroidCAStore").apply {
+                load(null)
+            }
+            val pem = StringBuilder()
+            val aliases = keystore.aliases()
+            while (aliases.hasMoreElements()) {
+                val alias = aliases.nextElement()
+                val cert = keystore.getCertificate(alias) ?: continue
+                val encoded = android.util.Base64.encodeToString(
+                    cert.encoded,
+                    android.util.Base64.NO_WRAP
+                )
+                pem.append("-----BEGIN CERTIFICATE-----\n")
+                pem.append(encoded.chunked(64).joinToString("\n"))
+                pem.append("\n-----END CERTIFICATE-----\n")
+            }
+            val file = java.io.File(CitronApplication.appContext.filesDir, "nextendo_cacert.pem")
+            file.writeText(pem.toString())
+            setNextendoCaCertPath(file.absolutePath)
+            file.absolutePath
+        } catch (e: Exception) {
+            Log.error("[NativeLibrary] Nextendo CA export failed: ${e.message}")
+            ""
+        }
+    }
+
     enum class CoreError {
         ErrorSystemFiles,
         ErrorSavestate,
@@ -342,6 +401,36 @@ object NativeLibrary {
     @JvmStatic
     fun onProgramChanged(programIndex: Int) {
         sEmulationActivity.get()!!.onProgramChanged(programIndex)
+    }
+
+    @Keep
+    @JvmStatic
+    fun onNextendoOAuthUrl(url: String) {
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                CitronApplication.appContext.startActivity(intent)
+            } catch (e: Exception) {
+                Log.error("[NativeLibrary] Could not open Nextendo sign-in browser: ${e.message}")
+            }
+        }
+    }
+
+    @Keep
+    @JvmStatic
+    fun onNextendoSignInResult(success: Boolean, message: String) {
+        Handler(Looper.getMainLooper()).post {
+            val text =
+                if (success) "Nextendo: signed in as $message — please return to the emulator app"
+                else "Nextendo sign-in failed: $message"
+            Toast.makeText(CitronApplication.appContext, text, Toast.LENGTH_LONG).show()
+            try {
+                org.citron.citron_emu.service.NextendoSignInService.stop(CitronApplication.appContext)
+            } catch (_: Exception) {
+            }
+        }
     }
 
     /**

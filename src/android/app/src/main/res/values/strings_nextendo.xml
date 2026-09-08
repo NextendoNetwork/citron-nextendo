@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Nextendo Network -->
+    <string name="nextendo_network">Nextendo Network</string>
+    <string name="nextendo_network_description">Account, online redirection and cloud save settings</string>
+    <string name="nextendo_enable">Enable Nextendo Network</string>
+    <string name="nextendo_enable_description">Redirect Nintendo online hostnames to the Nextendo Network servers</string>
+    <string name="nextendo_server_ip">Nextendo server IP</string>
+    <string name="nextendo_server_ip_description">Address the online hostnames resolve to (51.178.29.194 by default)</string>
+    <string name="nextendo_nat_ip">NAT check IP</string>
+    <string name="nextendo_nat_ip_description">Second NAT-check vantage point (164.132.111.120 by default)</string>
+    <string name="nextendo_cloud_sync">Cloud save sync</string>
+    <string name="nextendo_cloud_sync_description">Automatically pull saves on boot and push on exit</string>
+    <string name="nextendo_sign_in">Sign in to Nextendo Network</string>
+    <string name="nextendo_sign_in_description">Open your browser to authorize this device (OAuth, your password is never seen by the emulator)</string>
+    <string name="nextendo_sign_out">Sign out of Nextendo Network</string>
+    <string name="nextendo_signed_out">Nextendo: signed out</string>
+    <string name="nextendo_signed_in_as">Signed in as %1$s</string>
+    <string name="nextendo_not_signed_in">Not signed in</string>
+</resources>

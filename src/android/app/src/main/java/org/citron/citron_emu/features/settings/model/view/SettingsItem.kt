@@ -95,6 +95,7 @@ abstract class SettingsItem(
         const val TYPE_INPUT_PROFILE = 10
         const val TYPE_STRING_INPUT = 11
         const val TYPE_LOG_FILTER = 12
+        const val TYPE_SIGN_IN_STATUS = 13
 
         const val FASTMEM_COMBINED = "fastmem_combined"
 
@@ -691,6 +692,45 @@ abstract class SettingsItem(
                     titleId = R.string.airplane_mode,
                     descriptionId = R.string.airplane_mode_description
                 )
+            )
+
+            // Nextendo Network
+            put(
+                SwitchSetting(
+                    BooleanSetting.NEXTENDO_ENABLE,
+                    titleId = R.string.nextendo_enable,
+                    descriptionId = R.string.nextendo_enable_description
+                )
+            )
+            put(
+                StringInputSetting(
+                    StringSetting.NEXTENDO_SERVER_IP,
+                    titleId = R.string.nextendo_server_ip,
+                    descriptionId = R.string.nextendo_server_ip_description
+                )
+            )
+            put(
+                StringInputSetting(
+                    StringSetting.NEXTENDO_NAT_IP,
+                    titleId = R.string.nextendo_nat_ip,
+                    descriptionId = R.string.nextendo_nat_ip_description
+                )
+            )
+            put(
+                SwitchSetting(
+                    BooleanSetting.NEXTENDO_CLOUD_SYNC,
+                    titleId = R.string.nextendo_cloud_sync,
+                    descriptionId = R.string.nextendo_cloud_sync_description
+                )
+            )
+            put(
+                RunnableSetting(
+                    titleId = R.string.nextendo_sign_in,
+                    descriptionId = R.string.nextendo_sign_in_description,
+                    isRunnable = true
+                ) {
+                    NativeLibrary.nextendoSignIn()
+                }
             )
         }
     }
