@@ -47,6 +47,36 @@
                 android:textSize="16sp"
                 tools:text="The Legend of Zelda: Skyward Sword" />
 
+            <TextView
+                android:id="@+id/text_online_pill"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_online_pill"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="3dp"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                tools:text="Nextendo: 12 online" />
+
+            <TextView
+                android:id="@+id/text_update_pill"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_update_pill"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="3dp"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                tools:text="Requires 4.0.0" />
+
         </LinearLayout>
 
     </com.google.android.material.card.MaterialCardView>

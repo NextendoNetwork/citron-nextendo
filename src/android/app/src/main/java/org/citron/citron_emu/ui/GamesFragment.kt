@@ -5,6 +5,8 @@ package org.citron.citron_emu.ui
 
 import android.content.SharedPreferences
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -17,12 +19,18 @@ import androidx.fragment.app.activityViewModels
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import org.citron.citron_emu.NativeLibrary
 import org.citron.citron_emu.R
 import org.citron.citron_emu.adapters.GameAdapter
 import org.citron.citron_emu.databinding.FragmentGamesBinding
 import org.citron.citron_emu.layout.AutofitGridLayoutManager
 import org.citron.citron_emu.model.GamesViewModel
 import org.citron.citron_emu.model.HomeViewModel
+import org.citron.citron_emu.utils.Log
 import org.citron.citron_emu.utils.ViewUtils.setVisible
 import org.citron.citron_emu.utils.ViewUtils.updateMargins
 import org.citron.citron_emu.utils.collect
@@ -38,12 +46,48 @@ class GamesFragment : Fragment() {
     private lateinit var preferences: SharedPreferences
     private var viewMode = VIEW_MODE_LIST
 
+    private val onlineCountsHandler = Handler(Looper.getMainLooper())
+    private val onlineCountsPoll = object : Runnable {
+        override fun run() {
+            Thread {
+                try {
+                    val json = NativeLibrary.nextendoOnlineCountsJson()
+                    if (json.isNotEmpty() && _binding != null && ::gameAdapter.isInitialized) {
+                        val counts = HashMap<String, Int>()
+                        val obj = Json.parseToJsonElement(json).jsonObject
+                        for ((key, value) in obj) {
+                            counts[key] = value.jsonPrimitive.int
+                        }
+                        Handler(Looper.getMainLooper()).post {
+                            gameAdapter.setOnlineCounts(counts)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.error("[GamesFragment] online counts poll failed: ${e.message}")
+                }
+                onlineCountsHandler.postDelayed(this, ONLINE_COUNTS_POLL_MS)
+            }.start()
+        }
+    }
+
     companion object {
         private const val PREF_VIEW_MODE = "pref_games_view_mode"
         private const val VIEW_MODE_LIST = 0
         private const val VIEW_MODE_GRID = 1
         private const val VIEW_MODE_COMPACT_GRID = 2
         private const val VIEW_MODE_COUNT = 3
+        private const val ONLINE_COUNTS_POLL_MS = 30_000L
+    }
+
+    override fun onResume() {
+        super.onResume()
+        onlineCountsHandler.removeCallbacks(onlineCountsPoll)
+        onlineCountsHandler.post(onlineCountsPoll)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        onlineCountsHandler.removeCallbacks(onlineCountsPoll)
     }
 
     override fun onCreateView(

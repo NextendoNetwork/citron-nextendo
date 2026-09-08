@@ -5,8 +5,10 @@ package org.citron.citron_emu.adapters
 
 import android.net.Uri
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.pm.ShortcutInfoCompat
@@ -21,6 +23,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.citron.citron_emu.CitronApplication
 import org.citron.citron_emu.HomeNavigationDirections
+import org.citron.citron_emu.NativeLibrary
 import org.citron.citron_emu.R
 import org.citron.citron_emu.databinding.CardGameCoverBinding
 import org.citron.citron_emu.databinding.CardGameListBinding
@@ -35,6 +38,43 @@ class GameAdapter(private val activity: AppCompatActivity, private var tilesMode
     companion object {
         private const val VIEW_TYPE_LIST = 0
         private const val VIEW_TYPE_TILES = 1
+    }
+
+    private var onlineCounts: HashMap<String, Int> = HashMap()
+    private var showNextendoPills = true
+
+    fun setOnlineCounts(counts: HashMap<String, Int>) {
+        onlineCounts = counts
+        notifyDataSetChanged()
+    }
+
+    // Off in search results, where the pills overlap the game title.
+    fun setShowNextendoPills(enabled: Boolean) {
+        if (showNextendoPills != enabled) {
+            showNextendoPills = enabled
+            notifyDataSetChanged()
+        }
+    }
+
+    private fun bindPills(onlinePill: TextView, updatePill: TextView, model: Game) {
+        if (!showNextendoPills) {
+            onlinePill.visibility = View.GONE
+            updatePill.visibility = View.GONE
+            return
+        }
+        val programIdLong = model.programId.toLongOrNull() ?: 0L
+        val linked = NativeLibrary.getNextendoAccountStatus().isNotEmpty()
+        val nextendoTitle = NativeLibrary.isNextendoTitle(programIdLong)
+        val count = onlineCounts[String.format("%016x", programIdLong)]
+        val isOnlinePillVisible = linked && nextendoTitle && count != null
+        onlinePill.visibility = if (isOnlinePillVisible) View.VISIBLE else View.GONE
+        onlinePill.text = "Nextendo: $count online"
+
+        val requiredVersion = NativeLibrary.nextendoRequiredVersion(programIdLong)
+        val needsUpdate = linked && nextendoTitle &&
+            model.version.isNotEmpty() && model.version != requiredVersion
+        updatePill.visibility = if (needsUpdate) View.VISIBLE else View.GONE
+        updatePill.text = "Requires $requiredVersion"
     }
 
     fun setTilesMode(enabled: Boolean) {
@@ -72,6 +112,8 @@ class GameAdapter(private val activity: AppCompatActivity, private var tilesMode
 
             binding.textGameTitle.text = model.title.replace("[\\t\\n\\r]+".toRegex(), " ")
 
+            bindPills(binding.textOnlinePill, binding.textUpdatePill, model)
+
             binding.cardGame.setOnClickListener { onClick(model) }
             binding.cardGame.setOnLongClickListener { onLongClick(model) }
         }
@@ -90,6 +132,8 @@ class GameAdapter(private val activity: AppCompatActivity, private var tilesMode
         override fun bind(model: Game) {
             binding.imageGameScreen.scaleType = ImageView.ScaleType.CENTER_CROP
             GameIconUtils.loadGameIcon(model, binding.imageGameScreen)
+
+            bindPills(binding.textOnlinePill, binding.textUpdatePill, model)
 
             binding.cardGame.setOnClickListener { handleGameClick(model) }
             binding.cardGame.setOnLongClickListener { handleGameLongClick(model) }
