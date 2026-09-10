@@ -36,6 +36,7 @@ import androidx.core.view.updatePadding
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.drawerlayout.widget.DrawerLayout.DrawerListener
 import androidx.fragment.app.Fragment
+import androidx.preference.PreferenceManager
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.findNavController
@@ -483,7 +484,12 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
                     val seconds = (SystemClock.elapsedRealtime() - startElapsedRealtime) / 1000
                     if (programId != 0L && seconds > 0) {
-                        NativeLibrary.nextendoSyncPlayTime(programId, seconds)
+                        val preferences =
+                            PreferenceManager.getDefaultSharedPreferences(requireContext())
+                        val key = PLAY_TIME_PREF_PREFIX + programId.toString(16)
+                        val total = preferences.getLong(key, 0L) + seconds
+                        preferences.edit().putLong(key, total).apply()
+                        NativeLibrary.nextendoSyncPlayTime(programId, total)
                     }
                     Thread {
                         NativeLibrary.nextendoCloudSavePush(programId)
@@ -1574,6 +1580,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     companion object {
         private const val PRESENCE_TICK_MS = 5_000L
         private const val FRIENDS_POLL_TICKS = 4
+        private const val PLAY_TIME_PREF_PREFIX = "nextendo_playtime_"
         private val perfStatsUpdateHandler = Handler(Looper.getMainLooper())
         private val thermalStatsUpdateHandler = Handler(Looper.getMainLooper())
         private val ramStatsUpdateHandler = Handler(Looper.getMainLooper())
