@@ -74,6 +74,8 @@
 #   --tracy-alloc         Enable Tracy heap allocator tracking (default off, requires --tracy)
 #   --relwithdebinfo      Include debug symbols alongside optimizations
 #   --clang-version N     Clang version to use (default: 21)
+#   --container           Build in the reusable Arch container (default: auto)
+#   --native              Do not enter a container
 #   --help, -h            Show this message
 #
 # TYPICAL WORKFLOWS:
@@ -137,6 +139,73 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -f "${SCRIPT_DIR}/CMakeLists.txt" ]] \
     || { echo "[ERROR] CMakeLists.txt not found next to this script." >&2; exit 1; }
+
+# =============================================================================
+# Reusable pkgforge Arch build container
+# =============================================================================
+# CI and self-builds use the same pkgforge base image.  CPM dependencies
+# remain built by CMake inside the mounted checkout; `setup` installs Citron's
+# toolchain and package/runtime inputs inside the container.
+_container_mode="${CITRON_CONTAINER_MODE:-auto}"
+_inside_arch="${CITRON_IN_ARCH_CONTAINER:-0}"
+_forward_args=()
+for _arg in "$@"; do
+    case "${_arg}" in
+        --inside-arch-container) _inside_arch=1 ;;
+        --container) _container_mode=container ;;
+        --native) _container_mode=native ;;
+        *) _forward_args+=("${_arg}") ;;
+    esac
+done
+set -- "${_forward_args[@]}"
+
+# Existing CI workflow containers do not need Docker-in-Docker while the
+# workflow is being migrated to this entry point.
+if [[ -f /etc/arch-release && ( -f /.dockerenv || -f /run/.containerenv ) ]]; then
+    _inside_arch=1
+    export CITRON_IN_ARCH_CONTAINER=1
+fi
+
+if [[ "${_inside_arch}" != 1 && "${_container_mode}" != native ]]; then
+    _container_runtime="${CITRON_CONTAINER_RUNTIME:-}"
+    if [[ -z "${_container_runtime}" ]]; then
+        if command -v docker >/dev/null 2>&1; then
+            _container_runtime=docker
+        elif command -v podman >/dev/null 2>&1; then
+            _container_runtime=podman
+        fi
+    fi
+    if [[ -z "${_container_runtime}" ]]; then
+        if [[ "${_container_mode}" = container ]]; then
+            echo "[ERROR] --container requested but neither docker nor podman was found." >&2
+            exit 1
+        fi
+        echo "[WARN] No container runtime found; using native build. Pass --container to require Arch." >&2
+    else
+        _container_image="${CITRON_ARCH_IMAGE:-ghcr.io/pkgforge-dev/archlinux@sha256:f6fc7e14b0612a355d7ab50efb3cc40010ba28e4766860bd238d313b308f190b}"
+        _container_env=( -e CITRON_IN_ARCH_CONTAINER=1 )
+        for _name in CLANG_VERSION BUILD_ROOT JOBS LTO_MODE PGO_MODE UNITY_BUILD DEVEL CPM_SOURCE_CACHE; do
+            if [[ -z "${!_name+x}" ]]; then
+                continue
+            fi
+            if [[ "${_name}" = BUILD_ROOT || "${_name}" = CPM_SOURCE_CACHE ]]; then
+                _container_path="${!_name}"
+                if [[ "${_container_path}" = "${SCRIPT_DIR}" || "${_container_path}" = "${SCRIPT_DIR}"/* ]]; then
+                    _container_env+=( -e "${_name}=/workspace${_container_path#"${SCRIPT_DIR}"}" )
+                else
+                    echo "[WARN] Not forwarding ${_name}: ${_container_path} is outside the mounted checkout." >&2
+                fi
+            else
+                _container_env+=( -e "${_name}" )
+            fi
+        done
+        exec "${_container_runtime}" run --rm --init \
+            "${_container_env[@]}" \
+            -v "${SCRIPT_DIR}:/workspace" -w /workspace \
+            "${_container_image}" \
+            bash ./build-citron-linux.sh --inside-arch-container "$@"
+    fi
+fi
 
 # =============================================================================
 # Configuration defaults
@@ -392,6 +461,7 @@ _setup_apt() {
         nasm yasm perl gperf \
         autoconf automake libtool make \
         glslang-tools \
+        libvulkan-dev libshaderc-dev \
         patchelf \
         lsb-release software-properties-common gnupg \
         libelf-dev libzstd-dev libudev-dev zstd \
@@ -520,6 +590,7 @@ _setup_pacman() {
         nasm yasm perl gperf \
         autoconf automake libtool make \
         shaderc clang lld llvm zstd \
+        vulkan-headers vulkan-icd-loader \
         patchelf \
         elfutils systemd-libs \
         libglvnd libxkbcommon wayland \
@@ -560,6 +631,31 @@ _setup_pacman() {
     # Optional: bundled into the AppImage by package-citron-linux.sh if present.
     $SUDO pacman -S --needed --noconfirm gamemode 2>/dev/null || true
 
+    # If in an arch container, use pkgforge's debloated packages
+    if [[ "${CITRON_IN_ARCH_CONTAINER:-0}" = 1 && -f /etc/arch-release ]]; then
+        local debloated_helper debloated_helper_sha256
+        debloated_helper_sha256="9eec275b3bb8cb24a7d6743b0ba1cc612d372f172d700d6680f193a9e1ab08a9"
+        debloated_helper="$(mktemp)"
+        if ! curl -fL --retry 30 --connect-timeout 30 --max-time 300 \
+            "https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/e9414c02f713359b551bcfa3832576d2992b13da/useful-tools/get-debloated-pkgs.sh" \
+            -o "${debloated_helper}"; then
+            rm -f "${debloated_helper}"
+            error "failed to download pkgforge debloated package helper"
+        fi
+        if ! printf '%s  %s\n' "${debloated_helper_sha256}" "${debloated_helper}" | sha256sum --check --status; then
+            rm -f "${debloated_helper}"
+            error "pkgforge debloated package helper checksum mismatch"
+        fi
+        chmod +x "${debloated_helper}"
+        info "Installing pkgforge debloated Mesa/LLVM runtime packages..."
+        if [[ "$(uname -m)" = x86_64 ]]; then
+            "${debloated_helper}" --add-mesa --prefer-nano intel-media-driver-mini
+        else
+            "${debloated_helper}" --add-mesa --prefer-nano
+        fi
+        rm -f "${debloated_helper}"
+    fi
+
     # Arch ships unversioned tools — symlink to versioned names
     for tool in clang clang++ lld llvm-profdata llvm-bolt merge-fdata; do
         local versioned="/usr/local/bin/${tool}-${CLANG_VERSION}"
@@ -578,6 +674,7 @@ _setup_dnf() {
         nasm yasm perl gperf \
         autoconf automake libtool make \
         glslc clang lld patchelf \
+        vulkan-headers vulkan-loader-devel shaderc-devel \
         elfutils-libelf-devel libudev-devel zstd \
         libglvnd-devel mesa-libGL-devel libxkbcommon-devel wayland-devel \
         fontconfig-devel freetype-devel
@@ -629,6 +726,7 @@ _setup_yum() {
         nasm yasm perl gperf \
         autoconf automake libtool make \
         glslc clang lld patchelf \
+        vulkan-headers vulkan-loader-devel shaderc-devel \
         elfutils-libelf-devel libudev-devel zstd \
         libglvnd-devel mesa-libGL-devel libxkbcommon-devel wayland-devel \
         fontconfig-devel freetype-devel
@@ -679,6 +777,7 @@ _setup_zypper() {
         nasm yasm perl gperf \
         autoconf automake libtool make \
         shaderc clang lld llvm patchelf \
+        vulkan-headers vulkan-devel libshaderc-devel \
         libelf-devel libudev-devel zstd \
         Mesa-libGL-devel libglvnd-devel libxkbcommon-devel libwayland-client0 \
         fontconfig-devel freetype2-devel
@@ -728,7 +827,7 @@ _setup_emerge() {
         dev-lang/nasm dev-lang/yasm \
         llvm-core/clang llvm-core/lld \
         dev-build/autoconf dev-build/automake dev-build/libtool \
-        media-libs/shaderc \
+        media-libs/shaderc dev-util/vulkan-headers media-libs/vulkan-loader \
         dev-util/gperf dev-util/patchelf \
         dev-libs/elfutils virtual/libudev app-arch/zstd \
         media-libs/libglvnd x11-libs/libxkbcommon dev-libs/wayland \
@@ -1065,7 +1164,6 @@ build_common_cmake_args() {
         "-DCITRON_USE_FASTER_LD=OFF"
         "-DCITRON_USE_EXTERNAL_Vulkan_HEADERS=ON"
         "-DCITRON_USE_EXTERNAL_VULKAN_UTILITY_LIBRARIES=ON"
-        "-DCITRON_USE_AUTO_UPDATER=ON"
         "-DCITRON_BUILD_TYPE=Release"
         "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
         "-Wno-dev"
@@ -1377,7 +1475,6 @@ build_appimage_stage() {
     DESTDIR="${install_root}" \
     CITRON_QT_PATH="${CITRON_QT_PATH}" \
     CITRON_XCB_PATH="${CITRON_XCB_PATH:-}" \
-    CITRON_VULKAN_LOADER_PATH="${CITRON_VULKAN_LOADER_PATH:-}" \
         bash "${SCRIPT_DIR}/AppImageBuilder/package-citron-linux.sh" \
         || error "package-citron-linux.sh failed for ${stage_name}"
 
