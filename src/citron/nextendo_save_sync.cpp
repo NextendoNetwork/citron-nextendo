@@ -231,12 +231,22 @@ void Pull(Core::System& system, u64 title_id, bool force) {
                  title_id);
         return;
     }
-    if (!save_dir) {
-        return;
-    }
 
     const auto zip = WebService::NextendoApi::PullSave(fmt::format("{:016x}", title_id));
     if (!zip || zip->empty()) {
+        return;
+    }
+
+    if (!save_dir) {
+        // The title has never saved on this device: create its save directory (the layout the
+        // guest itself would) instead of dropping the restore. Without this a fresh device can
+        // never download, and its first local save then overwrites the cloud copy.
+        const auto& save_factory = system.GetFileSystemController().GetSaveDataFactory();
+        save_dir = save_factory.GetOrCreateTitleSaveDirectory(title_id);
+    }
+    if (!save_dir) {
+        LOG_WARNING(Frontend, "Nextendo save pull {:016X}: no save directory to restore into",
+                    title_id);
         return;
     }
 

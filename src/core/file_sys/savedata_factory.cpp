@@ -452,6 +452,61 @@ VirtualDir SaveDataFactory::GetTitleSaveDirectory(u64 title_id) const {
     return nullptr;
 }
 
+VirtualDir SaveDataFactory::GetOrCreateTitleSaveDirectory(u64 title_id) const {
+    if (auto existing = GetTitleSaveDirectory(title_id)) {
+        return existing;
+    }
+    if (!dir) {
+        return nullptr;
+    }
+
+    // Reuse the profile layout the console already created: those directories are named after
+    // the profile's user id, so recreating one reproduces the guest's own layout exactly.
+    VirtualDir user_save_root = dir->GetDirectoryRelative("user/save/0000000000000000");
+    if (!user_save_root) {
+        user_save_root = dir->GetDirectoryRelative("user/save");
+    }
+    if (user_save_root) {
+        for (const auto& profile_dir : user_save_root->GetSubdirectories()) {
+            if (!profile_dir) {
+                continue;
+            }
+            const std::string name = profile_dir->GetName();
+            if (name.size() != sizeof(u128) * 2) {
+                continue;
+            }
+            u128 user_id{};
+            try {
+                user_id[1] = std::stoull(name.substr(0, 16), nullptr, 16);
+                user_id[0] = std::stoull(name.substr(16, 16), nullptr, 16);
+            } catch (...) {
+                continue;
+            }
+            const auto meta = SaveDataAttribute::Make(title_id, SaveDataType::Account, user_id, 0);
+            if (auto created = Create(SaveDataSpaceId::User, meta)) {
+                return created;
+            }
+        }
+    }
+
+    // Nothing has ever saved on this NAND: fall back to the profile the console last opened,
+    // so the first cloud restore still lands where the guest will look for it.
+    const auto& profiles = system.GetProfileManager();
+    if (profiles.GetUserCount() == 0) {
+        return nullptr;
+    }
+    auto uuid = profiles.GetLastOpenedUser();
+    if (!profiles.UserExists(uuid)) {
+        const auto first = profiles.GetUser(0);
+        if (!first) {
+            return nullptr;
+        }
+        uuid = *first;
+    }
+    const auto meta = SaveDataAttribute::Make(title_id, SaveDataType::Account, uuid.AsU128(), 0);
+    return Create(SaveDataSpaceId::User, meta);
+}
+
 void SaveDataFactory::DoNandBackup(SaveDataSpaceId space, const SaveDataAttribute& meta, VirtualDir custom_dir) const {
     u64 title_id = (meta.program_id != 0 ? meta.program_id : static_cast<u64>(program_id));
     if (Settings::values.mirrored_save_paths.count(title_id)) return;
