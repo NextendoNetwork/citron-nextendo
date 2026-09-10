@@ -207,7 +207,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         // So this fragment doesn't restart on configuration changes; i.e. rotation.
         @Suppress("DEPRECATION")
         retainInstance = true
-        emulationState = EmulationState(game.path) {
+        emulationState = EmulationState(game.path, game.programId.toLongOrNull() ?: 0L) {
             return@EmulationState driverViewModel.isInteractionAllowed.value
         }
     }
@@ -468,11 +468,6 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 pumpTicks = 0
                 nextendoHandler.removeCallbacks(nextendoPump)
                 nextendoPump.run()
-                if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
-                    Thread {
-                        NativeLibrary.nextendoCloudSavePull(game.programId.toLongOrNull() ?: 0L)
-                    }.start()
-                }
             } else {
                 if (!sawEmulationStart) {
                     return@collect
@@ -1427,6 +1422,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
     private class EmulationState(
         private val gamePath: String,
+        private val programId: Long,
         private val emulationCanStart: () -> Boolean
     ) {
         private var state: State
@@ -1498,9 +1494,18 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             emulationThread.join()
             emulationThread = Thread({
                 Log.debug("[EmulationFragment] Starting emulation thread.")
+                pullNextendoCloudSave()
                 NativeLibrary.run(gamePath, programIndex, false)
             }, "NativeEmulation")
             emulationThread.start()
+        }
+
+        // Desktop pulls cloud saves before the title boots; doing it here keeps the download
+        // from racing the game's own first save read.
+        private fun pullNextendoCloudSave() {
+            if (programId != 0L) {
+                NativeLibrary.nextendoCloudSavePull(programId)
+            }
         }
 
         // Surface callbacks
@@ -1557,6 +1562,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 State.STOPPED -> {
                     emulationThread = Thread({
                         Log.debug("[EmulationFragment] Starting emulation thread.")
+                        pullNextendoCloudSave()
                         NativeLibrary.run(gamePath, programIndex, true)
                     }, "NativeEmulation")
                     emulationThread.start()
