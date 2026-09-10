@@ -468,6 +468,21 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 pumpTicks = 0
                 nextendoHandler.removeCallbacks(nextendoPump)
                 nextendoPump.run()
+                if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
+                    Thread {
+                        // The account server knows why a NEX login will be refused (session
+                        // active elsewhere, unverified, ...). The game would only show a bare
+                        // communication error, so surface the reason before it happens.
+                        val blocked = NativeLibrary.getNextendoOnlineStatus()
+                        if (blocked.isNotEmpty()) {
+                            nextendoHandler.post {
+                                context?.let {
+                                    Toast.makeText(it, blocked, Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    }.start()
+                }
             } else {
                 if (!sawEmulationStart) {
                     return@collect

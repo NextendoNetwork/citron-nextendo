@@ -203,6 +203,10 @@ object NativeLibrary {
 
     external fun getNextendoAccountStatus(): String
 
+    // Human-readable reason when the account online gates block play ("elsewhere",
+    // "unverified", ...). Empty when online is allowed, not linked, or not queried.
+    external fun getNextendoOnlineStatus(): String
+
     // GET /api/online-counts as a JSON object keyed by lowercase-hex title id.
     external fun nextendoOnlineCountsJson(): String
 
