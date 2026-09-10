@@ -210,8 +210,8 @@ object NativeLibrary {
 
     external fun nextendoRequiredVersion(programId: Long): String
 
-    // status: 0 offline, 1 online, 2 in a game. programId 0 clears the running title.
-    external fun nextendoPushPresence(status: Int, programId: Long, appName: String)
+    // Publishes the running title's presence, including the game's own room/join field.
+    external fun nextendoPresenceTick(programId: Long, appName: String)
 
     // Refreshes the friends snapshot the in-game friend service reads from.
     external fun nextendoRefreshFriends()

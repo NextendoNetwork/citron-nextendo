@@ -120,16 +120,35 @@ jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoRequiredVersion(JNIEnv
     return Common::Android::ToJString(env, it != table.end() ? it->second : "");
 }
 
-void Java_org_citron_citron_1emu_NativeLibrary_nextendoPushPresence(JNIEnv* env, jobject jobj,
-                                                                     jint status, jlong program_id,
-                                                                     jstring japp_name) {
+void Java_org_citron_citron_1emu_NativeLibrary_nextendoPresenceTick(JNIEnv* env, jobject jobj,
+                                                                    jlong program_id,
+                                                                    jstring japp_name) {
+    if (!Common::NextendoAccount::IsLinked()) {
+        return;
+    }
+
     const std::string app_name =
         japp_name != nullptr ? Common::Android::GetJString(env, japp_name) : std::string{};
     char buf[17];
     std::snprintf(buf, sizeof(buf), "%016llX", static_cast<unsigned long long>(program_id));
     const std::string app_id = program_id != 0 ? buf : std::string{};
-    std::thread{[status, app_id, app_name] {
-        WebService::NextendoApi::PushPresence(status, "", app_id, app_name);
+
+    s32 status = 0;
+    std::string app_field;
+    const bool have_update = Common::NextendoFriends::TakeLocalPresenceForPublish(status, app_field);
+
+    static std::string last_app_id;
+    if (!have_update && app_id == last_app_id) {
+        return;
+    }
+    last_app_id = app_id;
+    if (!have_update) {
+        status = Common::NextendoFriends::GetLocalStatus();
+        app_field = Common::NextendoFriends::GetLocalAppField();
+    }
+
+    std::thread{[status, app_field, app_id, app_name] {
+        WebService::NextendoApi::PushPresence(status, app_field, app_id, app_name);
     }}.detach();
 }
 
@@ -200,6 +219,7 @@ void Java_org_citron_citron_1emu_NativeLibrary_nextendoSignIn(JNIEnv* env, jobje
             Common::NextendoAccount::Save(result.pid, result.username, result.friend_code,
                                           result.token);
             RefreshFriendsCache();
+            Common::NextendoFriends::SetLocalStatus(Common::NextendoFriends::PresenceOnline);
             // Go online on the network so friends can see us.
             std::thread{[] { WebService::NextendoApi::PushPresence(1, "", "", ""); }}.detach();
         }

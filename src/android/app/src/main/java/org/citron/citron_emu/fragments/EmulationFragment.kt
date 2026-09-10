@@ -439,33 +439,37 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             }
         }
 
-        // Nextendo presence + play-time + cloud-save sync. Mirrors the desktop's game
-        // start/stop hooks.
+        // Nextendo friends, presence, play-time and cloud-save sync. Mirrors the desktop's
+        // game start/stop hooks.
         var sawEmulationStart = false
         var startElapsedRealtime = 0L
+        var pumpTicks = 0
         val nextendoHandler = Handler(Looper.getMainLooper())
-        val friendsPoll = object : Runnable {
+        val nextendoPump = object : Runnable {
             override fun run() {
                 if (!sawEmulationStart) {
                     return
                 }
-                Thread {
-                    NativeLibrary.nextendoRefreshFriends()
-                }.start()
-                nextendoHandler.postDelayed(this, FRIENDS_POLL_MS)
+                val programId = game.programId.toLongOrNull() ?: 0L
+                NativeLibrary.nextendoPresenceTick(programId, game.title)
+                if (pumpTicks++ % FRIENDS_POLL_TICKS == 0) {
+                    Thread {
+                        NativeLibrary.nextendoRefreshFriends()
+                    }.start()
+                }
+                nextendoHandler.postDelayed(this, PRESENCE_TICK_MS)
             }
         }
         emulationViewModel.emulationStarted.collect(viewLifecycleOwner) { started ->
             if (started) {
                 sawEmulationStart = true
                 startElapsedRealtime = SystemClock.elapsedRealtime()
-                val programId = game.programId.toLongOrNull() ?: 0L
+                pumpTicks = 0
+                nextendoHandler.removeCallbacks(nextendoPump)
+                nextendoPump.run()
                 if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
-                    NativeLibrary.nextendoPushPresence(2, programId, game.title)
-                    nextendoHandler.removeCallbacks(friendsPoll)
-                    friendsPoll.run()
                     Thread {
-                        NativeLibrary.nextendoCloudSavePull(programId)
+                        NativeLibrary.nextendoCloudSavePull(game.programId.toLongOrNull() ?: 0L)
                     }.start()
                 }
             } else {
@@ -473,14 +477,14 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                     return@collect
                 }
                 sawEmulationStart = false
-                nextendoHandler.removeCallbacks(friendsPoll)
+                nextendoHandler.removeCallbacks(nextendoPump)
+                NativeLibrary.nextendoPresenceTick(0, "")
                 val programId = game.programId.toLongOrNull() ?: 0L
                 if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
                     val seconds = (SystemClock.elapsedRealtime() - startElapsedRealtime) / 1000
                     if (programId != 0L && seconds > 0) {
                         NativeLibrary.nextendoSyncPlayTime(programId, seconds)
                     }
-                    NativeLibrary.nextendoPushPresence(1, 0, "")
                     Thread {
                         NativeLibrary.nextendoCloudSavePush(programId)
                     }.start()
@@ -1568,7 +1572,8 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     }
 
     companion object {
-        private const val FRIENDS_POLL_MS = 20_000L
+        private const val PRESENCE_TICK_MS = 5_000L
+        private const val FRIENDS_POLL_TICKS = 4
         private val perfStatsUpdateHandler = Handler(Looper.getMainLooper())
         private val thermalStatsUpdateHandler = Handler(Looper.getMainLooper())
         private val ramStatsUpdateHandler = Handler(Looper.getMainLooper())
