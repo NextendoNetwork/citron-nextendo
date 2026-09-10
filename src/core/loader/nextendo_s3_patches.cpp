@@ -37,19 +37,41 @@ constexpr std::array<u8, 29> kPeerHostnameFix{{
     0x45, 0x45, 0x4F, 0x46, // "EEOF"
 }};
 
+// Super Mario Bros. Wonder v1.2.1, build FF773E90972D544EB79406EAA65396D53C43EFB9.
+constexpr std::array<u8, 19> kCertificateWonder121{{
+    0x49, 0x50, 0x53, 0x33, 0x32,
+    0x00, 0xB0, 0x36, 0x28, 0x00, 0x04, // offset 0x00B03628, 4 bytes
+    0x2A, 0x00, 0x80, 0x52,
+    0x45, 0x45, 0x4F, 0x46,
+}};
+
+constexpr std::array<u8, 29> kPeerNameWonder121{{
+    0x49, 0x50, 0x53, 0x33, 0x32,
+    0x00, 0xB0, 0x2C, 0xBC, 0x00, 0x04, // offset 0x00B02CBC, 4 bytes
+    0x1F, 0x20, 0x03, 0xD5,
+    0x00, 0xB0, 0x2B, 0xA4, 0x00, 0x04, // offset 0x00B02BA4, 4 bytes
+    0x1F, 0x20, 0x03, 0xD5,
+    0x45, 0x45, 0x4F, 0x46,
+}};
+
 struct KnownBuild {
     std::string_view build_id_hex; // Uppercase, trailing zero bytes stripped -- same convention
                                     // PatchManager::PatchNSO already uses for build_id matching.
-    bool include_peer_hostname_fix;
+    std::span<const std::span<const u8>> patches;
 };
 
+constexpr std::array<std::span<const u8>, 2> kSplatoon3PeerPatches{{kCertificateBypass, kPeerHostnameFix}};
+constexpr std::array<std::span<const u8>, 1> kSplatoon3CertOnlyPatches{{kCertificateBypass}};
+constexpr std::array<std::span<const u8>, 2> kWonder121Patches{{kCertificateWonder121, kPeerNameWonder121}};
+
 // NSO build ID -> which patches it needs. An unrecognized build gets nothing, exactly like an
-// .ips file whose name didn't match any program. v11.3.0's build was verified byte-identical to
-// v11.2.0's at all three patch offsets before adding it here (no re-derivation needed).
-constexpr std::array<KnownBuild, 3> kKnownBuilds{{
-    {"6830B3A12406CB4716FEC5ADDC35D3E2DC92D212", true},
-    {"726D2B882DD9EF10F4A9D73EED088740630FB6C8", false},
-    {"28C4287AEE36F7499DA60F3E68B54C70DA382D75", true},
+// .ips file whose name didn't match any program. Splatoon 3 v11.3.0's build was verified
+// byte-identical to v11.2.0's at all three patch offsets before adding it here.
+constexpr std::array<KnownBuild, 4> kKnownBuilds{{
+    {"6830B3A12406CB4716FEC5ADDC35D3E2DC92D212", kSplatoon3PeerPatches},
+    {"726D2B882DD9EF10F4A9D73EED088740630FB6C8", kSplatoon3CertOnlyPatches},
+    {"28C4287AEE36F7499DA60F3E68B54C70DA382D75", kSplatoon3PeerPatches},
+    {"FF773E90972D544EB79406EAA65396D53C43EFB9", kWonder121Patches},
 }};
 
 FileSys::VirtualFile MakeIpsFile(std::span<const u8> bytes) {
@@ -60,12 +82,11 @@ FileSys::VirtualFile MakeIpsFile(std::span<const u8> bytes) {
 // Applies one patch, logging (not throwing) on failure -- a patch that can't apply shouldn't
 // stop the game from booting at all, just from working online, same as a bad exefs_patches file
 // would silently no-op today.
-std::vector<u8> ApplyOne(std::vector<u8> nso, std::span<const u8> ips_bytes,
-                         std::string_view what) {
+std::vector<u8> ApplyOne(std::vector<u8> nso, std::span<const u8> ips_bytes, size_t index) {
     auto in_file = std::make_shared<FileSys::VectorVfsFile>(nso, "nso");
     const auto patched = FileSys::PatchIPS(in_file, MakeIpsFile(ips_bytes));
     if (patched == nullptr) {
-        LOG_ERROR(Loader, "[Nextendo] Splatoon 3: {} patch failed to apply", what);
+        LOG_ERROR(Loader, "[Nextendo] NPLN: built-in patch #{} failed to apply", index);
         return nso;
     }
     return patched->ReadAllBytes();
@@ -83,22 +104,19 @@ std::vector<u8> ApplyIfMatch(const std::array<u8, 0x20>& build_id, std::vector<u
             continue;
         }
 
-        int applied_count = 1;
-        nso = ApplyOne(std::move(nso), kCertificateBypass, "certificate-bypass");
-        if (known.include_peer_hostname_fix) {
-            nso = ApplyOne(std::move(nso), kPeerHostnameFix, "peer-hostname");
-            ++applied_count;
+        for (size_t i = 0; i < known.patches.size(); ++i) {
+            nso = ApplyOne(std::move(nso), known.patches[i], i);
         }
 
-        LOG_INFO(Loader, "[Nextendo] Splatoon 3: {} built-in patch(es) applied (build {})",
-                 applied_count, build_id_hex);
+        LOG_INFO(Loader, "[Nextendo] NPLN: {} built-in patch(es) applied (build {})",
+                 known.patches.size(), build_id_hex);
         return nso;
     }
 
     // Rien ne correspond. Sur « main », c'est fatal pour l'en ligne : on le dit fort, une fois.
     if (module_name == "main") {
         LOG_ERROR(Loader,
-                  "[Nextendo] Splatoon 3 : AUCUN correctif integre pour ce build ({}). L'en ligne "
+                  "[Nextendo] NPLN : AUCUN correctif integre pour ce build ({}). L'en ligne "
                   "NE FONCTIONNERA PAS : l'epinglage de certificat du jeu reste actif, la "
                   "connexion "
                   "NPLN echouera en 2321-4992 apres une poignee de main TLS pourtant reussie. "

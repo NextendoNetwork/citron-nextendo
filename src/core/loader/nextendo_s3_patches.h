@@ -11,9 +11,8 @@
 
 namespace Loader::NextendoS3Patches {
 
-// Applies citron's built-in Splatoon 3 patches (certificate-pinning bypass, peer hostname fix)
-// to a loaded NSO, keyed by its build ID. Returns nso unchanged if build_id isn't one of the two
-// known Splatoon 3 builds.
+// Applies citron's built-in NPLN patches (certificate-pinning bypass, peer hostname fix) to a
+// loaded NSO, keyed by its build ID. Returns nso unchanged if build_id isn't a known build.
 //
 // Baked in rather than shipped as an exefs_patches mod, and for the same reason
 // NextendoNetwork/Ryujinx-Nextendo's NextendoS3Patches.cs is: Splatoon 3 refuses to boot with
