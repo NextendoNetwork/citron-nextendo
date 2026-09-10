@@ -70,6 +70,15 @@ Online play is version-pinned by the server. One version per title:
 
 Games with the wrong version show a "Requires X" badge on the game list.
 
+## Troubleshooting
+
+- **Online fails with a communication error right after a crash or force-close.**
+  A play session can stay registered on the Nextendo side, and the account gate
+  allows only one session at a time — every new login is then refused until it is
+  cleared. Sign in at https://nextendo.network, revoke your sessions, and try
+  again. The app shows the account server's reason at game start when this
+  happens.
+
 ## Security
 
 - Sign-in is browser-based OAuth with PKCE; the app only receives a session token.
