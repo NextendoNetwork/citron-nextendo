@@ -154,9 +154,16 @@ void ConfigureGeneral::ApplyConfiguration() {
     for (int i = 0; i < ui->external_content_list->count(); ++i) {
         new_external_dirs.push_back(ui->external_content_list->item(i)->text().toStdString());
     }
+    // Only rescan when the dirs actually changed -- this used to run unconditionally on every
+    // Apply/OK regardless of which tab was touched, immediately followed by LoadROM's own
+    // rescan of the same dirs at boot. Back-to-back scans of the same NSPs crash (dangling VFS
+    // reference), so skip the redundant one instead of only papering over that symptom.
+    const bool dirs_changed = new_external_dirs != Settings::values.external_content_dirs;
     Settings::values.external_content_dirs = std::move(new_external_dirs);
 
-    system.RefreshExternalContent();
+    if (dirs_changed) {
+        system.RefreshExternalContent();
+    }
 
     bool powered_on = system.IsPoweredOn();
     for (const auto& func : apply_funcs) {
