@@ -606,7 +606,7 @@ _setup_pacman() {
         libva libva-utils \
         libdrm \
         libx11 libxext \
-        libxrandr \
+        libxrandr libxcursor \
         || error "VAAPI+X11 group install failed — a partial install would leave libva found but libdrm/X11 missing, which FFmpeg's cmake treats as a hard requirement once libva is found, causing a much less clear failure later"
 
     # ── VDPAU (NVIDIA legacy — independent of VAAPI) ─────────────────────────
