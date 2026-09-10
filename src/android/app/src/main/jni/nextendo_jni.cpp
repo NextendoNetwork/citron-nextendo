@@ -17,14 +17,37 @@
 #include "common/android/id_cache.h"
 #include "common/nextendo_account.h"
 #include "common/nextendo_compatible_titles.h"
+#include "common/nextendo_friends.h"
 #include "common/settings.h"
 
 #include "citron/nextendo_save_sync.h"
+#include "core/hle/service/friend/friend.h"
 #include "web_service/nextendo_api.h"
 
 #include "native.h"
 
 namespace {
+
+void RefreshFriendsCache() {
+    const auto list = WebService::NextendoApi::GetFriends();
+    if (!list.ok) {
+        return;
+    }
+
+    std::vector<Common::NextendoFriends::Entry> cache;
+    cache.reserve(list.friends.size());
+    for (const auto& entry : list.friends) {
+        Common::NextendoFriends::Entry cached;
+        cached.pid = entry.pid;
+        cached.name = entry.name;
+        cached.status = entry.presence_status;
+        cached.app_field = entry.app_field;
+        cache.push_back(std::move(cached));
+    }
+
+    Common::NextendoFriends::Set(std::move(cache));
+    Service::Friend::NotifyFriendsListUpdated();
+}
 
 jmethodID NextendoOAuthUrlMethod() {
     static const jmethodID id = [] {
@@ -58,6 +81,11 @@ jstring Java_org_citron_citron_1emu_NativeLibrary_getNextendoAccountStatus(JNIEn
 
 void Java_org_citron_citron_1emu_NativeLibrary_nextendoSignOut(JNIEnv* env, jobject jobj) {
     Common::NextendoAccount::Clear();
+    Common::NextendoFriends::Set({});
+}
+
+void Java_org_citron_citron_1emu_NativeLibrary_nextendoRefreshFriends(JNIEnv* env, jobject jobj) {
+    RefreshFriendsCache();
 }
 
 jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoOnlineCountsJson(JNIEnv* env,
@@ -171,6 +199,7 @@ void Java_org_citron_citron_1emu_NativeLibrary_nextendoSignIn(JNIEnv* env, jobje
         if (result.ok) {
             Common::NextendoAccount::Save(result.pid, result.username, result.friend_code,
                                           result.token);
+            RefreshFriendsCache();
             // Go online on the network so friends can see us.
             std::thread{[] { WebService::NextendoApi::PushPresence(1, "", "", ""); }}.detach();
         }

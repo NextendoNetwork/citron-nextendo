@@ -443,6 +443,18 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         // start/stop hooks.
         var sawEmulationStart = false
         var startElapsedRealtime = 0L
+        val nextendoHandler = Handler(Looper.getMainLooper())
+        val friendsPoll = object : Runnable {
+            override fun run() {
+                if (!sawEmulationStart) {
+                    return
+                }
+                Thread {
+                    NativeLibrary.nextendoRefreshFriends()
+                }.start()
+                nextendoHandler.postDelayed(this, FRIENDS_POLL_MS)
+            }
+        }
         emulationViewModel.emulationStarted.collect(viewLifecycleOwner) { started ->
             if (started) {
                 sawEmulationStart = true
@@ -450,6 +462,8 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 val programId = game.programId.toLongOrNull() ?: 0L
                 if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
                     NativeLibrary.nextendoPushPresence(2, programId, game.title)
+                    nextendoHandler.removeCallbacks(friendsPoll)
+                    friendsPoll.run()
                     Thread {
                         NativeLibrary.nextendoCloudSavePull(programId)
                     }.start()
@@ -459,6 +473,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                     return@collect
                 }
                 sawEmulationStart = false
+                nextendoHandler.removeCallbacks(friendsPoll)
                 val programId = game.programId.toLongOrNull() ?: 0L
                 if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
                     val seconds = (SystemClock.elapsedRealtime() - startElapsedRealtime) / 1000
@@ -1553,6 +1568,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     }
 
     companion object {
+        private const val FRIENDS_POLL_MS = 20_000L
         private val perfStatsUpdateHandler = Handler(Looper.getMainLooper())
         private val thermalStatsUpdateHandler = Handler(Looper.getMainLooper())
         private val ramStatsUpdateHandler = Handler(Looper.getMainLooper())

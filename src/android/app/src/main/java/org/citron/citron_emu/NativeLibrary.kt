@@ -213,6 +213,9 @@ object NativeLibrary {
     // status: 0 offline, 1 online, 2 in a game. programId 0 clears the running title.
     external fun nextendoPushPresence(status: Int, programId: Long, appName: String)
 
+    // Refreshes the friends snapshot the in-game friend service reads from.
+    external fun nextendoRefreshFriends()
+
     external fun nextendoSyncPlayTime(programId: Long, seconds: Long)
 
     // No-op when cloud sync is off, not linked, or the title isn't Nextendo-supported.
