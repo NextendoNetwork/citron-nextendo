@@ -188,8 +188,14 @@ void Java_org_citron_citron_1emu_NativeLibrary_nextendoCloudSavePush(JNIEnv* env
     if (!Settings::values.nextendo_cloud_sync_enabled.GetValue()) {
         return;
     }
-    auto zip = Nextendo::SaveSync::CaptureForPush(EmulationSession::GetInstance().System(),
-                                                  static_cast<u64>(program_id));
+    auto& system = EmulationSession::GetInstance().System();
+    // Mirror the desktop: the emulation thread has exited, rebuild a fresh save-data factory
+    // before capturing so the archive sees this session's files and nothing the game had
+    // open while running.
+    if (auto filesystem = system.GetFilesystem()) {
+        system.GetFileSystemController().InitializeContentSystem(*filesystem, true);
+    }
+    auto zip = Nextendo::SaveSync::CaptureForPush(system, static_cast<u64>(program_id));
     if (zip.empty()) {
         return;
     }
