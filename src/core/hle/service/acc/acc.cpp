@@ -212,7 +212,18 @@ std::string SignRs256(std::string_view signing_input) {
     return signature;
 }
 
-std::string BuildIdToken() {
+std::string GetInstalledTitleVersion(Core::System& system) {
+    const u64 program_id = system.GetApplicationProcessProgramID();
+    if (program_id == 0) {
+        return {};
+    }
+    const FileSys::PatchManager pm{program_id, system.GetFileSystemController(),
+                                   system.GetContentProvider()};
+    const auto metadata = pm.GetControlMetadata();
+    return metadata.first != nullptr ? metadata.first->GetVersionString() : std::string{};
+}
+
+std::string BuildIdToken(const std::string& installed_version) {
     const auto now = std::chrono::duration_cast<std::chrono::seconds>(
                          std::chrono::system_clock::now().time_since_epoch())
                          .count();
@@ -244,12 +255,17 @@ std::string BuildIdToken() {
         R"("nintendo":{{"dt":"NX Prod 1","pc":"HAC","di":"{}","sn":"XAW10000000000","ist":false}},)",
         device_id);
 
+    std::string tv_claim;
+    if (!installed_version.empty()) {
+        tv_claim = fmt::format(R"("tv":"{}",)", installed_version);
+    }
+
     const std::string payload = fmt::format(
         R"({{"sub":"{}","aud":"{}","iss":"{}","typ":"id_token","iat":{},"exp":{},"jku":"{}",)"
-        R"("jti":"{}","di":"{}","sn":"XAW10000000000","bs:did":"{}",{}{}"hm":true}})",
+        R"("jti":"{}","di":"{}","sn":"XAW10000000000","bs:did":"{}",{}{}{}"hm":true}})",
         RandomHex(0x10), BaasAudience, BaasIssuer, now, now + 3 * 60 * 60, BaasJku,
         Common::UUID::MakeRandom().FormattedString(), device_id, RandomHex(0x10),
-        nintendo_claim, nnex_claim);
+        nintendo_claim, nnex_claim, tv_claim);
 
     const std::string signing_input =
         Base64UrlEncode(header) + "." + Base64UrlEncode(payload);
@@ -257,25 +273,25 @@ std::string BuildIdToken() {
     return signing_input + "." + SignRs256(signing_input);
 }
 
-std::vector<u8> GetIdTokenBytes() {
+std::vector<u8> GetIdTokenBytes(Core::System& system) {
     static std::mutex mutex;
     static std::vector<u8> cached;
     static std::chrono::steady_clock::time_point expiry{};
     static u64 cached_generation = 0;
+    static std::string cached_version;
 
     std::lock_guard lock{mutex};
 
-    // [Nextendo] Rebuild whenever the linked account changes (sign-in/sign-out), not just on
-    // a time-based expiry -- otherwise a token minted before the user finishes linking (e.g.
-    // this cache gets populated once at boot while still unlinked) keeps being served for up
-    // to 2 hours after a successful link, silently missing the "nnex" claim the whole time.
     const u64 generation = Common::NextendoAccount::GetGeneration();
+    const std::string installed_version = GetInstalledTitleVersion(system);
     const auto now = std::chrono::steady_clock::now();
-    if (cached.empty() || now >= expiry || generation != cached_generation) {
-        const std::string token = BuildIdToken();
+    if (cached.empty() || now >= expiry || generation != cached_generation ||
+        installed_version != cached_version) {
+        const std::string token = BuildIdToken(installed_version);
         cached.assign(token.begin(), token.end());
         expiry = now + std::chrono::hours{2};
         cached_generation = generation;
+        cached_version = installed_version;
         LOG_INFO(Service_ACC, "[Nextendo] Issued a signed BAAS id_token ({} bytes)", cached.size());
     }
 
@@ -893,7 +909,7 @@ public:
     ~EnsureTokenIdCacheAsyncInterface() = default;
 
     void LoadIdTokenCache(HLERequestContext& ctx) {
-        const std::vector<u8> token_bytes = GetIdTokenBytes();
+        const std::vector<u8> token_bytes = GetIdTokenBytes(system);
         LOG_INFO(Service_ACC, "[Nextendo] Providing BAAS ID token in async interface ({} bytes)",
                  token_bytes.size());
 
@@ -1130,11 +1146,7 @@ private:
         // fragmenting across versions.
         const u64 program_id = system.GetApplicationProcessProgramID();
         if (Nextendo::CompatibleTitles::Table().contains(program_id)) {
-            const FileSys::PatchManager pm{program_id, system.GetFileSystemController(),
-                                           system.GetContentProvider()};
-            const auto metadata = pm.GetControlMetadata();
-            const std::string installed_version =
-                metadata.first != nullptr ? metadata.first->GetVersionString() : std::string{};
+            const std::string installed_version = GetInstalledTitleVersion(system);
             if (!Nextendo::CompatibleTitles::IsVersionOk(program_id, installed_version)) {
                 LOG_WARNING(Service_ACC,
                             "[Nextendo] Refusing online PID: installed version doesn't match "
@@ -1177,7 +1189,7 @@ private:
     }
 
     void LoadIdTokenCache(HLERequestContext& ctx) {
-        const std::vector<u8> token_bytes = GetIdTokenBytes();
+        const std::vector<u8> token_bytes = GetIdTokenBytes(system);
         LOG_INFO(Service_ACC, "[Nextendo] Providing BAAS ID token ({} bytes)", token_bytes.size());
 
         ctx.WriteBuffer(token_bytes);
