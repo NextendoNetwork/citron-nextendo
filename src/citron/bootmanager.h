@@ -249,6 +249,7 @@ private:
     void OnMinimalClientAreaChangeRequest(std::pair<u32, u32> minimal_size) override;
 
     bool InitializeVulkan();
+    bool InitializeGLBridge();
     void InitializeNull();
 
     EmuThread* emu_thread;

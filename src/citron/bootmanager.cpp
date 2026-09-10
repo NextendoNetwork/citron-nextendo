@@ -26,6 +26,8 @@
 #include <QLayout>
 #include <QList>
 #include <QMessageBox>
+#include <QOffscreenSurface>
+#include <QOpenGLContext>
 #include <QScreen>
 #include <QSize>
 #include <QStringLiteral>
@@ -158,6 +160,63 @@ private:
 struct VulkanRenderWidget : public RenderWidget {
     explicit VulkanRenderWidget(GRenderWindow* parent) : RenderWidget(parent) {
         windowHandle()->setSurfaceType(QWindow::VulkanSurface);
+    }
+};
+
+// Host OpenGL context, used only by the GL bridge path (see gl_bridge). This is not a general
+// OpenGL renderer backend -- the bridge replays a homebrew guest's GL stream directly on the host,
+// which lets both the guest-side driver and the Maxwell decoder drop out of the frame.
+class OpenGLSharedContext : public Core::Frontend::GraphicsContext {
+public:
+    explicit OpenGLSharedContext(QSurface* surface_) : surface{surface_} {
+        QSurfaceFormat format;
+        format.setVersion(4, 6);
+        format.setProfile(QSurfaceFormat::CompatibilityProfile);
+        format.setOption(QSurfaceFormat::FormatOption::DeprecatedFunctions);
+        if (Settings::values.renderer_debug) {
+            format.setOption(QSurfaceFormat::FormatOption::DebugContext);
+        }
+        format.setSwapBehavior(QSurfaceFormat::DefaultSwapBehavior);
+        format.setSwapInterval(0);
+
+        context = std::make_unique<QOpenGLContext>();
+        context->setFormat(format);
+        if (!context->create()) {
+            LOG_ERROR(Frontend, "Unable to create main OpenGL context for the GL bridge");
+        }
+    }
+
+    ~OpenGLSharedContext() override {
+        DoneCurrent();
+    }
+
+    void SwapBuffers() override {
+        context->swapBuffers(surface);
+    }
+
+    void MakeCurrent() override {
+        if (QOpenGLContext::currentContext() != context.get()) {
+            context->makeCurrent(surface);
+        }
+    }
+
+    void DoneCurrent() override {
+        context->doneCurrent();
+    }
+
+    QOpenGLContext* GetShareContext() {
+        return context.get();
+    }
+
+private:
+    std::unique_ptr<QOpenGLContext> context;
+    std::unique_ptr<QOffscreenSurface> offscreen_surface{};
+    QSurface* surface;
+};
+
+struct OpenGLRenderWidget : public RenderWidget {
+    explicit OpenGLRenderWidget(GRenderWindow* parent) : RenderWidget(parent) {
+        windowHandle()->setSurfaceType(QWindow::OpenGLSurface);
     }
 };
 
@@ -864,6 +923,17 @@ bool GRenderWindow::InitRenderTarget() {
 
     first_frame = false;
 
+    // Opt-in host-GL path for homebrew that talks to us through the GL bridge instead of going
+    // guest-driver -> Maxwell -> Vulkan. Falls back to the normal backend if it can't be set up.
+    if (Core::Frontend::IsGLBridgeRequested() && InitializeGLBridge()) {
+        window_info = QtCommon::GetWindowSystemInfo(child_widget->windowHandle());
+        child_widget->resize(Layout::ScreenUndocked::Width, Layout::ScreenUndocked::Height);
+        layout()->addWidget(child_widget);
+        setMinimumSize(1, 1);
+        resize(Layout::ScreenUndocked::Width, Layout::ScreenUndocked::Height);
+        return true;
+    }
+
     switch (Settings::values.renderer_backend.GetValue()) {
     case Settings::RendererBackend::Vulkan:
         if (!InitializeVulkan()) {
@@ -952,6 +1022,22 @@ bool GRenderWindow::InitializeVulkan() {
     child_widget = child;
     child_widget->windowHandle()->create();
     main_context = std::make_unique<DummyContext>();
+
+    return true;
+}
+
+bool GRenderWindow::InitializeGLBridge() {
+    auto child = new OpenGLRenderWidget(this);
+    child_widget = child;
+    child_widget->windowHandle()->create();
+
+    auto context = std::make_unique<OpenGLSharedContext>(child->windowHandle());
+    if (!context->GetShareContext()->isValid()) {
+        LOG_ERROR(Frontend, "GL bridge requested but no usable host OpenGL context was created");
+        return false;
+    }
+    LOG_INFO(Frontend, "GL bridge: host OpenGL context created");
+    main_context = std::move(context);
 
     return true;
 }

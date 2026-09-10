@@ -3,11 +3,20 @@
 
 #pragma once
 
+#include <cstdlib>
 #include <memory>
 
 #include "common/dynamic_library.h"
 
 namespace Core::Frontend {
+
+/// True when the GL bridge is requested. Homebrew that speaks the bridge protocol has its GL
+/// replayed on a host context, so neither the guest-side driver nor the Maxwell decoder runs.
+/// Opt-in only, and never used by regular titles.
+[[nodiscard]] inline bool IsGLBridgeRequested() {
+    const char* env = std::getenv("CITRON_GL_BRIDGE");
+    return env && env[0] == '1';
+}
 
 /**
  * Represents a drawing context that supports graphics operations.
