@@ -66,7 +66,11 @@ jobs:
     needs: [check-version]
     if: needs.check-version.outputs.should_build == 'true'
     runs-on: ${{ matrix.os }}
+    container: ghcr.io/pkgforge-dev/archlinux:latest
     timeout-minutes: 120
+    env:
+      CPM_SOURCE_CACHE: ${{ github.workspace }}/.cpm-cache
+
     strategy:
       fail-fast: false
       matrix:
@@ -75,19 +79,17 @@ jobs:
             os: ubuntu-latest
             artifact_suffix: "_x86_64"
             script_suffix: ""
-            build_arg: ""
+            arch_arg: ""
           - name: "Citron Build (Optimized x86_64)"
             os: ubuntu-latest
             artifact_suffix: "_v3"
             script_suffix: "_v3"
-            build_arg: "v3"
+            arch_arg: "--arch v3"
           - name: "Citron Build (aarch64)"
             os: ubuntu-24.04-arm
             artifact_suffix: "_aarch64"
             script_suffix: ""
-            build_arg: ""
-
-    container: ghcr.io/pkgforge-dev/archlinux:latest
+            arch_arg: ""
 
     steps:
       - name: Install Git
@@ -101,31 +103,37 @@ jobs:
       - name: Add Git Safe Directory
         run: git config --global --add safe.directory "$PWD"
 
-      - name: Install dependencies
-        run: chmod +x ./get-dependencies.sh && ./get-dependencies.sh
+      - name: Cache CPM Sources
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cpm-cache
+          key: cpm-linux-${{ runner.os }}-${{ matrix.os }}-${{ hashFiles('CMakeModules/dependencies.cmake') }}
+          restore-keys: |
+            cpm-linux-${{ runner.os }}-${{ matrix.os }}-
 
-      - name: Build Citron from source
+      - name: Setup Build Environment
+        run: |
+          chmod +x ./build-citron-linux.sh
+          ./build-citron-linux.sh setup
+
+      - name: Get Version
+        id: version
+        run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Build Citron
+        env:
+          APP_VERSION: ${{ steps.version.outputs.sha }}
+          ARCH_SUFFIX: ${{ matrix.script_suffix }}
         run: |
           NPROC_VAL=$(nproc --all)
           JOBS_VAL=$((NPROC_VAL > 4 ? 4 : NPROC_VAL))
-          chmod +x ./build-citron.sh
-          JOBS=${JOBS_VAL} DEVEL=false ./build-citron.sh ${{ matrix.build_arg }}
-
-      - name: Package AppImage with Correct Name
-        run: |
-          GIT_SHA=$(git rev-parse --short HEAD)
-          export APP_VERSION="${GIT_SHA}"
-          export VERSION="${GIT_SHA}"
-          export ARCH_SUFFIX="${{ matrix.script_suffix }}"
-          export DEVEL="false"
-          chmod +x ./package-citron.sh
-          ./package-citron.sh
+          JOBS=${JOBS_VAL} ./build-citron-linux.sh use --pgo none --lto full ${{ matrix.arch_arg }}
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Artifacts${{ matrix.artifact_suffix }}
-          path: dist/
+          path: build/use-nopgo/AppImage/
 
   release:
     if: ${{ github.ref_name == 'main' }}
