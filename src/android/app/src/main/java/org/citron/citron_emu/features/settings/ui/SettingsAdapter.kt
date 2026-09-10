@@ -444,11 +444,10 @@ class SettingsAdapter(
         }
 
         override fun areContentsTheSame(oldItem: SettingsItem, newItem: SettingsItem): Boolean {
-            // Include type and title so items whose text changes (e.g. the Nextendo
-            // sign-in status) actually rebind.
             return oldItem.setting.key == newItem.setting.key &&
                 oldItem.type == newItem.type &&
-                oldItem.title == newItem.title
+                oldItem.title == newItem.title &&
+                oldItem.description == newItem.description
         }
     }
 }

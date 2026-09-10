@@ -30,9 +30,9 @@ class SettingsFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        // Rebuild the list when returning to the app (e.g. after the Nextendo
-        // OAuth sign-in completed in the browser) so account state is fresh.
-        if (::presenter.isInitialized) {
+        // The Nextendo section shows account state; rebuild it when returning to the
+        // app (e.g. after the OAuth sign-in completed in the browser).
+        if (::presenter.isInitialized && args.menuTag == Settings.MenuTag.SECTION_NEXTENDO) {
             presenter.loadSettingsList()
         }
     }
