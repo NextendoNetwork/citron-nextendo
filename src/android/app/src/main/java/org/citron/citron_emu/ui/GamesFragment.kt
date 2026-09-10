@@ -47,6 +47,7 @@ class GamesFragment : Fragment() {
     private var viewMode = VIEW_MODE_LIST
 
     private val onlineCountsHandler = Handler(Looper.getMainLooper())
+    @Volatile private var onlineCountsPolling = false
     private val onlineCountsPoll = object : Runnable {
         override fun run() {
             Thread {
@@ -58,14 +59,19 @@ class GamesFragment : Fragment() {
                         for ((key, value) in obj) {
                             counts[key] = value.jsonPrimitive.int
                         }
-                        Handler(Looper.getMainLooper()).post {
-                            gameAdapter.setOnlineCounts(counts)
+                        // An empty answer means the fetch failed; keep the last known counts.
+                        if (counts.isNotEmpty()) {
+                            Handler(Looper.getMainLooper()).post {
+                                gameAdapter.setOnlineCounts(counts)
+                            }
                         }
                     }
                 } catch (e: Exception) {
                     Log.error("[GamesFragment] online counts poll failed: ${e.message}")
                 }
-                onlineCountsHandler.postDelayed(this, ONLINE_COUNTS_POLL_MS)
+                if (onlineCountsPolling) {
+                    onlineCountsHandler.postDelayed(this, ONLINE_COUNTS_POLL_MS)
+                }
             }.start()
         }
     }
@@ -81,12 +87,14 @@ class GamesFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        onlineCountsPolling = true
         onlineCountsHandler.removeCallbacks(onlineCountsPoll)
         onlineCountsHandler.post(onlineCountsPoll)
     }
 
     override fun onPause() {
         super.onPause()
+        onlineCountsPolling = false
         onlineCountsHandler.removeCallbacks(onlineCountsPoll)
     }
 

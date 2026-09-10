@@ -65,7 +65,7 @@ class GameAdapter(private val activity: AppCompatActivity, private var tilesMode
         val programIdLong = model.programId.toLongOrNull() ?: 0L
         val linked = NativeLibrary.getNextendoAccountStatus().isNotEmpty()
         val nextendoTitle = NativeLibrary.isNextendoTitle(programIdLong)
-        val count = onlineCounts[String.format("%016x", programIdLong)]
+        val count = onlineCounts[programIdLong.toString(16).padStart(16, '0')]
         val isOnlinePillVisible = linked && nextendoTitle && count != null
         onlinePill.visibility = if (isOnlinePillVisible) View.VISIBLE else View.GONE
         onlinePill.text = "Nextendo: $count online"
