@@ -112,9 +112,8 @@ public:
             static constexpr u64 ICACHE_LINE_SIZE = 64;
 
             const u64 cache_line_start = value & ~(ICACHE_LINE_SIZE - 1);
-            // Every core of this process, not just the current one: guest threads migrate, so
-            // invalidating only the core that happened to run `ic ivau` leaves the others
-            // executing stale translations of code the guest has already rewritten.
+            // Homebrew NROs (Jak & Daxter) get all 4 cores and threads migrate between them, so a
+            // core-local invalidate leaves stale translations on the others.
             Core::InvalidateInstructionCacheRange(m_process, cache_line_start, ICACHE_LINE_SIZE);
             break;
         }
