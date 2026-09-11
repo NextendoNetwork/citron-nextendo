@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: Copyright 2025 Citron Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// Nextendo Network JNI bindings, kept out of native.cpp so upstream edits to
-// that file never conflict with this fork's Android additions.
+// Nextendo Network JNI bindings, kept in their own translation unit so upstream
+// edits to native.cpp never conflict with the Android client's additions.
 
 #include <algorithm>
 #include <chrono>
