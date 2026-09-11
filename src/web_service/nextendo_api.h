@@ -34,6 +34,10 @@ struct OnlineStatus {
 // request carries the account token.
 std::string BaseUrl();
 
+// The account page on the Nextendo website: friend code, friends and the account settings this
+// client doesn't cover.
+std::string WebsiteProfileUrl();
+
 // Overrides the CA bundle for the account server's TLS certificate (Android
 // exports the system CA store to a PEM file at startup).
 void SetCaCertPathOverride(const std::string& path);

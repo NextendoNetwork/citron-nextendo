@@ -6,7 +6,6 @@ package org.citron.citron_emu.fragments
 import android.app.Dialog
 import android.os.Bundle
 import android.view.View
-import androidx.fragment.app.DialogFragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.citron.citron_emu.NativeLibrary
@@ -15,14 +14,11 @@ import org.citron.citron_emu.adapters.NextendoHistoryAdapter
 import org.citron.citron_emu.databinding.DialogNextendoPlayHistoryBinding
 import org.json.JSONObject
 
-class NextendoPlayHistoryDialogFragment : DialogFragment() {
-    private var _binding: DialogNextendoPlayHistoryBinding? = null
-    private val binding get() = _binding!!
-
+class NextendoPlayHistoryDialogFragment : NextendoDialogFragment<DialogNextendoPlayHistoryBinding>() {
     private val adapter = NextendoHistoryAdapter()
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-        _binding = DialogNextendoPlayHistoryBinding.inflate(layoutInflater)
+        inflateBinding { DialogNextendoPlayHistoryBinding.inflate(it) }
         binding.listHistory.layoutManager = LinearLayoutManager(requireContext())
         binding.listHistory.adapter = adapter
         binding.textHistoryStatus.setText(R.string.nextendo_play_history_loading)
@@ -33,11 +29,6 @@ class NextendoPlayHistoryDialogFragment : DialogFragment() {
             .setView(binding.root)
             .setNegativeButton(android.R.string.cancel, null)
             .create()
-    }
-
-    override fun onDestroyView() {
-        super.onDestroyView()
-        _binding = null
     }
 
     private fun loadHistory() {
@@ -79,14 +70,6 @@ class NextendoPlayHistoryDialogFragment : DialogFragment() {
                 }
             }
         }.start()
-    }
-
-    private fun post(block: () -> Unit) {
-        activity?.runOnUiThread {
-            if (isAdded && _binding != null) {
-                block()
-            }
-        }
     }
 
     companion object {

@@ -4,10 +4,8 @@
 package org.citron.citron_emu.utils
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
-import android.util.Base64
 import android.widget.Toast
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -77,7 +75,7 @@ object NextendoAccountState {
 
             val parsed = parse(fetched) ?: return@Thread
             profile = parsed
-            avatar = decode(parsed.imageBase64)
+            avatar = NextendoImages.decode(parsed.imageBase64)
             notifyChanged()
         }.start()
     }
@@ -99,16 +97,5 @@ object NextendoAccountState {
         }
     } catch (_: Exception) {
         null
-    }
-
-    private fun decode(base64: String): Bitmap? = if (base64.isEmpty()) {
-        null
-    } else {
-        try {
-            val bytes = Base64.decode(base64, Base64.DEFAULT)
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        } catch (_: IllegalArgumentException) {
-            null
-        }
     }
 }

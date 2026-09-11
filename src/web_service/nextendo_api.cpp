@@ -349,6 +349,10 @@ std::string BaseUrl() {
     return url;
 }
 
+std::string WebsiteProfileUrl() {
+    return BaseUrl() + "/compte";
+}
+
 LoginResult SignInWithBrowser(const std::function<void(const std::string&)>& open_url) {
     LoginResult out;
 

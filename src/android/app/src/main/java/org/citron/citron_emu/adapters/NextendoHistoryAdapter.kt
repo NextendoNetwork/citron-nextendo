@@ -4,13 +4,12 @@
 package org.citron.citron_emu.adapters
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.util.Base64
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import org.citron.citron_emu.R
 import org.citron.citron_emu.databinding.ListItemHistoryBinding
+import org.citron.citron_emu.utils.NextendoImages
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 
@@ -58,16 +57,7 @@ class NextendoHistoryAdapter : RecyclerView.Adapter<NextendoHistoryAdapter.ViewH
             )
 
             val icon = icons.getOrPut(item.iconBase64) {
-                if (item.iconBase64.isEmpty()) {
-                    null
-                } else {
-                    try {
-                        val bytes = Base64.decode(item.iconBase64, Base64.DEFAULT)
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    } catch (_: IllegalArgumentException) {
-                        null
-                    }
-                }
+                NextendoImages.decode(item.iconBase64)
             }
             binding.imageHistoryIcon.setImageBitmap(icon)
         }

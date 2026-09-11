@@ -8,7 +8,6 @@ import android.os.Bundle
 import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
-import androidx.fragment.app.DialogFragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.citron.citron_emu.CitronApplication
@@ -20,14 +19,11 @@ import org.citron.citron_emu.databinding.DialogNextendoFriendsBinding
 import org.json.JSONArray
 import org.json.JSONObject
 
-class NextendoFriendsDialogFragment : DialogFragment() {
-    private var _binding: DialogNextendoFriendsBinding? = null
-    private val binding get() = _binding!!
-
+class NextendoFriendsDialogFragment : NextendoDialogFragment<DialogNextendoFriendsBinding>() {
     private val adapter = NextendoFriendAdapter()
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-        _binding = DialogNextendoFriendsBinding.inflate(layoutInflater)
+        inflateBinding { DialogNextendoFriendsBinding.inflate(it) }
         adapter.onAccept = { act { NativeLibrary.nextendoAcceptFriend(it.pid) } }
         adapter.onDecline = { act { NativeLibrary.nextendoDeclineFriend(it.pid) } }
         adapter.onRemove = { act { NativeLibrary.nextendoRemoveFriend(it.pid) } }
@@ -46,11 +42,6 @@ class NextendoFriendsDialogFragment : DialogFragment() {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { showAddFriend() }
         }
         return dialog
-    }
-
-    override fun onDestroyView() {
-        super.onDestroyView()
-        _binding = null
     }
 
     private fun refresh() {
@@ -131,14 +122,6 @@ class NextendoFriendsDialogFragment : DialogFragment() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
-    }
-
-    private fun post(block: () -> Unit) {
-        activity?.runOnUiThread {
-            if (isAdded && _binding != null) {
-                block()
-            }
-        }
     }
 
     companion object {

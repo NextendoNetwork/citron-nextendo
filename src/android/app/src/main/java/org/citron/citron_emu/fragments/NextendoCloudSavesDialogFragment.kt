@@ -6,7 +6,6 @@ package org.citron.citron_emu.fragments
 import android.app.Dialog
 import android.os.Bundle
 import android.widget.Toast
-import androidx.fragment.app.DialogFragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.citron.citron_emu.CitronApplication
@@ -17,14 +16,11 @@ import org.citron.citron_emu.databinding.DialogNextendoCloudSavesBinding
 import org.citron.citron_emu.utils.GameHelper
 import org.citron.citron_emu.utils.NextendoCloudSaveResult
 
-class NextendoCloudSavesDialogFragment : DialogFragment() {
-    private var _binding: DialogNextendoCloudSavesBinding? = null
-    private val binding get() = _binding!!
-
+class NextendoCloudSavesDialogFragment : NextendoDialogFragment<DialogNextendoCloudSavesBinding>() {
     private val adapter = NextendoCloudSaveAdapter()
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-        _binding = DialogNextendoCloudSavesBinding.inflate(layoutInflater)
+        inflateBinding { DialogNextendoCloudSavesBinding.inflate(it) }
         adapter.onDownload = { confirmDownload(it) }
         adapter.onUpload = { upload(it) }
         binding.listCloudSaves.layoutManager = LinearLayoutManager(requireContext())
@@ -37,11 +33,6 @@ class NextendoCloudSavesDialogFragment : DialogFragment() {
             .setView(binding.root)
             .setNegativeButton(android.R.string.cancel, null)
             .create()
-    }
-
-    override fun onDestroyView() {
-        super.onDestroyView()
-        _binding = null
     }
 
     private fun loadGames() {
@@ -125,14 +116,6 @@ class NextendoCloudSavesDialogFragment : DialogFragment() {
                 Toast.makeText(CitronApplication.appContext, message, Toast.LENGTH_LONG).show()
             }
         }.start()
-    }
-
-    private fun post(block: () -> Unit) {
-        activity?.runOnUiThread {
-            if (isAdded && _binding != null) {
-                block()
-            }
-        }
     }
 
     companion object {

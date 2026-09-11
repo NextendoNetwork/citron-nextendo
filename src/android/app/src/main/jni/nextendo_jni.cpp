@@ -38,10 +38,29 @@ std::string EscapeJson(std::string_view value) {
     std::string out;
     out.reserve(value.size());
     for (const char c : value) {
-        if (c == '"' || c == '\\') {
+        switch (c) {
+        case '"':
+        case '\\':
             out += '\\';
+            out += c;
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            if (static_cast<unsigned char>(c) < 0x20) {
+                out += fmt::format("\\u{:04x}", static_cast<unsigned char>(c));
+            } else {
+                out += c;
+            }
+            break;
         }
-        out += c;
     }
     return out;
 }
@@ -126,7 +145,7 @@ jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoSetUsername(JNIEnv* en
 
 jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoWebsiteProfileUrl(JNIEnv* env,
                                                                             jobject jobj) {
-    return Common::Android::ToJString(env, WebService::NextendoApi::BaseUrl() + "/compte");
+    return Common::Android::ToJString(env, WebService::NextendoApi::WebsiteProfileUrl());
 }
 
 jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoGetHistoryJson(JNIEnv* env,

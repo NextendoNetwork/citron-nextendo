@@ -4,14 +4,13 @@
 package org.citron.citron_emu.adapters
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.util.Base64
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.RecyclerView
 import org.citron.citron_emu.R
 import org.citron.citron_emu.databinding.ListItemFriendBinding
+import org.citron.citron_emu.utils.NextendoImages
 
 class NextendoFriendAdapter : RecyclerView.Adapter<NextendoFriendAdapter.ViewHolder>() {
 
@@ -67,16 +66,7 @@ class NextendoFriendAdapter : RecyclerView.Adapter<NextendoFriendAdapter.ViewHol
             }
 
             val avatar = avatars.getOrPut(item.pid) {
-                if (item.imageBase64.isEmpty()) {
-                    null
-                } else {
-                    try {
-                        val bytes = Base64.decode(item.imageBase64, Base64.DEFAULT)
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    } catch (_: IllegalArgumentException) {
-                        null
-                    }
-                }
+                NextendoImages.decode(item.imageBase64)
             }
             binding.imageAvatar.setImageBitmap(avatar)
             binding.imageAvatar.isVisible = avatar != null

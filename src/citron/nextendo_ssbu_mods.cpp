@@ -11,6 +11,7 @@
 #include <fmt/format.h>
 
 #include "common/fs/path_util.h"
+#include "common/logging.h"
 #include "citron/nextendo_save_sync.h"
 #include "web_service/ssbu_mod_installer.h"
 
@@ -102,6 +103,11 @@ Outcome Install(u64 title_id) {
             if (!ec) {
                 std::filesystem::remove_all(skyline_dir, ec);
             }
+        }
+        if (ec) {
+            LOG_ERROR(Frontend,
+                      "SSBU mod install: failed to back up the existing skyline folder ({}): {}",
+                      skyline_dir.string(), ec.message());
         }
     }
     std::filesystem::create_directories(plugins_dir, ec);

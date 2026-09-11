@@ -16,7 +16,6 @@ import android.widget.Toast
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
-import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.launch
@@ -29,12 +28,9 @@ import org.citron.citron_emu.databinding.ListItemProfileActionBinding
 import org.citron.citron_emu.utils.NextendoAccountState
 import org.json.JSONObject
 
-class NextendoProfileDialogFragment : DialogFragment() {
-    private var _binding: DialogNextendoProfileBinding? = null
-    private val binding get() = _binding!!
-
+class NextendoProfileDialogFragment : NextendoDialogFragment<DialogNextendoProfileBinding>() {
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-        _binding = DialogNextendoProfileBinding.inflate(layoutInflater)
+        inflateBinding { DialogNextendoProfileBinding.inflate(it) }
 
         addAction(
             R.string.nextendo_change_username,
@@ -82,11 +78,6 @@ class NextendoProfileDialogFragment : DialogFragment() {
             .setView(binding.root)
             .setNegativeButton(android.R.string.cancel, null)
             .create()
-    }
-
-    override fun onDestroyView() {
-        super.onDestroyView()
-        _binding = null
     }
 
     private fun addAction(@StringRes title: Int, @StringRes description: Int, action: () -> Unit) {
@@ -227,14 +218,6 @@ class NextendoProfileDialogFragment : DialogFragment() {
         clipboard.setPrimaryClip(ClipData.newPlainText("Nextendo", text))
         Toast.makeText(CitronApplication.appContext, R.string.nextendo_copied, Toast.LENGTH_SHORT)
             .show()
-    }
-
-    private fun post(block: () -> Unit) {
-        activity?.runOnUiThread {
-            if (isAdded && _binding != null) {
-                block()
-            }
-        }
     }
 
     companion object {
