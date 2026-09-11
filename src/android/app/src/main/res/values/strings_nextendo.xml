@@ -28,6 +28,12 @@
     <string name="nextendo_status_checking">Checking…</string>
     <string name="nextendo_status_unknown">Could not check — tap to retry</string>
     <string name="nextendo_copied">Copied</string>
+    <string name="nextendo_play_history">Play history</string>
+    <string name="nextendo_play_history_description">Time played and last session per game</string>
+    <string name="nextendo_play_history_loading">Loading…</string>
+    <string name="nextendo_play_history_empty">Nothing played yet</string>
+    <string name="nextendo_play_history_error">Could not load your history</string>
+    <string name="nextendo_history_details">Played %1$s · Last played %2$s</string>
     <string name="nextendo_sign_out_confirm">Sign out of this device? Cloud saves stop syncing until you sign back in.</string>
     <string name="nextendo_bcat_installed">Splatoon 2 online data installed</string>
     <string name="nextendo_friend_online">Nextendo: %1$s is online</string>

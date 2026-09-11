@@ -216,6 +216,9 @@ object NativeLibrary {
     // message.
     external fun nextendoGetOnlineStatusJson(): String
 
+    // Play history: {ok, error, entries:[{title_id, name, icon, seconds, last_played}]}.
+    external fun nextendoGetHistoryJson(): String
+
     // Round-trip time to the account backend in milliseconds, or -1 on failure.
     external fun nextendoPingBackend(): Int
 

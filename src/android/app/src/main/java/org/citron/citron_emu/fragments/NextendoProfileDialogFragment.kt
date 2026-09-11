@@ -46,6 +46,12 @@ class NextendoProfileDialogFragment : DialogFragment() {
                 NextendoCloudSavesDialogFragment.TAG
             )
         }
+        addAction(R.string.nextendo_play_history, R.string.nextendo_play_history_description) {
+            NextendoPlayHistoryDialogFragment().show(
+                parentFragmentManager,
+                NextendoPlayHistoryDialogFragment.TAG
+            )
+        }
 
         binding.textFriendCode.setOnClickListener {
             val code = binding.textFriendCode.tag as? String
