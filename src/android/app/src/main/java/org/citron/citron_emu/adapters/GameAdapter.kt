@@ -68,13 +68,17 @@ class GameAdapter(private val activity: AppCompatActivity, private var tilesMode
         val count = onlineCounts[programIdLong.toString(16).padStart(16, '0')]
         val isOnlinePillVisible = linked && nextendoTitle && count != null
         onlinePill.visibility = if (isOnlinePillVisible) View.VISIBLE else View.GONE
-        onlinePill.text = "Nextendo: $count online"
+        if (count != null) {
+            onlinePill.text = onlinePill.context.getString(R.string.nextendo_online_pill, count)
+        }
 
         val requiredVersion = NativeLibrary.nextendoRequiredVersion(programIdLong)
         val needsUpdate = linked && nextendoTitle &&
             model.version.isNotEmpty() && model.version != requiredVersion
         updatePill.visibility = if (needsUpdate) View.VISIBLE else View.GONE
-        updatePill.text = "Requires $requiredVersion"
+        if (needsUpdate) {
+            updatePill.text = updatePill.context.getString(R.string.nextendo_update_pill, requiredVersion)
+        }
     }
 
     fun setTilesMode(enabled: Boolean) {

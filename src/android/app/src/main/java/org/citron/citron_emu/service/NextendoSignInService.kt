@@ -34,7 +34,7 @@ class NextendoSignInService : Service() {
         super.onCreate()
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Nextendo sign-in",
+            getString(R.string.nextendo_sign_in_channel),
             NotificationManager.IMPORTANCE_LOW
         )
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
@@ -51,8 +51,8 @@ class NextendoSignInService : Service() {
     private fun buildNotification(): Notification =
         Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle("Nextendo sign-in")
-            .setContentText("Waiting for you to authorize in the browser\u2026")
+            .setContentTitle(getString(R.string.nextendo_sign_in_channel))
+            .setContentText(getString(R.string.nextendo_sign_in_waiting))
             .setOngoing(true)
             .build()
 }

@@ -17,6 +17,12 @@
     <string name="nextendo_friend_notifications_description">Show a message when a friend comes online while you play</string>
     <string name="nextendo_sign_in">Sign in to Nextendo Network</string>
     <string name="nextendo_sign_in_description">Open your browser to authorize this device (OAuth, your password is never seen by the emulator)</string>
+    <string name="nextendo_sign_in_success">Nextendo: signed in as %1$s — please return to the emulator app</string>
+    <string name="nextendo_sign_in_failed">Nextendo sign-in failed: %1$s</string>
+    <string name="nextendo_sign_in_channel">Nextendo sign-in</string>
+    <string name="nextendo_sign_in_waiting">Waiting for you to authorize in the browser…</string>
+    <string name="nextendo_online_pill">Nextendo: %1$d online</string>
+    <string name="nextendo_update_pill">Requires %1$s</string>
     <string name="nextendo_sign_out">Sign out of Nextendo Network</string>
     <string name="nextendo_not_signed_in">Not signed in</string>
     <string name="nextendo_session_expired">Nextendo: session expired — sign in again</string>

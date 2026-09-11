@@ -476,9 +476,10 @@ object NativeLibrary {
     @JvmStatic
     fun onNextendoSignInResult(success: Boolean, message: String) {
         Handler(Looper.getMainLooper()).post {
-            val text =
-                if (success) "Nextendo: signed in as $message — please return to the emulator app"
-                else "Nextendo sign-in failed: $message"
+            val text = CitronApplication.appContext.getString(
+                if (success) R.string.nextendo_sign_in_success else R.string.nextendo_sign_in_failed,
+                message
+            )
             Toast.makeText(CitronApplication.appContext, text, Toast.LENGTH_LONG).show()
             if (success) {
                 Thread {
