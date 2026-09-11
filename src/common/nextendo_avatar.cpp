@@ -13,7 +13,9 @@ namespace {
 std::mutex g_mutex;
 std::string g_self_jpeg_base64;
 
-std::vector<u8> Base64Decode(std::string_view text) {
+} // Anonymous namespace
+
+std::vector<u8> DecodeBase64(std::string_view text) {
     std::array<int, 256> table;
     table.fill(-1);
     constexpr std::string_view alphabet =
@@ -45,8 +47,6 @@ std::vector<u8> Base64Decode(std::string_view text) {
     return out;
 }
 
-} // Anonymous namespace
-
 void SetSelfJPEGBase64(std::string_view base64_jpeg) {
     std::lock_guard lock{g_mutex};
     g_self_jpeg_base64 = base64_jpeg;
@@ -57,7 +57,7 @@ std::vector<u8> GetSelfJPEG() {
     if (g_self_jpeg_base64.empty()) {
         return {};
     }
-    return Base64Decode(g_self_jpeg_base64);
+    return DecodeBase64(g_self_jpeg_base64);
 }
 
 } // namespace Common::NextendoAvatar

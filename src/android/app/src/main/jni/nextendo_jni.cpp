@@ -16,6 +16,7 @@
 #include "common/android/android_common.h"
 #include "common/android/id_cache.h"
 #include "common/nextendo_account.h"
+#include "common/nextendo_avatar.h"
 #include "common/nextendo_compatible_titles.h"
 #include "common/nextendo_friends.h"
 #include "common/settings.h"
@@ -42,6 +43,7 @@ void RefreshFriendsCache() {
         cached.name = entry.name;
         cached.status = entry.presence_status;
         cached.app_field = entry.app_field;
+        cached.image = Common::NextendoAvatar::DecodeBase64(entry.image_base64);
         cache.push_back(std::move(cached));
     }
 
