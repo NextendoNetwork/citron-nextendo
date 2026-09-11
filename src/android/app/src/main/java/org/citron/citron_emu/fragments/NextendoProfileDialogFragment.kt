@@ -4,10 +4,13 @@
 package org.citron.citron_emu.fragments
 
 import android.app.Dialog
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.content.res.ColorStateList
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.annotation.StringRes
@@ -43,21 +46,16 @@ class NextendoProfileDialogFragment : DialogFragment() {
                 NextendoFriendsDialogFragment.TAG
             )
         }
-        addAction(
-            R.string.nextendo_manage_cloud_saves,
-            R.string.nextendo_manage_cloud_saves_description
-        ) {
-            NextendoCloudSavesDialogFragment().show(
-                parentFragmentManager,
-                NextendoCloudSavesDialogFragment.TAG
-            )
-        }
         addAction(R.string.nextendo_play_history, R.string.nextendo_play_history_description) {
             NextendoPlayHistoryDialogFragment().show(
                 parentFragmentManager,
                 NextendoPlayHistoryDialogFragment.TAG
             )
         }
+        addAction(
+            R.string.nextendo_website_profile,
+            R.string.nextendo_website_profile_description
+        ) { openWebsiteProfile() }
 
         binding.textFriendCode.setOnClickListener {
             val code = binding.textFriendCode.tag as? String
@@ -196,6 +194,19 @@ class NextendoProfileDialogFragment : DialogFragment() {
                 }
             }
         }.start()
+    }
+
+    // Account actions the website covers that this client doesn't (email, password, friend
+    // requests from the web, ...).
+    private fun openWebsiteProfile() {
+        val url = NativeLibrary.nextendoWebsiteProfileUrl()
+        if (url.isEmpty()) {
+            return
+        }
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (_: ActivityNotFoundException) {
+        }
     }
 
     private fun confirmSignOut() {        MaterialAlertDialogBuilder(requireContext())

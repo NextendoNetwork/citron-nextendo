@@ -40,6 +40,8 @@
     <string name="nextendo_username_invalid">3-16 characters: letters, digits, _ or -</string>
     <string name="nextendo_username_updated">Username updated</string>
     <string name="nextendo_username_failed">Could not change the username</string>
+    <string name="nextendo_website_profile">Open profile on the website</string>
+    <string name="nextendo_website_profile_description">nextendo.network — friend code, friends and account settings</string>
     <string name="nextendo_sign_out_confirm">Sign out of this device? Cloud saves stop syncing until you sign back in.</string>
     <string name="nextendo_bcat_installed">Splatoon 2 online data installed</string>
     <string name="nextendo_friend_online">Nextendo: %1$s is online</string>

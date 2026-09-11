@@ -221,6 +221,10 @@ object NativeLibrary {
 
     // Renames the account. Returns an error message, or "" on success.
     external fun nextendoSetUsername(username: String): String
+
+    // The account page on the Nextendo website, for actions this client doesn't cover.
+    external fun nextendoWebsiteProfileUrl(): String
+
     // Round-trip time to the account backend in milliseconds, or -1 on failure.
     external fun nextendoPingBackend(): Int
 

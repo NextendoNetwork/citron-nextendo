@@ -124,6 +124,11 @@ jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoSetUsername(JNIEnv* en
         env, WebService::NextendoApi::SetUsername(Common::Android::GetJString(env, username)));
 }
 
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoWebsiteProfileUrl(JNIEnv* env,
+                                                                            jobject jobj) {
+    return Common::Android::ToJString(env, WebService::NextendoApi::BaseUrl() + "/compte");
+}
+
 jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoGetHistoryJson(JNIEnv* env,
                                                                          jobject jobj) {
     const auto history = WebService::NextendoApi::GetHistory();
