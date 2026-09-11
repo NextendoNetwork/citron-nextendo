@@ -30,7 +30,9 @@
     <string name="nextendo_cloud_save_available">Cloud save available</string>
     <string name="nextendo_cloud_save_none">No cloud save on the server</string>
     <string name="nextendo_cloud_save_download">Download</string>
+    <string name="nextendo_cloud_save_download_description">Replace this game\'s local save with the cloud copy</string>
     <string name="nextendo_cloud_save_upload">Upload</string>
+    <string name="nextendo_cloud_save_upload_description">Upload this game\'s save to the cloud now</string>
     <string name="nextendo_cloud_save_confirm">This replaces the local save for %1$s.</string>
     <string name="nextendo_cloud_save_applied">Cloud save downloaded</string>
     <string name="nextendo_cloud_save_kept_local">Kept the local save (upload it to replace the cloud copy)</string>

@@ -15,6 +15,7 @@ import org.citron.citron_emu.R
 import org.citron.citron_emu.adapters.NextendoCloudSaveAdapter
 import org.citron.citron_emu.databinding.DialogNextendoCloudSavesBinding
 import org.citron.citron_emu.utils.GameHelper
+import org.citron.citron_emu.utils.NextendoCloudSaveResult
 
 class NextendoCloudSavesDialogFragment : DialogFragment() {
     private var _binding: DialogNextendoCloudSavesBinding? = null
@@ -99,24 +100,17 @@ class NextendoCloudSavesDialogFragment : DialogFragment() {
 
     private fun download(item: NextendoCloudSaveAdapter.Item) {
         runAction(item) {
-            when (NativeLibrary.nextendoCloudSavePull(item.programId, force = true)) {
-                "applied" -> R.string.nextendo_cloud_save_applied
-                "kept" -> R.string.nextendo_cloud_save_kept_local
-                "none" -> R.string.nextendo_cloud_save_none
-                "disabled" -> R.string.nextendo_cloud_save_disabled
-                else -> R.string.nextendo_cloud_save_failed
-            }
+            NextendoCloudSaveResult.pull(
+                NativeLibrary.nextendoCloudSavePull(item.programId, force = true)
+            )
         }
     }
 
     private fun upload(item: NextendoCloudSaveAdapter.Item) {
         runAction(item) {
-            when (NativeLibrary.nextendoCloudSavePush(item.programId, manual = true)) {
-                "uploaded" -> R.string.nextendo_cloud_save_uploaded
-                "none" -> R.string.nextendo_cloud_save_none
-                "disabled" -> R.string.nextendo_cloud_save_disabled
-                else -> R.string.nextendo_cloud_save_failed
-            }
+            NextendoCloudSaveResult.push(
+                NativeLibrary.nextendoCloudSavePush(item.programId, manual = true)
+            )
         }
     }
 

@@ -46,6 +46,7 @@ import org.citron.citron_emu.utils.FileUtil
 import org.citron.citron_emu.utils.GameIconUtils
 import org.citron.citron_emu.utils.GpuDriverHelper
 import org.citron.citron_emu.utils.MemoryUtil
+import org.citron.citron_emu.utils.NextendoCloudSaveResult
 import org.citron.citron_emu.utils.ViewUtils.updateMargins
 import org.citron.citron_emu.utils.collect
 import androidx.documentfile.provider.DocumentFile
@@ -349,12 +350,79 @@ class GamePropertiesFragment : Fragment() {
                     }
                 )
             }
+
+            val nextendoProgramId = args.game.programId.toLongOrNull() ?: 0L
+            if (nextendoProgramId != 0L && NativeLibrary.isNextendoTitle(nextendoProgramId)) {
+                add(
+                    SubmenuProperty(
+                        R.string.nextendo_cloud_save_download,
+                        R.string.nextendo_cloud_save_download_description,
+                        R.drawable.ic_save
+                    ) { downloadNextendoCloudSave(nextendoProgramId) }
+                )
+                add(
+                    SubmenuProperty(
+                        R.string.nextendo_cloud_save_upload,
+                        R.string.nextendo_cloud_save_upload_description,
+                        R.drawable.ic_save
+                    ) { uploadNextendoCloudSave(nextendoProgramId) }
+                )
+            }
         }
         binding.listProperties.apply {
             layoutManager =
                 GridLayoutManager(requireContext(), resources.getInteger(R.integer.grid_columns))
             adapter = GamePropertiesAdapter(viewLifecycleOwner, properties)
         }
+    }
+
+    private fun downloadNextendoCloudSave(programId: Long) {
+        if (NativeLibrary.isRunning()) {
+            Toast.makeText(
+                CitronApplication.appContext,
+                R.string.nextendo_cloud_save_stop_game,
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
+        MessageDialogFragment.newInstance(
+            requireActivity(),
+            titleId = R.string.nextendo_cloud_save_download,
+            descriptionString = getString(R.string.nextendo_cloud_save_confirm, args.game.title),
+            positiveAction = {
+                Thread {
+                    val message = NextendoCloudSaveResult.pull(
+                        NativeLibrary.nextendoCloudSavePull(programId, force = true)
+                    )
+                    activity?.runOnUiThread {
+                        Toast.makeText(CitronApplication.appContext, message, Toast.LENGTH_LONG)
+                            .show()
+                    }
+                }.start()
+            },
+            negativeAction = {}
+        ).show(parentFragmentManager, MessageDialogFragment.TAG)
+    }
+
+    private fun uploadNextendoCloudSave(programId: Long) {
+        if (NativeLibrary.isRunning()) {
+            Toast.makeText(
+                CitronApplication.appContext,
+                R.string.nextendo_cloud_save_stop_game,
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
+        Thread {
+            val message = NextendoCloudSaveResult.push(
+                NativeLibrary.nextendoCloudSavePush(programId, manual = true)
+            )
+            activity?.runOnUiThread {
+                Toast.makeText(CitronApplication.appContext, message, Toast.LENGTH_LONG).show()
+            }
+        }.start()
     }
 
     private fun showInstalledContentRemovalDialog() {
