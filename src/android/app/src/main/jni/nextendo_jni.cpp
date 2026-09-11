@@ -100,6 +100,31 @@ void Java_org_citron_citron_1emu_NativeLibrary_nextendoRefreshFriends(JNIEnv* en
     RefreshFriendsCache();
 }
 
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoFriendsJson(JNIEnv* env, jobject jobj) {
+    const auto entries = Common::NextendoFriends::Get();
+    std::string json = "[";
+    bool first = true;
+    for (const auto& entry : entries) {
+        if (entry.pid == 0) {
+            continue;
+        }
+        std::string name;
+        name.reserve(entry.name.size());
+        for (const char c : entry.name) {
+            if (c == '"' || c == '\\') {
+                name += '\\';
+            }
+            name += c;
+        }
+        json += first ? "" : ",";
+        json += "{\"pid\":" + std::to_string(entry.pid) + ",\"name\":\"" + name +
+                "\",\"status\":" + std::to_string(entry.status) + "}";
+        first = false;
+    }
+    json += "]";
+    return Common::Android::ToJString(env, json);
+}
+
 jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoOnlineCountsJson(JNIEnv* env,
                                                                            jobject jobj) {
     const auto counts = WebService::NextendoApi::GetOnlineCounts();

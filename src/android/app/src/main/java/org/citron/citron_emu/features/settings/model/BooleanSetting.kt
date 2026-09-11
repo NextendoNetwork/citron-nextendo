@@ -38,6 +38,7 @@ enum class BooleanSetting(override val key: String) : AbstractBooleanSetting {
     // Nextendo Network
     NEXTENDO_ENABLE("enable_nextendo"),
     NEXTENDO_CLOUD_SYNC("nextendo_cloud_sync_enabled"),
+    NEXTENDO_FRIEND_NOTIFICATIONS("nextendo_friend_notifications"),
 
     // VRAM Management settings (FIXED: VRAM leak prevention)
     SPARSE_TEXTURE_PRIORITY_EVICTION("sparse_texture_priority_eviction"),

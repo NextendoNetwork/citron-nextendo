@@ -52,6 +52,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
 import org.citron.citron_emu.CitronApplication
 import org.citron.citron_emu.HomeNavigationDirections
 import org.citron.citron_emu.NativeLibrary
@@ -73,6 +74,7 @@ import org.citron.citron_emu.model.Patch
 import org.citron.citron_emu.model.PatchType
 import org.citron.citron_emu.overlay.model.OverlayControl
 import org.citron.citron_emu.overlay.model.OverlayLayout
+import org.json.JSONArray
 import org.citron.citron_emu.utils.*
 import org.citron.citron_emu.utils.ViewUtils.setVisible
 import java.lang.NullPointerException
@@ -446,6 +448,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         var sawEmulationStart = false
         var startElapsedRealtime = 0L
         var pumpTicks = 0
+        val friendStatuses = ConcurrentHashMap<Long, Int>()
         val nextendoHandler = Handler(Looper.getMainLooper())
         val nextendoPump = object : Runnable {
             override fun run() {
@@ -457,6 +460,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 if (pumpTicks++ % FRIENDS_POLL_TICKS == 0) {
                     Thread {
                         NativeLibrary.nextendoRefreshFriends()
+                        notifyNextendoFriendChanges(friendStatuses)
                     }.start()
                 }
                 nextendoHandler.postDelayed(this, PRESENCE_TICK_MS)
@@ -1416,6 +1420,40 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     private fun setControlOpacity(opacity: Int) {
         IntSetting.OVERLAY_OPACITY.setInt(opacity)
         binding.surfaceInputOverlay.refreshControls()
+    }
+
+    // Friends polls run every 20s while a game is on; a status moving from offline to any
+    // online state is the only change worth a toast. Starts empty, so the first poll seeds the
+    // map silently instead of announcing everyone already online at boot.
+    private fun notifyNextendoFriendChanges(statuses: MutableMap<Long, Int>) {
+        if (!BooleanSetting.NEXTENDO_FRIEND_NOTIFICATIONS.getBoolean() ||
+            NativeLibrary.getNextendoAccountStatus().isEmpty()
+        ) {
+            return
+        }
+
+        val array = JSONArray(NativeLibrary.nextendoFriendsJson())
+        val seen = HashSet<Long>()
+        for (i in 0 until array.length()) {
+            val friend = array.getJSONObject(i)
+            val pid = friend.getLong("pid")
+            val status = friend.getInt("status")
+            seen.add(pid)
+            if (statuses.put(pid, status) == 0 && status > 0) {
+                val name = friend.getString("name")
+                Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(
+                        CitronApplication.appContext,
+                        CitronApplication.appContext.getString(
+                            R.string.nextendo_friend_online,
+                            name
+                        ),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+        statuses.keys.retainAll(seen)
     }
 
     private fun setInsets() {

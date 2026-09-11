@@ -724,6 +724,13 @@ abstract class SettingsItem(
                 )
             )
             put(
+                SwitchSetting(
+                    BooleanSetting.NEXTENDO_FRIEND_NOTIFICATIONS,
+                    titleId = R.string.nextendo_friend_notifications,
+                    descriptionId = R.string.nextendo_friend_notifications_description
+                )
+            )
+            put(
                 RunnableSetting(
                     titleId = R.string.nextendo_sign_in,
                     descriptionId = R.string.nextendo_sign_in_description,

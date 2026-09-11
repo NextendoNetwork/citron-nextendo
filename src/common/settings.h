@@ -743,6 +743,9 @@ struct Values {
     // and isn't gated by this, since that's already opt-in every time.
     Setting<bool> nextendo_cloud_sync_enabled{linkage, true, "nextendo_cloud_sync_enabled",
                                               Category::Network};
+    // Only the Android client reads this; the desktop shows friend activity in its own UI.
+    Setting<bool> nextendo_friend_notifications{linkage, true, "nextendo_friend_notifications",
+                                                Category::Network};
 
     // WebService
     Setting<bool> enable_telemetry{linkage, false, "enable_telemetry", Category::WebService};

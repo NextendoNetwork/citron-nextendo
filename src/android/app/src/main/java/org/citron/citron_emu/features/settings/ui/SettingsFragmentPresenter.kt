@@ -1049,10 +1049,11 @@ class SettingsFragmentPresenter(
                     }
                 }
             )
+            add(BooleanSetting.NEXTENDO_CLOUD_SYNC.key)
+            add(BooleanSetting.NEXTENDO_FRIEND_NOTIFICATIONS.key)
             add(BooleanSetting.NEXTENDO_ENABLE.key)
             add(StringSetting.NEXTENDO_SERVER_IP.key)
             add(StringSetting.NEXTENDO_NAT_IP.key)
-            add(BooleanSetting.NEXTENDO_CLOUD_SYNC.key)
         }
     }
 

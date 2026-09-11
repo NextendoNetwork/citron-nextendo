@@ -220,6 +220,9 @@ object NativeLibrary {
     // Refreshes the friends snapshot the in-game friend service reads from.
     external fun nextendoRefreshFriends()
 
+    // Cached friends snapshot as a JSON array of {pid, name, status}.
+    external fun nextendoFriendsJson(): String
+
     external fun nextendoSyncPlayTime(programId: Long, seconds: Long)
 
     // No-op when cloud sync is off, not linked, or the title isn't Nextendo-supported.
