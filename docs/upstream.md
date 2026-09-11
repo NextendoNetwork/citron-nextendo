@@ -1,8 +1,10 @@
 # Upstream tracking
 
 This fork adds a Nextendo Network client to the Citron Android app. Emulation code
-stays untouched, with one additive exception: `SaveDataFactory` gains
-`GetOrCreateTitleSaveDirectory` for cloud-save restores. The fork's own code is
+stays untouched, with three additive exceptions: `SaveDataFactory` gains
+`GetOrCreateTitleSaveDirectory` (cloud-save restores), `NextendoAccount` gains
+`UpdateUsername` (keeps the stored account truthful after a rename), and
+`NextendoAvatar` exposes `DecodeBase64` (friend avatars). The fork's own code is
 confined to the networking, account and surrounding UI layers, plus Android build
 plumbing.
 
@@ -39,36 +41,45 @@ upstream change touches the same lines.
 | File | Purpose |
 | --- | --- |
 | `src/android/app/src/main/jni/nextendo_jni.cpp` | all Nextendo JNI bindings; own translation unit so upstream `native.cpp` edits never conflict |
+| `src/citron/nextendo_byaml.{h,cpp}`, `nextendo_ssbu_mods.{h,cpp}` | Android-only tooling: Splatoon 2 BCAT schedule install, SSBU Skyline mod install |
 | `src/android/vcpkg-overlay/arm64-osx.cmake`, `host-toolchain.cmake` | macOS host-triplet fix for vcpkg (see build notes) |
 | `src/android/app/src/main/java/.../service/NextendoSignInService.kt` | foreground service keeping the OAuth loopback alive |
-| `.../model/view/SignInStatusSetting.kt`, `.../viewholder/SignInViewHolder.kt`, `list_item_sign_in.xml` | combined sign-in row with status pill |
+| `.../utils/NextendoAccountState.kt`, `NextendoImages.kt`, `NextendoConnectionTest.kt`, `NextendoCloudSaveResult.kt` | cached profile + change events, image decode, NAT probe, result strings |
+| `.../fragments/Nextendo*DialogFragment.kt` | profile, friends, cloud saves, play history; share `NextendoDialogFragment` base |
+| `.../model/view/SignInStatusSetting.kt`, `.../viewholder/SignInViewHolder.kt`, `list_item_sign_in.xml` | signed-out sign-in row with status pill |
+| `.../model/view/ProfileSetting.kt`, `.../viewholder/ProfileViewHolder.kt`, `list_item_profile.xml` | signed-in profile row (avatar + username) |
 | `res/xml/network_security_config.xml` | cleartext to loopback only (OAuth callback) |
-| `res/drawable/bg_online_pill.xml`, `bg_update_pill.xml` | game-list badges |
-| `res/values/strings_nextendo.xml`, `colors_nextendo.xml` | fork strings/colors, kept out of upstream files |
+| `res/drawable/bg_online_pill.xml`, `bg_update_pill.xml`, `bg_status_dot.xml` | game-list badges and the profile status dot |
+| `res/values/strings_nextendo.xml`, `colors_nextendo.xml`, `styles_nextendo.xml` | fork strings/colors/styles, kept out of upstream files |
 
 ### Shared files this fork edits (conflict-prone)
 
 | File | Change | On conflict |
 | --- | --- | --- |
 | `src/android/app/build.gradle.kts` | `ENABLE_WEB_SERVICE=1`; relative `VCPKG_OVERLAY_TRIPLETS` arg | keep the arg; re-check the option block |
-| `src/android/app/src/main/jni/CMakeLists.txt` | compiles `src/citron/nextendo_save_sync.cpp`; `CITRON_ENABLE_LIBARCHIVE`, `ENABLE_WEB_SERVICE`, `LibArchive`, `nextendo_jni.cpp` | keep the added lines; if upstream refactors the target, re-apply by intent |
-| `src/common/nextendo_account.cpp` | `EnsureLoaded` only caches successful file reads (Android init-order fix) | resolve by intent; upstream may fix this differently |
+| `src/android/app/src/main/jni/CMakeLists.txt` | compiles `src/citron/nextendo_save_sync.cpp`, `nextendo_byaml.cpp`, `nextendo_ssbu_mods.cpp`; `CITRON_ENABLE_LIBARCHIVE`, `ENABLE_WEB_SERVICE`, `LibArchive`, `nextendo_jni.cpp` | keep the added lines; if upstream refactors the target, re-apply by intent |
+| `src/common/nextendo_account.{h,cpp}` | `EnsureLoaded` only caches successful file reads (Android init-order fix); `UpdateUsername` re-saves the account after a rename | resolve by intent; upstream may fix this differently |
+| `src/common/nextendo_avatar.{h,cpp}` | `DecodeBase64` exposed so the Android friends cache can decode avatars | additive; keep |
 | `src/core/file_sys/savedata_factory.{h,cpp}` | additive `GetOrCreateTitleSaveDirectory` (recreates the guest's save layout for cloud restores) | keep the method; re-apply it over any upstream rewrite of `GetTitleSaveDirectory` |
-| `src/common/settings.h` | `enable_nextendo` default `true` (intentional divergence) | keep ours unless upstream changes the semantics |
-| `src/web_service/nextendo_api.{h,cpp}` | `SetCaCertPathOverride` + CA override in `ApplyCaCertPath` | additive; re-apply if `ApplyCaCertPath` moves |
-| `src/citron/nextendo_save_sync.cpp/h` | compiled into the Android build (desktop file, zero Qt deps); `Pull` creates a missing title save directory so fresh devices can restore | keep the creation step; update the CMake reference if upstream moves the file |
-| `src/android/.../fragments/EmulationFragment.kt` | cloud pull before `NativeLibrary.run`, account-gate toast, presence/play-time pumps | small anchors; re-apply by intent |
+| `src/common/settings.h` | `enable_nextendo` default `true` (intentional divergence); `nextendo_friend_notifications` | keep ours unless upstream changes the semantics |
+| `src/web_service/nextendo_api.{h,cpp}` | `SetCaCertPathOverride` + CA override; `GetGalleryAvatar`, `WebsiteProfileUrl`; `SetUsername` updates the stored account | additive; re-apply if `ApplyCaCertPath` moves |
+| `src/web_service/ssbu_mod_installer.cpp` | applies the Nextendo CA override before the Linux CA candidates (Android has no CA file OpenSSL can read) | keep the override branch first |
+| `src/citron/nextendo_save_sync.cpp/h` | compiled into the Android build (desktop file, zero Qt deps); `Pull` creates a missing title save directory; `Pull`/`Push` return typed results; `ExtractZipToDirectory` shared with the BCAT/SSBU modules | keep the creation step; update the CMake reference if upstream moves the file |
+| `src/android/.../fragments/EmulationFragment.kt` | before boot: cloud pull, Splatoon 2 BCAT, SSBU mods; account-gate toast; presence/play-time pumps; friend-online notifications | small anchors; re-apply by intent |
+| `src/android/.../utils/GameHelper.kt`, `model/GamesViewModel.kt` | the last library scan is cached for screens that need the list without rescanning (cloud save manager) | small anchors; keep |
 | `src/android/.../AndroidManifest.xml` | foreground-service permissions + service + network security config | keep the additions |
 | `src/android/.../NativeLibrary.kt`, `CitronApplication.kt` | external funs + callbacks + CA export at startup | keep; the Kotlin JNI surface is documented in `nextendo_jni.cpp` |
-| `.../features/settings/*` (Settings, presenter, adapter, fragments) | `SECTION_NEXTENDO`, the sign-in section, `TYPE_SIGN_IN_STATUS`, `onResume` reload, DiffCallback content compare | small anchors; re-apply by intent |
+| `.../features/settings/*` (Settings, presenter, adapter, fragments, `SettingsItem.kt`) | `SECTION_NEXTENDO`, `TYPE_SIGN_IN_STATUS`, `TYPE_PROFILE`, the account-state reload, `onResume` reload, DiffCallback content compare | small anchors; re-apply by intent |
 | `.../adapters/GameAdapter.kt`, `ui/GamesFragment.kt`, `fragments/SearchFragment.kt` | pill binding + 30s count polling | keep the additions |
 
 ### Desktop files compiled into the Android build
 
 `src/citron/nextendo_save_sync.cpp` is added to `citron-android` because it has
 no Qt dependency, with one small modification (`Pull` creates a missing save
-directory). Any upstream refactor of that file (it lives in the Qt target) must
-be verified against the Android build.
+directory, `Push`/`Pull` return typed results). Any upstream refactor of that
+file (it lives in the Qt target) must be verified against the Android build.
+`nextendo_byaml.cpp` and `nextendo_ssbu_mods.cpp` are fork-added and Android-only,
+so upstream never touches them.
 
 ## Intentional divergences
 
