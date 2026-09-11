@@ -1,8 +1,10 @@
 # Upstream tracking
 
-This fork adds a Nextendo Network client to the Citron Android app. All emulation
-code stays untouched upstream; the fork's own code is confined to the networking,
-account and surrounding UI layers, plus Android build plumbing.
+This fork adds a Nextendo Network client to the Citron Android app. Emulation code
+stays untouched, with one additive exception: `SaveDataFactory` gains
+`GetOrCreateTitleSaveDirectory` for cloud-save restores. The fork's own code is
+confined to the networking, account and surrounding UI layers, plus Android build
+plumbing.
 
 ## Upstreams
 
@@ -51,9 +53,11 @@ upstream change touches the same lines.
 | `src/android/app/build.gradle.kts` | `ENABLE_WEB_SERVICE=1`; relative `VCPKG_OVERLAY_TRIPLETS` arg | keep the arg; re-check the option block |
 | `src/android/app/src/main/jni/CMakeLists.txt` | compiles `src/citron/nextendo_save_sync.cpp`; `CITRON_ENABLE_LIBARCHIVE`, `ENABLE_WEB_SERVICE`, `LibArchive`, `nextendo_jni.cpp` | keep the added lines; if upstream refactors the target, re-apply by intent |
 | `src/common/nextendo_account.cpp` | `EnsureLoaded` only caches successful file reads (Android init-order fix) | resolve by intent; upstream may fix this differently |
+| `src/core/file_sys/savedata_factory.{h,cpp}` | additive `GetOrCreateTitleSaveDirectory` (recreates the guest's save layout for cloud restores) | keep the method; re-apply it over any upstream rewrite of `GetTitleSaveDirectory` |
 | `src/common/settings.h` | `enable_nextendo` default `true` (intentional divergence) | keep ours unless upstream changes the semantics |
 | `src/web_service/nextendo_api.{h,cpp}` | `SetCaCertPathOverride` + CA override in `ApplyCaCertPath` | additive; re-apply if `ApplyCaCertPath` moves |
-| `src/citron/nextendo_save_sync.cpp/h` | compiled unchanged into the Android build (desktop file, zero Qt deps) | if upstream refactors or moves it, update the CMake reference |
+| `src/citron/nextendo_save_sync.cpp/h` | compiled into the Android build (desktop file, zero Qt deps); `Pull` creates a missing title save directory so fresh devices can restore | keep the creation step; update the CMake reference if upstream moves the file |
+| `src/android/.../fragments/EmulationFragment.kt` | cloud pull before `NativeLibrary.run`, account-gate toast, presence/play-time pumps | small anchors; re-apply by intent |
 | `src/android/.../AndroidManifest.xml` | foreground-service permissions + service + network security config | keep the additions |
 | `src/android/.../NativeLibrary.kt`, `CitronApplication.kt` | external funs + callbacks + CA export at startup | keep; the Kotlin JNI surface is documented in `nextendo_jni.cpp` |
 | `.../features/settings/*` (Settings, presenter, adapter, fragments) | `SECTION_NEXTENDO`, the sign-in section, `TYPE_SIGN_IN_STATUS`, `onResume` reload, DiffCallback content compare | small anchors; re-apply by intent |
@@ -62,8 +66,9 @@ upstream change touches the same lines.
 ### Desktop files compiled into the Android build
 
 `src/citron/nextendo_save_sync.cpp` is added to `citron-android` because it has
-no Qt dependency. Any upstream refactor of that file (it lives in the Qt target)
-must be verified against the Android build.
+no Qt dependency, with one small modification (`Pull` creates a missing save
+directory). Any upstream refactor of that file (it lives in the Qt target) must
+be verified against the Android build.
 
 ## Intentional divergences
 
@@ -76,7 +81,7 @@ must be verified against the Android build.
 
 1. Create the GitHub fork of `NextendoNetwork/citron-nextendo`; push `main` and
    `android-nextendo`.
-2. Releases: tag `android-nextendo` and attach the `app-mainline-release.apk`
-   (see `docs/BUILDING-CITRON-ANDROID`-style notes below if written).
+2. Releases: build with `AUTO_VERSIONED=true` (otherwise `versionCode` stays 1 and
+   updaters can't see new builds), tag `vX.Y.Z`, and attach `app-mainline-release.apk`.
 3. Build on any host: JDK 17, Android SDK (platform 34, NDK 26.1.10909125,
    cmake 3.22.1). The vcpkg overlay only affects macOS hosts.
