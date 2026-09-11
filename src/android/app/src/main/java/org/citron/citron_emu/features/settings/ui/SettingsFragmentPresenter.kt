@@ -1050,6 +1050,13 @@ class SettingsFragmentPresenter(
                 }
             )
             add(BooleanSetting.NEXTENDO_CLOUD_SYNC.key)
+            add(
+                RunnableSetting(
+                    titleId = R.string.nextendo_manage_cloud_saves,
+                    descriptionId = R.string.nextendo_manage_cloud_saves_description,
+                    isRunnable = true
+                ) { settingsViewModel.setShouldShowNextendoCloudSaves(true) }
+            )
             add(BooleanSetting.NEXTENDO_FRIEND_NOTIFICATIONS.key)
             add(BooleanSetting.NEXTENDO_ENABLE.key)
             add(StringSetting.NEXTENDO_SERVER_IP.key)

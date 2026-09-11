@@ -64,6 +64,7 @@ class GamesViewModel : ViewModel() {
         )
 
         _games.value = sortedList
+        GameHelper.cacheGames(sortedList)
     }
 
     fun setSearchedGames(games: List<Game>) {

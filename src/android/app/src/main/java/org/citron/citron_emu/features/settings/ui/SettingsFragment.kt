@@ -22,6 +22,7 @@ import org.citron.citron_emu.databinding.FragmentSettingsBinding
 import org.citron.citron_emu.features.input.NativeInput
 import org.citron.citron_emu.features.settings.model.Settings
 import org.citron.citron_emu.fragments.MessageDialogFragment
+import org.citron.citron_emu.fragments.NextendoCloudSavesDialogFragment
 import org.citron.citron_emu.utils.ViewUtils.updateMargins
 import org.citron.citron_emu.utils.collect
 
@@ -145,6 +146,17 @@ class SettingsFragment : Fragment() {
                 DirectConnectDialogFragment().show(
                     parentFragmentManager,
                     DirectConnectDialogFragment.TAG
+                )
+            }
+        }
+        settingsViewModel.shouldShowNextendoCloudSaves.collect(
+            viewLifecycleOwner,
+            resetState = { settingsViewModel.setShouldShowNextendoCloudSaves(false) }
+        ) {
+            if (it) {
+                NextendoCloudSavesDialogFragment().show(
+                    parentFragmentManager,
+                    NextendoCloudSavesDialogFragment.TAG
                 )
             }
         }

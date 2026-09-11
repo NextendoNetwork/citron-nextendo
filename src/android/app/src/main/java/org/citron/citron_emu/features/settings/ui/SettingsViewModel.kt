@@ -57,6 +57,13 @@ class SettingsViewModel : ViewModel() {
     private val _shouldShowDirectConnectDialog = MutableStateFlow(false)
     val shouldShowDirectConnectDialog = _shouldShowDirectConnectDialog.asStateFlow()
 
+    private val _shouldShowNextendoCloudSaves = MutableStateFlow(false)
+    val shouldShowNextendoCloudSaves = _shouldShowNextendoCloudSaves.asStateFlow()
+
+    fun setShouldShowNextendoCloudSaves(value: Boolean) {
+        _shouldShowNextendoCloudSaves.value = value
+    }
+
     fun setShouldRecreate(value: Boolean) {
         _shouldRecreate.value = value
     }
