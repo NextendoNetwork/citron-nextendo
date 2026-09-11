@@ -118,6 +118,16 @@ jint Java_org_citron_citron_1emu_NativeLibrary_nextendoPingBackend(JNIEnv* env, 
     return WebService::NextendoApi::PingBackend().value_or(-1);
 }
 
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoGetOnlineStatusJson(JNIEnv* env,
+                                                                              jobject jobj) {
+    const auto status = WebService::NextendoApi::GetOnlineStatus();
+    std::string json = "{\"queried\":" + std::string(status.queried ? "true" : "false") +
+                       ",\"allow\":" + std::string(status.allow ? "true" : "false") +
+                       ",\"reason\":\"" + EscapeJson(status.reason) + "\",\"message\":\"" +
+                       EscapeJson(status.message) + "\"}";
+    return Common::Android::ToJString(env, json);
+}
+
 void Java_org_citron_citron_1emu_NativeLibrary_nextendoSignOut(JNIEnv* env, jobject jobj) {
     Common::NextendoAccount::Clear();
     Common::NextendoFriends::Set({});

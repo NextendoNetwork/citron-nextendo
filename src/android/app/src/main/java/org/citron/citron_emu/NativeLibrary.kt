@@ -212,6 +212,10 @@ object NativeLibrary {
     // "unverified", ...). Empty when online is allowed, not linked, or not queried.
     external fun getNextendoOnlineStatus(): String
 
+    // The same gate state with enough detail for a status indicator: queried, allow, reason,
+    // message.
+    external fun nextendoGetOnlineStatusJson(): String
+
     // Round-trip time to the account backend in milliseconds, or -1 on failure.
     external fun nextendoPingBackend(): Int
 

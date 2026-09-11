@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="?android:attr/selectableItemBackground"
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center_vertical"
+    android:minHeight="72dp"
+    android:padding="16dp">
+
+    <com.google.android.material.imageview.ShapeableImageView
+        android:id="@+id/image_profile"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_centerVertical="true"
+        android:background="@color/nextendo_avatar_background"
+        android:contentDescription="@null"
+        android:scaleType="centerCrop"
+        app:shapeAppearanceOverlay="@style/NextendoAvatarShape" />
+
+    <LinearLayout
+        android:id="@+id/text_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_centerVertical="true"
+        android:layout_marginStart="16dp"
+        android:layout_toStartOf="@id/image_chevron"
+        android:layout_toEndOf="@id/image_profile"
+        android:orientation="vertical">
+
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/text_setting_name"
+            style="@style/TextAppearance.Material3.TitleMedium"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAlignment="viewStart"
+            android:textSize="17sp"
+            tools:text="PlayerOne" />
+
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/text_setting_description"
+            style="@style/TextAppearance.Material3.BodySmall"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_small"
+            android:textAlignment="viewStart"
+            tools:text="Signed in — tap to view profile" />
+
+    </LinearLayout>
+
+    <ImageView
+        android:id="@+id/image_chevron"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:layout_alignParentEnd="true"
+        android:layout_centerVertical="true"
+        android:contentDescription="@null"
+        android:src="@drawable/ic_arrow_forward" />
+
+</RelativeLayout>

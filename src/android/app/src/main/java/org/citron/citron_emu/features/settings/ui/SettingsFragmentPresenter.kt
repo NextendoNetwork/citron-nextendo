@@ -1027,45 +1027,24 @@ class SettingsFragmentPresenter(
         sl.apply {
             add(HeaderSetting(R.string.nextendo_network))
             val username = NativeLibrary.getNextendoAccountStatus()
-            add(
-                SignInStatusSetting(
-                    signedIn = username.isNotEmpty(),
-                    titleId = if (username.isNotEmpty()) {
-                        R.string.nextendo_sign_out
-                    } else {
-                        R.string.nextendo_sign_in
-                    },
-                    descriptionId = R.string.nextendo_sign_in_description,
-                    statusText = context.getString(
-                        if (username.isNotEmpty()) {
-                            R.string.nextendo_signed_in_as
-                        } else {
-                            R.string.nextendo_not_signed_in
-                        },
-                        username
-                    )
-                ) {
-                    if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
-                        NativeLibrary.nextendoSignOut()
-                        NextendoAccountState.clear()
-                        android.widget.Toast.makeText(
-                            context,
-                            R.string.nextendo_signed_out,
-                            android.widget.Toast.LENGTH_SHORT
-                        ).show()
-                        loadSettingsList()
-                    } else {
+            if (username.isEmpty()) {
+                add(
+                    SignInStatusSetting(
+                        signedIn = false,
+                        titleId = R.string.nextendo_sign_in,
+                        descriptionId = R.string.nextendo_sign_in_description,
+                        statusText = context.getString(R.string.nextendo_not_signed_in)
+                    ) {
                         org.citron.citron_emu.service.NextendoSignInService.start(context)
                     }
-                }
-            )
-            if (username.isNotEmpty()) {
+                )
+            } else {
                 add(
-                    RunnableSetting(
-                        titleId = R.string.nextendo_friends,
-                        descriptionId = R.string.nextendo_friends_description,
-                        isRunnable = true
-                    ) { settingsViewModel.setShouldShowNextendoFriends(true) }
+                    ProfileSetting(
+                        titleString = NextendoAccountState.profile?.name ?: username,
+                        descriptionId = R.string.nextendo_profile_description,
+                        avatar = NextendoAccountState.avatar
+                    ) { settingsViewModel.setShouldShowNextendoProfile(true) }
                 )
             }
             add(BooleanSetting.NEXTENDO_CLOUD_SYNC.key)

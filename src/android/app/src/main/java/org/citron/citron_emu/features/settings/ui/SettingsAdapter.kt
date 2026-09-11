@@ -22,6 +22,7 @@ import com.google.android.material.timepicker.MaterialTimePicker
 import com.google.android.material.timepicker.TimeFormat
 import org.citron.citron_emu.R
 import org.citron.citron_emu.SettingsNavigationDirections
+import org.citron.citron_emu.databinding.ListItemProfileBinding
 import org.citron.citron_emu.databinding.ListItemSettingBinding
 import org.citron.citron_emu.databinding.ListItemSettingInputBinding
 import org.citron.citron_emu.databinding.ListItemSettingSwitchBinding
@@ -94,6 +95,10 @@ class SettingsAdapter(
 
             SettingsItem.TYPE_SIGN_IN_STATUS -> {
                 SignInViewHolder(ListItemSignInBinding.inflate(inflater), this)
+            }
+
+            SettingsItem.TYPE_PROFILE -> {
+                ProfileViewHolder(ListItemProfileBinding.inflate(inflater), this)
             }
 
             else -> {

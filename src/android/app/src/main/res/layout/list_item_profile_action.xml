@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="?android:attr/selectableItemBackground"
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center_vertical"
+    android:minHeight="56dp"
+    android:paddingTop="10dp"
+    android:paddingBottom="10dp">
+
+    <LinearLayout
+        android:id="@+id/text_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_centerVertical="true"
+        android:layout_toStartOf="@id/image_action_chevron"
+        android:orientation="vertical">
+
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/text_action_title"
+            style="@style/TextAppearance.Material3.TitleMedium"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAlignment="viewStart"
+            tools:text="Friends" />
+
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/text_action_description"
+            style="@style/TextAppearance.Material3.BodySmall"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAlignment="viewStart"
+            tools:text="Friends, requests and their status" />
+
+    </LinearLayout>
+
+    <ImageView
+        android:id="@+id/image_action_chevron"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:layout_alignParentEnd="true"
+        android:layout_centerVertical="true"
+        android:contentDescription="@null"
+        android:src="@drawable/ic_arrow_forward" />
+
+</RelativeLayout>

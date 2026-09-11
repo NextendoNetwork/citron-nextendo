@@ -96,6 +96,7 @@ abstract class SettingsItem(
         const val TYPE_STRING_INPUT = 11
         const val TYPE_LOG_FILTER = 12
         const val TYPE_SIGN_IN_STATUS = 13
+        const val TYPE_PROFILE = 14
 
         const val FASTMEM_COMBINED = "fastmem_combined"
 
