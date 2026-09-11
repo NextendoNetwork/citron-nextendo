@@ -367,6 +367,15 @@ class GamePropertiesFragment : Fragment() {
                         R.drawable.ic_save
                     ) { uploadNextendoCloudSave(nextendoProgramId) }
                 )
+                if (NativeLibrary.isNextendoSsbuTitle(nextendoProgramId)) {
+                    add(
+                        SubmenuProperty(
+                            R.string.nextendo_ssbu_mods_install,
+                            R.string.nextendo_ssbu_mods_description,
+                            R.drawable.ic_save
+                        ) { installSsbuMods(nextendoProgramId) }
+                    )
+                }
             }
         }
         binding.listProperties.apply {
@@ -425,8 +434,24 @@ class GamePropertiesFragment : Fragment() {
         }.start()
     }
 
-    private fun showInstalledContentRemovalDialog() {
-        if (!canManageInstalledContent()) {
+    private fun installSsbuMods(programId: Long) {
+        Thread {
+            val result = NativeLibrary.nextendoInstallSsbuMods(programId, force = true)
+            val message = if (result.isEmpty() || result == "failed") {
+                CitronApplication.appContext.getString(R.string.nextendo_ssbu_mods_failed)
+            } else {
+                CitronApplication.appContext.getString(
+                    R.string.nextendo_ssbu_mods_installed,
+                    result
+                )
+            }
+            activity?.runOnUiThread {
+                Toast.makeText(CitronApplication.appContext, message, Toast.LENGTH_LONG).show()
+            }
+        }.start()
+    }
+
+    private fun showInstalledContentRemovalDialog() {        if (!canManageInstalledContent()) {
             confirmInstalledContentRemoval(InstalledContentTarget.Game)
             return
         }

@@ -26,6 +26,7 @@
 
 #include "citron/nextendo_byaml.h"
 #include "citron/nextendo_save_sync.h"
+#include "citron/nextendo_ssbu_mods.h"
 #include "core/hle/service/friend/friend.h"
 #include "web_service/nextendo_api.h"
 
@@ -281,6 +282,26 @@ jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoEnsureBcat(JNIEnv* env
         break;
     }
     return Common::Android::ToJString(env, "");
+}
+
+jboolean Java_org_citron_citron_1emu_NativeLibrary_isNextendoSsbuTitle(JNIEnv* env, jobject jobj,
+                                                                       jlong program_id) {
+    return Nextendo::SsbuMods::IsSsbuTitle(static_cast<u64>(program_id)) ? JNI_TRUE : JNI_FALSE;
+}
+
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoInstallSsbuMods(JNIEnv* env, jobject jobj,
+                                                                          jlong program_id,
+                                                                          jboolean force) {
+    const u64 title_id = static_cast<u64>(program_id);
+    if (!Nextendo::SsbuMods::IsSsbuTitle(title_id)) {
+        return Common::Android::ToJString(env, "");
+    }
+    if (force != JNI_TRUE && Nextendo::SsbuMods::Installed(title_id)) {
+        return Common::Android::ToJString(env, "");
+    }
+    const auto outcome = Nextendo::SsbuMods::Install(title_id);
+    return Common::Android::ToJString(
+        env, outcome.installed > 0 ? std::to_string(outcome.installed) : "failed");
 }
 
 jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoCloudSavePull(JNIEnv* env, jobject jobj,

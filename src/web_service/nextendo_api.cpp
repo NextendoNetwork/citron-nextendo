@@ -37,6 +37,10 @@ void SetCaCertPathOverride(const std::string& path) {
     g_ca_cert_override = path;
 }
 
+std::string GetCaCertPathOverride() {
+    return g_ca_cert_override;
+}
+
 namespace {
 
 constexpr const char* CanonicalUrl = "https://nextendo.network";

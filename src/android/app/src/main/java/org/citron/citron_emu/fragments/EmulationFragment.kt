@@ -1550,6 +1550,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 Log.debug("[EmulationFragment] Starting emulation thread.")
                 pullNextendoCloudSave()
                 ensureNextendoBcat()
+                installNextendoSsbuMods()
                 NativeLibrary.run(gamePath, programIndex, false)
             }, "NativeEmulation")
             emulationThread.start()
@@ -1579,6 +1580,30 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 }
 
                 "failed" -> Log.warning("[EmulationFragment] Nextendo BCAT download failed.")
+            }
+        }
+
+        // SSBU needs its Skyline mods before it can go online; the plugin folder check makes
+        // this a no-op after the first install.
+        private fun installNextendoSsbuMods() {
+            if (programId == 0L || !NativeLibrary.isNextendoSsbuTitle(programId)) {
+                return
+            }
+            when (val result = NativeLibrary.nextendoInstallSsbuMods(programId, force = false)) {
+                "" -> {}
+
+                "failed" -> Log.warning("[EmulationFragment] SSBU mod install failed.")
+
+                else -> Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(
+                        CitronApplication.appContext,
+                        CitronApplication.appContext.getString(
+                            R.string.nextendo_ssbu_mods_installed,
+                            result
+                        ),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
             }
         }
 
@@ -1638,6 +1663,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                         Log.debug("[EmulationFragment] Starting emulation thread.")
                         pullNextendoCloudSave()
                         ensureNextendoBcat()
+                        installNextendoSsbuMods()
                         NativeLibrary.run(gamePath, programIndex, true)
                     }, "NativeEmulation")
                     emulationThread.start()

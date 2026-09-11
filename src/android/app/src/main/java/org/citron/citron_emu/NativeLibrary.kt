@@ -248,6 +248,13 @@ object NativeLibrary {
     // "installed" on a fresh download, "failed" on error, "" when it was already current.
     external fun nextendoEnsureBcat(programId: Long): String
 
+    // True for Super Smash Bros. Ultimate, the one title that uses the Skyline mod set.
+    external fun isNextendoSsbuTitle(programId: Long): Boolean
+
+    // Installs/refreshes the SSBU online mods. Returns the count installed as a string,
+    // "failed" on error, or "" when there was nothing to do.
+    external fun nextendoInstallSsbuMods(programId: Long, force: Boolean): String
+
     // Returns "uploaded", "none", "failed" or "disabled".
     external fun nextendoCloudSavePush(programId: Long, manual: Boolean): String
 

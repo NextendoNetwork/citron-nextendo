@@ -31,6 +31,10 @@
     <string name="nextendo_ping_ms">%1$d ms</string>
     <string name="nextendo_ping_failed">unreachable</string>
     <string name="nextendo_test_result">NAT: %1$s · Ping: %2$s</string>
+    <string name="nextendo_ssbu_mods_install">Install SSBU online mods</string>
+    <string name="nextendo_ssbu_mods_description">Download the Skyline mods Super Smash Bros. Ultimate needs online</string>
+    <string name="nextendo_ssbu_mods_installed">Smash mods installed (%1$s)</string>
+    <string name="nextendo_ssbu_mods_failed">Smash mods: install failed</string>
     <string name="nextendo_manage_cloud_saves">Manage cloud saves</string>
     <string name="nextendo_manage_cloud_saves_description">Download or upload a save for a specific game</string>
     <string name="nextendo_cloud_save_loading">Checking your games…</string>
