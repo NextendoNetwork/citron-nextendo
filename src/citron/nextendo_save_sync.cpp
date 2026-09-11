@@ -218,6 +218,12 @@ bool UnzipToDirectoryPowerShell(std::span<const u8> zip_data, const std::filesys
 
 } // namespace
 
+#ifdef CITRON_ENABLE_LIBARCHIVE
+bool ExtractZipToDirectory(std::span<const u8> zip_data, const std::filesystem::path& dest) {
+    return UnzipToDirectory(zip_data, dest);
+}
+#endif
+
 void Pull(Core::System& system, u64 title_id, bool force) {
 #if defined(ENABLE_WEB_SERVICE) && (defined(CITRON_ENABLE_LIBARCHIVE) || defined(_WIN32))
     if (!IsEligible(title_id)) {

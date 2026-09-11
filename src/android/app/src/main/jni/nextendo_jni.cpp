@@ -21,6 +21,7 @@
 #include "common/nextendo_friends.h"
 #include "common/settings.h"
 
+#include "citron/nextendo_byaml.h"
 #include "citron/nextendo_save_sync.h"
 #include "core/hle/service/friend/friend.h"
 #include "web_service/nextendo_api.h"
@@ -183,6 +184,19 @@ void Java_org_citron_citron_1emu_NativeLibrary_nextendoSyncPlayTime(JNIEnv* env,
         entry.last_played = ts;
         WebService::NextendoApi::SyncHistory({entry});
     }}.detach();
+}
+
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoEnsureBcat(JNIEnv* env, jobject jobj,
+                                                                     jlong program_id) {
+    switch (Nextendo::Byaml::Ensure(static_cast<u64>(program_id))) {
+    case Nextendo::Byaml::Result::Installed:
+        return Common::Android::ToJString(env, "installed");
+    case Nextendo::Byaml::Result::Failed:
+        return Common::Android::ToJString(env, "failed");
+    case Nextendo::Byaml::Result::Current:
+        break;
+    }
+    return Common::Android::ToJString(env, "");
 }
 
 void Java_org_citron_citron_1emu_NativeLibrary_nextendoCloudSavePull(JNIEnv* env, jobject jobj,

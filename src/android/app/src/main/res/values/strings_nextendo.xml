@@ -17,4 +17,5 @@
     <string name="nextendo_signed_out">Nextendo: signed out</string>
     <string name="nextendo_signed_in_as">Signed in as %1$s</string>
     <string name="nextendo_not_signed_in">Not signed in</string>
+    <string name="nextendo_bcat_installed">Splatoon 2 online data installed</string>
 </resources>

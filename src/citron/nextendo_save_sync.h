@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <filesystem>
+#include <span>
 #include <vector>
 
 #include "common/common_types.h"
@@ -23,5 +25,8 @@ std::vector<u8> CaptureForPush(Core::System& system, u64 title_id);
 
 // The network step for a zip from CaptureForPush -- call from a detached thread.
 void UploadCaptured(u64 title_id, std::vector<u8> zip_bytes);
+
+// Extracts a zip archive to dest. libarchive builds only (the Android target).
+bool ExtractZipToDirectory(std::span<const u8> zip_data, const std::filesystem::path& dest);
 
 } // namespace Nextendo::SaveSync

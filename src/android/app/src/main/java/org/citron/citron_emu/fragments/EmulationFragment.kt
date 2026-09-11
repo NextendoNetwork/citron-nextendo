@@ -52,6 +52,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.citron.citron_emu.CitronApplication
 import org.citron.citron_emu.HomeNavigationDirections
 import org.citron.citron_emu.NativeLibrary
 import org.citron.citron_emu.R
@@ -1510,6 +1511,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             emulationThread = Thread({
                 Log.debug("[EmulationFragment] Starting emulation thread.")
                 pullNextendoCloudSave()
+                ensureNextendoBcat()
                 NativeLibrary.run(gamePath, programIndex, false)
             }, "NativeEmulation")
             emulationThread.start()
@@ -1520,6 +1522,25 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         private fun pullNextendoCloudSave() {
             if (programId != 0L) {
                 NativeLibrary.nextendoCloudSavePull(programId)
+            }
+        }
+
+        // Splatoon 2 refuses online play without its BCAT schedule, and the desktop installs it
+        // before boot. Only that title reaches the server here; other games return immediately.
+        private fun ensureNextendoBcat() {
+            if (programId == 0L) {
+                return
+            }
+            when (NativeLibrary.nextendoEnsureBcat(programId)) {
+                "installed" -> Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(
+                        CitronApplication.appContext,
+                        R.string.nextendo_bcat_installed,
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+
+                "failed" -> Log.warning("[EmulationFragment] Nextendo BCAT download failed.")
             }
         }
 
@@ -1578,6 +1599,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                     emulationThread = Thread({
                         Log.debug("[EmulationFragment] Starting emulation thread.")
                         pullNextendoCloudSave()
+                        ensureNextendoBcat()
                         NativeLibrary.run(gamePath, programIndex, true)
                     }, "NativeEmulation")
                     emulationThread.start()

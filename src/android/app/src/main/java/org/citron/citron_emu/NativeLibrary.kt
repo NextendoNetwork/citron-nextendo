@@ -225,6 +225,10 @@ object NativeLibrary {
     // No-op when cloud sync is off, not linked, or the title isn't Nextendo-supported.
     external fun nextendoCloudSavePull(programId: Long)
 
+    // Splatoon 2's BCAT schedule, fetched before boot when missing or stale. Returns
+    // "installed" on a fresh download, "failed" on error, "" when it was already current.
+    external fun nextendoEnsureBcat(programId: Long): String
+
     external fun nextendoCloudSavePush(programId: Long)
 
     // Android has no system CA file OpenSSL can read; the CA store is exported to a PEM.
