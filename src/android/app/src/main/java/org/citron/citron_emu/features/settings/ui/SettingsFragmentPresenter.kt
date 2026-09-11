@@ -1030,7 +1030,6 @@ class SettingsFragmentPresenter(
             if (username.isEmpty()) {
                 add(
                     SignInStatusSetting(
-                        signedIn = false,
                         titleId = R.string.nextendo_sign_in,
                         descriptionId = R.string.nextendo_sign_in_description,
                         statusText = context.getString(R.string.nextendo_not_signed_in)

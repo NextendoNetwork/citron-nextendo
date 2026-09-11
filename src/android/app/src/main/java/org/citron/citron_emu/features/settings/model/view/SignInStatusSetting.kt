@@ -5,9 +5,9 @@ package org.citron.citron_emu.features.settings.model.view
 
 import androidx.annotation.StringRes
 
-// Clickable sign-in/out row with a colored status pill on the right.
+// Clickable sign-in row with a status pill on the right. The signed-in state is the profile
+// row instead, so this row only ever renders signed out.
 class SignInStatusSetting(
-    val signedIn: Boolean,
     @StringRes titleId: Int = 0,
     titleString: String = "",
     @StringRes descriptionId: Int = 0,

@@ -25,13 +25,8 @@ class SignInViewHolder(val binding: ListItemSignInBinding, adapter: SettingsAdap
         binding.textSettingDescription.text = item.description
 
         binding.chipStatus.text = setting.statusText
-        val color = if (setting.signedIn) {
-            R.color.status_signed_in
-        } else {
-            R.color.status_not_signed_in
-        }
         binding.chipStatus.setChipBackgroundColor(
-            ColorStateList.valueOf(binding.root.context.getColor(color))
+            ColorStateList.valueOf(binding.root.context.getColor(R.color.status_not_signed_in))
         )
         binding.chipStatus.setTextColor(Color.WHITE)
     }
