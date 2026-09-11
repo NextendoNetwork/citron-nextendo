@@ -208,12 +208,7 @@ object NativeLibrary {
     // gallery id), gallery id, color, friend code and pid. Refreshes the emulated self avatar.
     external fun nextendoGetProfileJson(): String
 
-    // Human-readable reason when the account online gates block play ("elsewhere",
-    // "unverified", ...). Empty when online is allowed, not linked, or not queried.
-    external fun getNextendoOnlineStatus(): String
-
-    // The same gate state with enough detail for a status indicator: queried, allow, reason,
-    // message.
+    // Gate state with enough detail for a status indicator: queried, allow, reason, message.
     external fun nextendoGetOnlineStatusJson(): String
 
     // Play history: {ok, error, entries:[{title_id, name, icon, seconds, last_played}]}.

@@ -75,6 +75,7 @@ import org.citron.citron_emu.model.PatchType
 import org.citron.citron_emu.overlay.model.OverlayControl
 import org.citron.citron_emu.overlay.model.OverlayLayout
 import org.json.JSONArray
+import org.json.JSONObject
 import org.citron.citron_emu.utils.*
 import org.citron.citron_emu.utils.ViewUtils.setVisible
 import java.lang.NullPointerException
@@ -475,10 +476,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 nextendoPump.run()
                 if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
                     Thread {
-                        // The account server knows why a NEX login will be refused (session
-                        // active elsewhere, unverified, ...). The game would only show a bare
-                        // communication error, so surface the reason before it happens.
-                        val blocked = NativeLibrary.getNextendoOnlineStatus()
+                        val blocked = nextendoBlockedReason()
                         if (blocked.isNotEmpty()) {
                             nextendoHandler.post {
                                 context?.let {
@@ -1454,6 +1452,20 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             }
         }
         statuses.keys.retainAll(seen)
+    }
+
+    // The account server knows why a NEX login will be refused (session active elsewhere,
+    // unverified, ...). The game would only show a bare communication error, so surface the
+    // reason before it happens.
+    private fun nextendoBlockedReason(): String = try {
+        val status = JSONObject(NativeLibrary.nextendoGetOnlineStatusJson())
+        if (status.optBoolean("queried") && !status.optBoolean("allow")) {
+            status.optString("message").ifEmpty { status.optString("reason") }
+        } else {
+            ""
+        }
+    } catch (_: Exception) {
+        ""
     }
 
     private fun setInsets() {
