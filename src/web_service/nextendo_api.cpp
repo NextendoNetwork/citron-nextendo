@@ -705,6 +705,8 @@ std::string SetUsername(const std::string& username) {
                          fmt::format("Could not change your username (HTTP {}).",
                                      result ? result->status : 0));
     }
+    // The stored account is what the settings row and the guest bridge read; keep it truthful.
+    Common::NextendoAccount::UpdateUsername(username);
     return {};
 }
 

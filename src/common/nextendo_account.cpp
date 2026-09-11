@@ -169,6 +169,22 @@ void Clear() {
     void(FS::RemoveFile(FilePath()));
 }
 
+void UpdateUsername(std::string_view username) {
+    u64 pid = 0;
+    std::string friend_code;
+    std::string token;
+    {
+        std::lock_guard lock{g_mutex};
+        EnsureLoaded();
+        pid = g_pid;
+        friend_code = g_friend_code;
+        token = g_token;
+    }
+    if (pid != 0) {
+        Save(pid, username, friend_code, token);
+    }
+}
+
 void WriteGuestBridge(const std::filesystem::path& sdmc_root) {
     std::lock_guard lock{g_mutex};
     EnsureLoaded();

@@ -118,6 +118,12 @@ jint Java_org_citron_citron_1emu_NativeLibrary_nextendoPingBackend(JNIEnv* env, 
     return WebService::NextendoApi::PingBackend().value_or(-1);
 }
 
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoSetUsername(JNIEnv* env, jobject jobj,
+                                                                      jstring username) {
+    return Common::Android::ToJString(
+        env, WebService::NextendoApi::SetUsername(Common::Android::GetJString(env, username)));
+}
+
 jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoGetHistoryJson(JNIEnv* env,
                                                                          jobject jobj) {
     const auto history = WebService::NextendoApi::GetHistory();

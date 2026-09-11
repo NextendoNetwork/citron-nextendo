@@ -11,6 +11,7 @@ import android.content.res.ColorStateList
 import android.os.Bundle
 import android.widget.Toast
 import androidx.annotation.StringRes
+import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.lifecycleScope
@@ -20,6 +21,7 @@ import org.citron.citron_emu.CitronApplication
 import org.citron.citron_emu.NativeLibrary
 import org.citron.citron_emu.R
 import org.citron.citron_emu.databinding.DialogNextendoProfileBinding
+import org.citron.citron_emu.databinding.DialogNextendoUsernameBinding
 import org.citron.citron_emu.databinding.ListItemProfileActionBinding
 import org.citron.citron_emu.utils.NextendoAccountState
 import org.json.JSONObject
@@ -31,6 +33,10 @@ class NextendoProfileDialogFragment : DialogFragment() {
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         _binding = DialogNextendoProfileBinding.inflate(layoutInflater)
 
+        addAction(
+            R.string.nextendo_change_username,
+            R.string.nextendo_change_username_description
+        ) { showChangeUsername() }
         addAction(R.string.nextendo_friends, R.string.nextendo_friends_description) {
             NextendoFriendsDialogFragment().show(
                 parentFragmentManager,
@@ -148,8 +154,51 @@ class NextendoProfileDialogFragment : DialogFragment() {
             ColorStateList.valueOf(ContextCompat.getColor(requireContext(), colorRes))
     }
 
-    private fun confirmSignOut() {
-        MaterialAlertDialogBuilder(requireContext())
+    // The server enforces the same rule; checking here avoids a round trip for an obvious typo.
+    private fun showChangeUsername() {
+        val dialogBinding = DialogNextendoUsernameBinding.inflate(layoutInflater)
+        val dialog = MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.nextendo_change_username)
+            .setView(dialogBinding.root)
+            .setPositiveButton(android.R.string.ok, null)
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val username = dialogBinding.editUsername.text?.toString()?.trim().orEmpty()
+                if (!username.matches(USERNAME_PATTERN)) {
+                    dialogBinding.layoutUsername.error = getString(R.string.nextendo_username_invalid)
+                    return@setOnClickListener
+                }
+                dialogBinding.layoutUsername.error = null
+                dialog.dismiss()
+                changeUsername(username)
+            }
+        }
+        dialog.show()
+    }
+
+    private fun changeUsername(username: String) {
+        Thread {
+            val error = NativeLibrary.nextendoSetUsername(username)
+            post {
+                Toast.makeText(
+                    CitronApplication.appContext,
+                    if (error.isEmpty()) {
+                        R.string.nextendo_username_updated
+                    } else {
+                        R.string.nextendo_username_failed
+                    },
+                    Toast.LENGTH_LONG
+                ).show()
+                if (error.isEmpty()) {
+                    NextendoAccountState.refresh()
+                }
+            }
+        }.start()
+    }
+
+    private fun confirmSignOut() {        MaterialAlertDialogBuilder(requireContext())
             .setTitle(R.string.nextendo_sign_out)
             .setMessage(R.string.nextendo_sign_out_confirm)
             .setPositiveButton(android.R.string.ok) { _, _ ->
@@ -179,5 +228,6 @@ class NextendoProfileDialogFragment : DialogFragment() {
 
     companion object {
         const val TAG = "NextendoProfileDialogFragment"
+        private val USERNAME_PATTERN = Regex("^[A-Za-z0-9_-]{3,16}$")
     }
 }

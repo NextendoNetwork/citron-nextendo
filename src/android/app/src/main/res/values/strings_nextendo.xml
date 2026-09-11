@@ -34,6 +34,12 @@
     <string name="nextendo_play_history_empty">Nothing played yet</string>
     <string name="nextendo_play_history_error">Could not load your history</string>
     <string name="nextendo_history_details">Played %1$s · Last played %2$s</string>
+    <string name="nextendo_change_username">Change username</string>
+    <string name="nextendo_change_username_description">3-16 characters: letters, digits, _ or -</string>
+    <string name="nextendo_username_hint">Username</string>
+    <string name="nextendo_username_invalid">3-16 characters: letters, digits, _ or -</string>
+    <string name="nextendo_username_updated">Username updated</string>
+    <string name="nextendo_username_failed">Could not change the username</string>
     <string name="nextendo_sign_out_confirm">Sign out of this device? Cloud saves stop syncing until you sign back in.</string>
     <string name="nextendo_bcat_installed">Splatoon 2 online data installed</string>
     <string name="nextendo_friend_online">Nextendo: %1$s is online</string>
