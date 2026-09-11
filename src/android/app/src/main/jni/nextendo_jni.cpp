@@ -13,6 +13,8 @@
 #include <string>
 #include <thread>
 
+#include <fmt/format.h>
+
 #include "common/android/android_common.h"
 #include "common/android/id_cache.h"
 #include "common/nextendo_account.h"
@@ -224,19 +226,35 @@ jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoEnsureBcat(JNIEnv* env
     return Common::Android::ToJString(env, "");
 }
 
-void Java_org_citron_citron_1emu_NativeLibrary_nextendoCloudSavePull(JNIEnv* env, jobject jobj,
-                                                                      jlong program_id) {
-    if (!Settings::values.nextendo_cloud_sync_enabled.GetValue()) {
-        return;
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoCloudSavePull(JNIEnv* env, jobject jobj,
+                                                                        jlong program_id,
+                                                                        jboolean force) {
+    const bool manual = force == JNI_TRUE;
+    if (!manual && !Settings::values.nextendo_cloud_sync_enabled.GetValue()) {
+        return Common::Android::ToJString(env, "disabled");
     }
-    Nextendo::SaveSync::Pull(EmulationSession::GetInstance().System(),
-                             static_cast<u64>(program_id));
+    const auto result = Nextendo::SaveSync::Pull(EmulationSession::GetInstance().System(),
+                                                 static_cast<u64>(program_id), manual);
+    switch (result) {
+    case Nextendo::SaveSync::Result::Ok:
+        return Common::Android::ToJString(env, "applied");
+    case Nextendo::SaveSync::Result::NoData:
+        return Common::Android::ToJString(env, "none");
+    case Nextendo::SaveSync::Result::LocalKept:
+        return Common::Android::ToJString(env, "kept");
+    case Nextendo::SaveSync::Result::NoSaveDir:
+        return Common::Android::ToJString(env, "no_dir");
+    case Nextendo::SaveSync::Result::Failed:
+        break;
+    }
+    return Common::Android::ToJString(env, "failed");
 }
 
-void Java_org_citron_citron_1emu_NativeLibrary_nextendoCloudSavePush(JNIEnv* env, jobject jobj,
-                                                                     jlong program_id) {
-    if (!Settings::values.nextendo_cloud_sync_enabled.GetValue()) {
-        return;
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoCloudSavePush(JNIEnv* env, jobject jobj,
+                                                                        jlong program_id,
+                                                                        jboolean manual) {
+    if (manual != JNI_TRUE && !Settings::values.nextendo_cloud_sync_enabled.GetValue()) {
+        return Common::Android::ToJString(env, "disabled");
     }
     auto& system = EmulationSession::GetInstance().System();
     // Mirror the desktop: the emulation thread has exited, rebuild a fresh save-data factory
@@ -245,14 +263,19 @@ void Java_org_citron_citron_1emu_NativeLibrary_nextendoCloudSavePush(JNIEnv* env
     if (auto filesystem = system.GetFilesystem()) {
         system.GetFileSystemController().InitializeContentSystem(*filesystem, true);
     }
-    auto zip = Nextendo::SaveSync::CaptureForPush(system, static_cast<u64>(program_id));
-    if (zip.empty()) {
-        return;
+    const auto result = Nextendo::SaveSync::Push(system, static_cast<u64>(program_id));
+    if (result == Nextendo::SaveSync::Result::Ok) {
+        return Common::Android::ToJString(env, "uploaded");
     }
-    const u64 title_id = static_cast<u64>(program_id);
-    std::thread{[title_id, zip = std::move(zip)]() mutable {
-        Nextendo::SaveSync::UploadCaptured(title_id, std::move(zip));
-    }}.detach();
+    return Common::Android::ToJString(
+        env, result == Nextendo::SaveSync::Result::NoData ? "none" : "failed");
+}
+
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoCloudSaveProbe(JNIEnv* env, jobject jobj,
+                                                                         jlong program_id) {
+    const auto save = WebService::NextendoApi::PullSave(
+        fmt::format("{:016x}", static_cast<u64>(program_id)));
+    return Common::Android::ToJString(env, save && !save->empty() ? "available" : "none");
 }
 
 void Java_org_citron_citron_1emu_NativeLibrary_setNextendoCaCertPath(JNIEnv* env, jobject jobj,

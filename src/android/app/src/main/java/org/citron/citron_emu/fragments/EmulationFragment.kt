@@ -507,7 +507,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                         NativeLibrary.nextendoSyncPlayTime(programId, total)
                     }
                     Thread {
-                        NativeLibrary.nextendoCloudSavePush(programId)
+                        NativeLibrary.nextendoCloudSavePush(programId, manual = false)
                     }.start()
                 }
             }
@@ -1559,7 +1559,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         // from racing the game's own first save read.
         private fun pullNextendoCloudSave() {
             if (programId != 0L) {
-                NativeLibrary.nextendoCloudSavePull(programId)
+                NativeLibrary.nextendoCloudSavePull(programId, force = false)
             }
         }
 

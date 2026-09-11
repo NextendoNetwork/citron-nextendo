@@ -224,10 +224,10 @@ bool ExtractZipToDirectory(std::span<const u8> zip_data, const std::filesystem::
 }
 #endif
 
-void Pull(Core::System& system, u64 title_id, bool force) {
+Result Pull(Core::System& system, u64 title_id, bool force) {
 #if defined(ENABLE_WEB_SERVICE) && (defined(CITRON_ENABLE_LIBARCHIVE) || defined(_WIN32))
     if (!IsEligible(title_id)) {
-        return;
+        return Result::Failed;
     }
 
     auto save_dir = system.GetFileSystemController().GetSaveDataFactory().GetTitleSaveDirectory(
@@ -235,12 +235,12 @@ void Pull(Core::System& system, u64 title_id, bool force) {
     if (!force && HasLocalContent(save_dir)) {
         LOG_INFO(Frontend, "Nextendo save pull {:016X}: local save present -> kept (no overwrite)",
                  title_id);
-        return;
+        return Result::LocalKept;
     }
 
     const auto zip = WebService::NextendoApi::PullSave(fmt::format("{:016x}", title_id));
     if (!zip || zip->empty()) {
-        return;
+        return Result::NoData;
     }
 
     if (!save_dir) {
@@ -253,7 +253,7 @@ void Pull(Core::System& system, u64 title_id, bool force) {
     if (!save_dir) {
         LOG_WARNING(Frontend, "Nextendo save pull {:016X}: no save directory to restore into",
                     title_id);
-        return;
+        return Result::NoSaveDir;
     }
 
 #ifdef CITRON_ENABLE_LIBARCHIVE
@@ -261,12 +261,16 @@ void Pull(Core::System& system, u64 title_id, bool force) {
 #else
     const bool applied = UnzipToDirectoryPowerShell(*zip, save_dir->GetFullPath(), title_id);
 #endif
-    if (applied) {
-        LOG_INFO(Frontend, "Nextendo save pull {:016X}: applied ({} B)", title_id, zip->size());
+    if (!applied) {
+        return Result::Failed;
     }
+    LOG_INFO(Frontend, "Nextendo save pull {:016X}: applied ({} B)", title_id, zip->size());
+    return Result::Ok;
 #else
     (void)system;
     (void)title_id;
+    (void)force;
+    return Result::Failed;
 #endif
 }
 
@@ -292,10 +296,10 @@ std::vector<u8> CaptureForPush(Core::System& system, u64 title_id) {
 #endif
 }
 
-void UploadCaptured(u64 title_id, std::vector<u8> zip_bytes) {
+std::string UploadCaptured(u64 title_id, std::vector<u8> zip_bytes) {
 #ifdef ENABLE_WEB_SERVICE
     if (zip_bytes.empty()) {
-        return;
+        return "empty";
     }
     const std::string error =
         WebService::NextendoApi::PushSave(fmt::format("{:016x}", title_id), zip_bytes);
@@ -304,10 +308,20 @@ void UploadCaptured(u64 title_id, std::vector<u8> zip_bytes) {
     } else {
         LOG_INFO(Frontend, "Nextendo save push {:016X}: {} B", title_id, zip_bytes.size());
     }
+    return error;
 #else
     (void)title_id;
     (void)zip_bytes;
+    return "disabled";
 #endif
+}
+
+Result Push(Core::System& system, u64 title_id) {
+    const auto zip = CaptureForPush(system, title_id);
+    if (zip.empty()) {
+        return Result::NoData;
+    }
+    return UploadCaptured(title_id, std::move(zip)).empty() ? Result::Ok : Result::Failed;
 }
 
 } // namespace Nextendo::SaveSync
