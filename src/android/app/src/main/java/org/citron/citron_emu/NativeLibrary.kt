@@ -223,6 +223,18 @@ object NativeLibrary {
     // Cached friends snapshot as a JSON array of {pid, name, status}.
     external fun nextendoFriendsJson(): String
 
+    // Live friends + incoming requests from the account server, as JSON.
+    external fun nextendoFriendsListJson(): String
+
+    // All return an empty string on success, else a message fit to show the user.
+    external fun nextendoAddFriend(friendCode: String): String
+
+    external fun nextendoAcceptFriend(pid: Long): String
+
+    external fun nextendoDeclineFriend(pid: Long): String
+
+    external fun nextendoRemoveFriend(pid: Long): String
+
     external fun nextendoSyncPlayTime(programId: Long, seconds: Long)
 
     // No-op when cloud sync is off, not linked, or the title isn't Nextendo-supported.

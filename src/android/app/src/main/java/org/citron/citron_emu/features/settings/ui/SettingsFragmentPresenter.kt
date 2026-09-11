@@ -1049,6 +1049,15 @@ class SettingsFragmentPresenter(
                     }
                 }
             )
+            if (username.isNotEmpty()) {
+                add(
+                    RunnableSetting(
+                        titleId = R.string.nextendo_friends,
+                        descriptionId = R.string.nextendo_friends_description,
+                        isRunnable = true
+                    ) { settingsViewModel.setShouldShowNextendoFriends(true) }
+                )
+            }
             add(BooleanSetting.NEXTENDO_CLOUD_SYNC.key)
             add(
                 RunnableSetting(

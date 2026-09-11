@@ -39,4 +39,19 @@
     <string name="nextendo_cloud_save_uploaded">Save uploaded</string>
     <string name="nextendo_cloud_save_failed">Cloud save sync failed</string>
     <string name="nextendo_cloud_save_disabled">Cloud save sync is disabled</string>
+    <string name="nextendo_friends">Friends</string>
+    <string name="nextendo_friends_description">Friends, requests and their status</string>
+    <string name="nextendo_friends_loading">Loading…</string>
+    <string name="nextendo_friends_empty">No friends yet — add one with their friend code</string>
+    <string name="nextendo_friends_error">Could not load your friends</string>
+    <string name="nextendo_friend_status_offline">Offline</string>
+    <string name="nextendo_friend_status_online">Online</string>
+    <string name="nextendo_friend_status_playing">In a game: %1$s</string>
+    <string name="nextendo_friend_accept">Accept</string>
+    <string name="nextendo_friend_decline">Decline</string>
+    <string name="nextendo_friend_remove">Remove friend</string>
+    <string name="nextendo_friend_add">Add friend</string>
+    <string name="nextendo_friend_add_hint">Friend code</string>
+    <string name="nextendo_friend_updated">Done</string>
+    <string name="nextendo_friend_failed">Nextendo: action failed</string>
 </resources>

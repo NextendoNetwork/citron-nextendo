@@ -60,8 +60,15 @@ class SettingsViewModel : ViewModel() {
     private val _shouldShowNextendoCloudSaves = MutableStateFlow(false)
     val shouldShowNextendoCloudSaves = _shouldShowNextendoCloudSaves.asStateFlow()
 
+    private val _shouldShowNextendoFriends = MutableStateFlow(false)
+    val shouldShowNextendoFriends = _shouldShowNextendoFriends.asStateFlow()
+
     fun setShouldShowNextendoCloudSaves(value: Boolean) {
         _shouldShowNextendoCloudSaves.value = value
+    }
+
+    fun setShouldShowNextendoFriends(value: Boolean) {
+        _shouldShowNextendoFriends.value = value
     }
 
     fun setShouldRecreate(value: Boolean) {

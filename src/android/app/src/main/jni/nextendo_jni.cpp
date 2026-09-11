@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <ctime>
 #include <string>
+#include <string_view>
 #include <thread>
 
 #include <fmt/format.h>
@@ -31,6 +32,25 @@
 #include "native.h"
 
 namespace {
+
+std::string EscapeJson(std::string_view value) {
+    std::string out;
+    out.reserve(value.size());
+    for (const char c : value) {
+        if (c == '"' || c == '\\') {
+            out += '\\';
+        }
+        out += c;
+    }
+    return out;
+}
+
+std::string FriendJson(const WebService::NextendoApi::Friend& entry) {
+    return "{\"pid\":" + std::to_string(entry.pid) + ",\"name\":\"" + EscapeJson(entry.name) +
+           "\",\"status\":" + std::to_string(entry.presence_status) + ",\"friend_code\":\"" +
+           EscapeJson(entry.friend_code) + "\",\"app_name\":\"" + EscapeJson(entry.app_name) +
+           "\",\"image\":\"" + entry.image_base64 + "\"}";
+}
 
 void RefreshFriendsCache() {
     const auto list = WebService::NextendoApi::GetFriends();
@@ -110,21 +130,54 @@ jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoFriendsJson(JNIEnv* en
         if (entry.pid == 0) {
             continue;
         }
-        std::string name;
-        name.reserve(entry.name.size());
-        for (const char c : entry.name) {
-            if (c == '"' || c == '\\') {
-                name += '\\';
-            }
-            name += c;
-        }
         json += first ? "" : ",";
-        json += "{\"pid\":" + std::to_string(entry.pid) + ",\"name\":\"" + name +
+        json += "{\"pid\":" + std::to_string(entry.pid) + ",\"name\":\"" + EscapeJson(entry.name) +
                 "\",\"status\":" + std::to_string(entry.status) + "}";
         first = false;
     }
     json += "]";
     return Common::Android::ToJString(env, json);
+}
+
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoFriendsListJson(JNIEnv* env,
+                                                                          jobject jobj) {
+    const auto list = WebService::NextendoApi::GetFriends();
+    std::string json = "{\"ok\":" + std::string(list.ok ? "true" : "false") + ",\"friends\":[";
+    for (std::size_t i = 0; i < list.friends.size(); ++i) {
+        json += i == 0 ? "" : ",";
+        json += FriendJson(list.friends[i]);
+    }
+    json += "],\"requests\":[";
+    for (std::size_t i = 0; i < list.requests.size(); ++i) {
+        json += i == 0 ? "" : ",";
+        json += FriendJson(list.requests[i]);
+    }
+    json += "]}";
+    return Common::Android::ToJString(env, json);
+}
+
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoAddFriend(JNIEnv* env, jobject jobj,
+                                                                    jstring code) {
+    return Common::Android::ToJString(
+        env, WebService::NextendoApi::AddFriendByCode(Common::Android::GetJString(env, code)));
+}
+
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoAcceptFriend(JNIEnv* env, jobject jobj,
+                                                                       jlong pid) {
+    return Common::Android::ToJString(env,
+                                      WebService::NextendoApi::AcceptFriend(static_cast<u64>(pid)));
+}
+
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoDeclineFriend(JNIEnv* env, jobject jobj,
+                                                                        jlong pid) {
+    return Common::Android::ToJString(
+        env, WebService::NextendoApi::DeclineFriend(static_cast<u64>(pid)));
+}
+
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoRemoveFriend(JNIEnv* env, jobject jobj,
+                                                                       jlong pid) {
+    return Common::Android::ToJString(env,
+                                      WebService::NextendoApi::RemoveFriend(static_cast<u64>(pid)));
 }
 
 jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoOnlineCountsJson(JNIEnv* env,
