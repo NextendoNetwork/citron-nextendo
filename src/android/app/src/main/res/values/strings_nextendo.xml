@@ -18,8 +18,6 @@
     <string name="nextendo_sign_in">Sign in to Nextendo Network</string>
     <string name="nextendo_sign_in_description">Open your browser to authorize this device (OAuth, your password is never seen by the emulator)</string>
     <string name="nextendo_sign_out">Sign out of Nextendo Network</string>
-    <string name="nextendo_signed_out">Nextendo: signed out</string>
-    <string name="nextendo_signed_in_as">Signed in as %1$s</string>
     <string name="nextendo_not_signed_in">Not signed in</string>
     <string name="nextendo_session_expired">Nextendo: session expired — sign in again</string>
     <string name="nextendo_profile">Profile</string>
