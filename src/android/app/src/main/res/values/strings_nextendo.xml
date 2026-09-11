@@ -21,6 +21,14 @@
     <string name="nextendo_not_signed_in">Not signed in</string>
     <string name="nextendo_bcat_installed">Splatoon 2 online data installed</string>
     <string name="nextendo_friend_online">Nextendo: %1$s is online</string>
+    <string name="nextendo_test_connection">Test connection</string>
+    <string name="nextendo_test_connection_idle">Check NAT type and backend latency</string>
+    <string name="nextendo_nat_open">Open</string>
+    <string name="nextendo_nat_strict">Strict</string>
+    <string name="nextendo_nat_unknown">Unknown</string>
+    <string name="nextendo_ping_ms">%1$d ms</string>
+    <string name="nextendo_ping_failed">unreachable</string>
+    <string name="nextendo_test_result">NAT: %1$s · Ping: %2$s</string>
     <string name="nextendo_manage_cloud_saves">Manage cloud saves</string>
     <string name="nextendo_manage_cloud_saves_description">Download or upload a save for a specific game</string>
     <string name="nextendo_cloud_save_loading">Checking your games…</string>

@@ -113,6 +113,10 @@ jstring Java_org_citron_citron_1emu_NativeLibrary_getNextendoOnlineStatus(JNIEnv
     return Common::Android::ToJString(env, status.message.empty() ? status.reason : status.message);
 }
 
+jint Java_org_citron_citron_1emu_NativeLibrary_nextendoPingBackend(JNIEnv* env, jobject jobj) {
+    return WebService::NextendoApi::PingBackend().value_or(-1);
+}
+
 void Java_org_citron_citron_1emu_NativeLibrary_nextendoSignOut(JNIEnv* env, jobject jobj) {
     Common::NextendoAccount::Clear();
     Common::NextendoFriends::Set({});

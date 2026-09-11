@@ -207,6 +207,9 @@ object NativeLibrary {
     // "unverified", ...). Empty when online is allowed, not linked, or not queried.
     external fun getNextendoOnlineStatus(): String
 
+    // Round-trip time to the account backend in milliseconds, or -1 on failure.
+    external fun nextendoPingBackend(): Int
+
     // GET /api/online-counts as a JSON object keyed by lowercase-hex title id.
     external fun nextendoOnlineCountsJson(): String
 
