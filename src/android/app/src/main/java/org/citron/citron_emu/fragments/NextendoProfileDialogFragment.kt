@@ -200,7 +200,8 @@ class NextendoProfileDialogFragment : NextendoDialogFragment<DialogNextendoProfi
         }
     }
 
-    private fun confirmSignOut() {        MaterialAlertDialogBuilder(requireContext())
+    private fun confirmSignOut() {
+        MaterialAlertDialogBuilder(requireContext())
             .setTitle(R.string.nextendo_sign_out)
             .setMessage(R.string.nextendo_sign_out_confirm)
             .setPositiveButton(android.R.string.ok) { _, _ ->

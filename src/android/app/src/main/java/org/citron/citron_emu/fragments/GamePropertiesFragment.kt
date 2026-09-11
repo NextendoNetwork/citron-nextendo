@@ -451,7 +451,8 @@ class GamePropertiesFragment : Fragment() {
         }.start()
     }
 
-    private fun showInstalledContentRemovalDialog() {        if (!canManageInstalledContent()) {
+    private fun showInstalledContentRemovalDialog() {
+        if (!canManageInstalledContent()) {
             confirmInstalledContentRemoval(InstalledContentTarget.Game)
             return
         }
