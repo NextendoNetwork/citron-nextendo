@@ -25,6 +25,7 @@ import androidx.navigation.fragment.NavHostFragment
 import androidx.navigation.ui.setupWithNavController
 import androidx.preference.PreferenceManager
 import com.google.android.material.color.MaterialColors
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.navigation.NavigationBarView
 import java.io.File
 import java.io.FilenameFilter
@@ -44,6 +45,7 @@ import org.citron.citron_emu.model.HomeViewModel
 import org.citron.citron_emu.model.InstallResult
 import org.citron.citron_emu.model.TaskState
 import org.citron.citron_emu.model.TaskViewModel
+import org.citron.citron_emu.service.NextendoSignInService
 import org.citron.citron_emu.utils.*
 import org.citron.citron_emu.utils.ViewUtils.setVisible
 import java.io.BufferedInputStream
@@ -63,6 +65,7 @@ class MainActivity : AppCompatActivity(), ThemeProvider {
     override var themeId: Int = 0
 
     private val CHECKED_DECRYPTION = "CheckedDecryption"
+    private val NEXTENDO_WELCOME_SEEN = "nextendo_welcome_seen"
     private var checkedDecryption = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,6 +91,8 @@ class MainActivity : AppCompatActivity(), ThemeProvider {
             }
             checkedDecryption = true
         }
+
+        binding.root.post { maybeShowNextendoWelcome() }
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
@@ -170,6 +175,27 @@ class MainActivity : AppCompatActivity(), ThemeProvider {
                 helpLinkId = R.string.keys_missing_help
             ).show(supportFragmentManager, MessageDialogFragment.TAG)
         }
+    }
+
+    // One-time offer to link a Nextendo account on a fresh install. Shown once even when
+    // declined, so it never becomes a nag; signing in later lives in Settings.
+    private fun maybeShowNextendoWelcome() {
+        val preferences = PreferenceManager.getDefaultSharedPreferences(applicationContext)
+        if (preferences.getBoolean(NEXTENDO_WELCOME_SEEN, false) ||
+            NativeLibrary.getNextendoAccountStatus().isNotEmpty()
+        ) {
+            return
+        }
+        preferences.edit().putBoolean(NEXTENDO_WELCOME_SEEN, true).apply()
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.nextendo_network)
+            .setMessage(R.string.nextendo_welcome_message)
+            .setPositiveButton(R.string.nextendo_sign_in) { _, _ ->
+                NextendoSignInService.start(this)
+            }
+            .setNegativeButton(R.string.nextendo_welcome_later, null)
+            .show()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

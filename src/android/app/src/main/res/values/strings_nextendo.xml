@@ -2,6 +2,8 @@
 <resources>
     <!-- Nextendo Network -->
     <string name="nextendo_network">Nextendo Network</string>
+    <string name="nextendo_welcome_message">Play supported games online through the Nextendo Network. Sign in with your account to get started — you can also do this later in Settings.</string>
+    <string name="nextendo_welcome_later">Not now</string>
     <string name="nextendo_network_description">Account, online redirection and cloud save settings</string>
     <string name="nextendo_enable">Enable Nextendo Network</string>
     <string name="nextendo_enable_description">Redirect Nintendo online hostnames to the Nextendo Network servers</string>
