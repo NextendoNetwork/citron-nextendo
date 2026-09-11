@@ -271,6 +271,30 @@ void Java_org_citron_citron_1emu_NativeLibrary_nextendoSyncPlayTime(JNIEnv* env,
     }}.detach();
 }
 
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoGetProfileJson(JNIEnv* env,
+                                                                         jobject jobj) {
+    const auto profile = WebService::NextendoApi::GetProfile();
+    std::string image = profile.image_base64;
+    if (image.empty() && !profile.avatar_id.empty()) {
+        image = WebService::NextendoApi::GetGalleryAvatar(profile.avatar_id);
+    }
+    if (profile.ok) {
+        // The emulated console displays the account's picture on its own profile; nothing else
+        // sets this on Android, so the guest avatar would stay blank without it.
+        Common::NextendoAvatar::SetSelfJPEGBase64(image);
+    }
+
+    std::string json = "{\"ok\":" + std::string(profile.ok ? "true" : "false") + ",\"error\":\"" +
+                       EscapeJson(profile.error) + "\",\"name\":\"" + EscapeJson(profile.name) +
+                       "\",\"console_nickname\":\"" + EscapeJson(profile.console_nickname) +
+                       "\",\"image\":\"" + image + "\",\"avatar_id\":\"" +
+                       EscapeJson(profile.avatar_id) + "\",\"color\":\"" +
+                       EscapeJson(profile.color_hex) + "\",\"friend_code\":\"" +
+                       EscapeJson(Common::NextendoAccount::GetFriendCode()) +
+                       "\",\"pid\":" + std::to_string(Common::NextendoAccount::GetPid()) + "}";
+    return Common::Android::ToJString(env, json);
+}
+
 jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoEnsureBcat(JNIEnv* env, jobject jobj,
                                                                      jlong program_id) {
     switch (Nextendo::Byaml::Ensure(static_cast<u64>(program_id))) {

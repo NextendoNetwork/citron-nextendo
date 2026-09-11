@@ -21,6 +21,7 @@
     <string name="nextendo_signed_out">Nextendo: signed out</string>
     <string name="nextendo_signed_in_as">Signed in as %1$s</string>
     <string name="nextendo_not_signed_in">Not signed in</string>
+    <string name="nextendo_session_expired">Nextendo: session expired — sign in again</string>
     <string name="nextendo_bcat_installed">Splatoon 2 online data installed</string>
     <string name="nextendo_friend_online">Nextendo: %1$s is online</string>
     <string name="nextendo_test_connection">Test connection</string>

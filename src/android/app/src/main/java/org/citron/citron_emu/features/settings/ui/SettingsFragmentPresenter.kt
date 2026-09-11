@@ -31,6 +31,7 @@ import org.citron.citron_emu.features.settings.model.StringSetting
 import org.citron.citron_emu.features.settings.model.view.*
 import org.citron.citron_emu.utils.InputHandler
 import org.citron.citron_emu.utils.NativeConfig
+import org.citron.citron_emu.utils.NextendoAccountState
 import org.citron.citron_emu.utils.NextendoConnectionTest
 
 class SettingsFragmentPresenter(
@@ -1046,6 +1047,7 @@ class SettingsFragmentPresenter(
                 ) {
                     if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
                         NativeLibrary.nextendoSignOut()
+                        NextendoAccountState.clear()
                         android.widget.Toast.makeText(
                             context,
                             R.string.nextendo_signed_out,

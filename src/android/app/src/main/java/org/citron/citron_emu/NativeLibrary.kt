@@ -23,6 +23,7 @@ import org.citron.citron_emu.fragments.CoreErrorDialogFragment
 import org.citron.citron_emu.utils.DocumentsTree
 import org.citron.citron_emu.utils.FileUtil
 import org.citron.citron_emu.utils.Log
+import org.citron.citron_emu.utils.NextendoAccountState
 import org.citron.citron_emu.model.InstallResult
 import org.citron.citron_emu.model.Patch
 import org.citron.citron_emu.model.GameVerificationResult
@@ -202,6 +203,10 @@ object NativeLibrary {
     external fun nextendoSignOut()
 
     external fun getNextendoAccountStatus(): String
+
+    // Live account profile: name, console nickname, resolved avatar image (uploaded picture or
+    // gallery id), gallery id, color, friend code and pid. Refreshes the emulated self avatar.
+    external fun nextendoGetProfileJson(): String
 
     // Human-readable reason when the account online gates block play ("elsewhere",
     // "unverified", ...). Empty when online is allowed, not linked, or not queried.
@@ -467,6 +472,12 @@ object NativeLibrary {
                 if (success) "Nextendo: signed in as $message — please return to the emulator app"
                 else "Nextendo sign-in failed: $message"
             Toast.makeText(CitronApplication.appContext, text, Toast.LENGTH_LONG).show()
+            if (success) {
+                Thread {
+                    NativeLibrary.nextendoRefreshFriends()
+                    NextendoAccountState.refresh()
+                }.start()
+            }
             try {
                 org.citron.citron_emu.service.NextendoSignInService.stop(CitronApplication.appContext)
             } catch (_: Exception) {

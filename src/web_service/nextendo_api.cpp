@@ -1065,6 +1065,19 @@ std::string GetAvatarByPid(u64 pid) {
         std::span<const u8>{reinterpret_cast<const u8*>(result->body.data()), result->body.size()});
 }
 
+std::string GetGalleryAvatar(const std::string& avatar_id) {
+    if (avatar_id.empty()) {
+        return {};
+    }
+    // Same public file server the website's picker uses; the id comes from our own profile.
+    const auto result = Send("GET", "/avatars/" + avatar_id + ".jpg", {}, {});
+    if (!result || result->status != 200) {
+        return {};
+    }
+    return Base64StdEncode(
+        std::span<const u8>{reinterpret_cast<const u8*>(result->body.data()), result->body.size()});
+}
+
 std::string ReportPlayer(u64 pid, const std::string& reason, const std::string& comment) {
     const std::string token = Common::NextendoAccount::GetToken();
     if (token.empty()) {

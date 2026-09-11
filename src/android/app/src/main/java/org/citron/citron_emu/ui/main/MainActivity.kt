@@ -46,6 +46,7 @@ import org.citron.citron_emu.model.InstallResult
 import org.citron.citron_emu.model.TaskState
 import org.citron.citron_emu.model.TaskViewModel
 import org.citron.citron_emu.service.NextendoSignInService
+import org.citron.citron_emu.utils.NextendoAccountState
 import org.citron.citron_emu.utils.*
 import org.citron.citron_emu.utils.ViewUtils.setVisible
 import java.io.BufferedInputStream
@@ -92,7 +93,12 @@ class MainActivity : AppCompatActivity(), ThemeProvider {
             checkedDecryption = true
         }
 
-        binding.root.post { maybeShowNextendoWelcome() }
+        binding.root.post {
+            maybeShowNextendoWelcome()
+            if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
+                NextendoAccountState.refresh()
+            }
+        }
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
