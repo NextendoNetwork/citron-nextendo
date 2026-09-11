@@ -2,7 +2,11 @@
 // SPDX-FileCopyrightText: Copyright 2026 citron Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <cstring>
 #include <mutex>
+#include <string_view>
+#include <vector>
 
 #include "common/error.h"
 #include "common/fs/file.h"
@@ -30,6 +34,60 @@ bool one_time_init_success = false;
 
 SCHANNEL_CRED schannel_cred{};
 CredHandle cred_handle;
+
+bool IsNplnHost(std::string_view hostname) {
+    const std::string lower = Common::ToLower(std::string(hostname));
+    return lower.find("npln") != std::string::npos ||
+           lower.find("gs.nintendo.net") != std::string::npos;
+}
+
+std::vector<u8> BuildAlpnProtocolList(std::span<const std::string> requested_alpn_protos,
+                                      bool is_npln_host) {
+    std::vector<u8> protocols;
+
+    if (is_npln_host) {
+        for (const std::string& protocol : requested_alpn_protos) {
+            if ((protocol != "h2" && protocol != "http/1.1") || protocol.size() > 255) {
+                continue;
+            }
+            protocols.push_back(static_cast<u8>(protocol.size()));
+            protocols.insert(protocols.end(), protocol.begin(), protocol.end());
+        }
+    }
+
+    // NEX uses a WebSocket Upgrade and must never negotiate HTTP/2. Keep this as the
+    // default for titles that do not use NPLN, and for malformed/empty NPLN requests.
+    if (protocols.empty()) {
+        static constexpr std::string_view http11 = "http/1.1";
+        protocols.push_back(static_cast<u8>(http11.size()));
+        protocols.insert(protocols.end(), http11.begin(), http11.end());
+    }
+
+    return protocols;
+}
+
+std::vector<u8> BuildSchannelAlpnBuffer(std::span<const u8> protocol_list) {
+    // Schannel expects: ProtocolListsSize, extension type, ProtocolListSize, then
+    // the wire-format list of [length][protocol] entries, all integer fields LE.
+    const u32 protocol_lists_size = 4 + 2 + static_cast<u32>(protocol_list.size());
+    std::vector<u8> buffer(4 + protocol_lists_size);
+    const auto put_u32 = [&buffer](size_t offset, u32 value) {
+        buffer[offset + 0] = static_cast<u8>(value);
+        buffer[offset + 1] = static_cast<u8>(value >> 8);
+        buffer[offset + 2] = static_cast<u8>(value >> 16);
+        buffer[offset + 3] = static_cast<u8>(value >> 24);
+    };
+    const auto put_u16 = [&buffer](size_t offset, u16 value) {
+        buffer[offset + 0] = static_cast<u8>(value);
+        buffer[offset + 1] = static_cast<u8>(value >> 8);
+    };
+
+    put_u32(0, protocol_lists_size);
+    put_u32(4, SecApplicationProtocolNegotiationExt_ALPN);
+    put_u16(8, static_cast<u16>(protocol_list.size()));
+    std::memcpy(buffer.data() + 10, protocol_list.data(), protocol_list.size());
+    return buffer;
+}
 
 static void OneTimeInit() {
     schannel_cred.dwVersion = SCHANNEL_CRED_VERSION;
@@ -114,7 +172,7 @@ public:
         return ResultSuccess;
     }
 
-    Result DoHandshake() override {
+    Result DoHandshake(std::span<const std::string> requested_alpn_protos) override {
         while (1) {
             Result r;
             switch (handshake_state) {
@@ -213,27 +271,17 @@ public:
         unsigned long attr;
         bool initial_call_done = handshake_state != HandshakeState::Initial;
 
-        // [Nextendo] NEX (MK8/Splatoon 2) uses PRUDP over WebSocket which requires HTTP/1.1
-        // Upgrade. Force ALPN to http/1.1 only so HTTP/2 is never negotiated, matching the
-        // OpenSSL backend. Only valid in the client's first ClientHello.
-        static constexpr u8 kAlpnProtocolList[] = "\x08http/1.1";
-        std::array<u8, 4 + 4 + 2 + (sizeof(kAlpnProtocolList) - 1)> alpn_buf;
+        // [Nextendo] NEX (MK8/Splatoon 2) uses PRUDP over WebSocket and requires HTTP/1.1,
+        // while NPLN (Splatoon 3) uses gRPC over HTTP/2. Match the OpenSSL backend: only honor
+        // the game's ALPN request for NPLN hosts, including the gs.nintendo.net session host.
+        std::vector<u8> alpn_buf;
         if (!initial_call_done) {
-            size_t off = 0;
-            const u32 list_size = static_cast<u32>(4 + 2 + (sizeof(kAlpnProtocolList) - 1));
-            const auto put_u32 = [&](u32 v) {
-                alpn_buf[off + 0] = static_cast<u8>(v);
-                alpn_buf[off + 1] = static_cast<u8>(v >> 8);
-                alpn_buf[off + 2] = static_cast<u8>(v >> 16);
-                alpn_buf[off + 3] = static_cast<u8>(v >> 24);
-                off += 4;
-            };
-            put_u32(list_size);                                 // ProtocolListsSize
-            put_u32(SecApplicationProtocolNegotiationExt_ALPN);  // ProtoNegoExt
-            alpn_buf[off + 0] = static_cast<u8>(sizeof(kAlpnProtocolList) - 1);
-            alpn_buf[off + 1] = 0; // ProtocolListSize (u16 LE)
-            off += 2;
-            std::memcpy(alpn_buf.data() + off, kAlpnProtocolList, sizeof(kAlpnProtocolList) - 1);
+            const bool is_npln_host = hostname.has_value() && IsNplnHost(*hostname);
+            const std::vector<u8> protocol_list =
+                BuildAlpnProtocolList(requested_alpn_protos, is_npln_host);
+            alpn_buf = BuildSchannelAlpnBuffer(protocol_list);
+            LOG_INFO(Service_SSL, "[Nextendo] Schannel ALPN for '{}': {} byte(s), npln={}",
+                     hostname.value_or("<none>"), protocol_list.size(), is_npln_host);
         }
 
         // https://learn.microsoft.com/en-us/windows/win32/secauthn/initializesecuritycontext--schannel
