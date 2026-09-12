@@ -6,6 +6,8 @@ package org.citron.citron_emu.features.settings.ui
 
 import android.annotation.SuppressLint
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.widget.Toast
 import org.citron.citron_emu.NativeLibrary
 import org.citron.citron_emu.R
@@ -29,6 +31,8 @@ import org.citron.citron_emu.features.settings.model.StringSetting
 import org.citron.citron_emu.features.settings.model.view.*
 import org.citron.citron_emu.utils.InputHandler
 import org.citron.citron_emu.utils.NativeConfig
+import org.citron.citron_emu.utils.NextendoAccountState
+import org.citron.citron_emu.utils.NextendoConnectionTest
 
 class SettingsFragmentPresenter(
     private val settingsViewModel: SettingsViewModel,
@@ -38,6 +42,11 @@ class SettingsFragmentPresenter(
     private var settingsList = ArrayList<SettingsItem>()
 
     private val context get() = CitronApplication.appContext
+
+    companion object {
+        // Survives settings-screen instances so the row keeps showing the last answer.
+        private var nextendoConnectionStatus: String? = null
+    }
 
     // Extension for altering settings list based on each setting's properties
     fun ArrayList<SettingsItem>.add(key: String) {
@@ -100,6 +109,7 @@ class SettingsFragmentPresenter(
             MenuTag.SECTION_INPUT_PLAYER_EIGHT -> addInputPlayer(sl, 7)
             MenuTag.SECTION_THEME -> addThemeSettings(sl)
             MenuTag.SECTION_DEBUG -> addDebugSettings(sl)
+            MenuTag.SECTION_NEXTENDO -> addNextendoNetworkSettings(sl)
             MenuTag.SECTION_NETWORK -> addNetworkSettings(sl)
             MenuTag.SECTION_ZEP_ZONE -> addZepZoneSettings(sl)
             MenuTag.SECTION_APPLETS_ANDROID -> addAppletsAndroidSettings(sl)
@@ -1011,6 +1021,82 @@ class SettingsFragmentPresenter(
                 )
             )
         }
+    }
+
+    private fun addNextendoNetworkSettings(sl: ArrayList<SettingsItem>) {
+        sl.apply {
+            add(HeaderSetting(R.string.nextendo_network))
+            val username = NativeLibrary.getNextendoAccountStatus()
+            if (username.isEmpty()) {
+                add(
+                    SignInStatusSetting(
+                        titleId = R.string.nextendo_sign_in,
+                        descriptionId = R.string.nextendo_sign_in_description,
+                        statusText = context.getString(R.string.nextendo_not_signed_in)
+                    ) {
+                        org.citron.citron_emu.service.NextendoSignInService.start(context)
+                    }
+                )
+            } else {
+                add(
+                    ProfileSetting(
+                        titleString = NextendoAccountState.profile?.name ?: username,
+                        descriptionId = R.string.nextendo_profile_description,
+                        avatar = NextendoAccountState.avatar
+                    ) { settingsViewModel.setShouldShowNextendoProfile(true) }
+                )
+            }
+            add(BooleanSetting.NEXTENDO_CLOUD_SYNC.key)
+            add(
+                RunnableSetting(
+                    titleId = R.string.nextendo_manage_cloud_saves,
+                    descriptionId = R.string.nextendo_manage_cloud_saves_description,
+                    isRunnable = true
+                ) { settingsViewModel.setShouldShowNextendoCloudSaves(true) }
+            )
+            add(BooleanSetting.NEXTENDO_FRIEND_NOTIFICATIONS.key)
+            if (username.isNotEmpty()) {
+                add(
+                    RunnableSetting(
+                        titleId = R.string.nextendo_test_connection,
+                        descriptionString = nextendoConnectionText(),
+                        isRunnable = true,
+                        iconId = R.drawable.ic_refresh
+                    ) { runNextendoConnectionTest() }
+                )
+            }
+            add(StringSetting.NEXTENDO_SERVER_IP.key)
+            add(StringSetting.NEXTENDO_NAT_IP.key)
+            add(BooleanSetting.NEXTENDO_ENABLE.key)
+        }
+    }
+
+    private fun nextendoConnectionText(): String =
+        nextendoConnectionStatus ?: context.getString(R.string.nextendo_test_connection_idle)
+
+    private fun runNextendoConnectionTest() {
+        Thread {
+            val nat = NextendoConnectionTest.probeNat(
+                StringSetting.NEXTENDO_SERVER_IP.getString(),
+                StringSetting.NEXTENDO_NAT_IP.getString()
+            )
+            val ping = NativeLibrary.nextendoPingBackend()
+            val natText = context.getString(
+                when (nat) {
+                    NextendoConnectionTest.NatStatus.OPEN -> R.string.nextendo_nat_open
+                    NextendoConnectionTest.NatStatus.STRICT -> R.string.nextendo_nat_strict
+                    NextendoConnectionTest.NatStatus.UNKNOWN -> R.string.nextendo_nat_unknown
+                }
+            )
+            val pingText = if (ping >= 0) {
+                context.getString(R.string.nextendo_ping_ms, ping)
+            } else {
+                context.getString(R.string.nextendo_ping_failed)
+            }
+            nextendoConnectionStatus =
+                context.getString(R.string.nextendo_test_result, natText, pingText)
+            Handler(Looper.getMainLooper()).post { loadSettingsList() }
+        }.start()
     }
 
     private fun addNetworkSettings(sl: ArrayList<SettingsItem>) {

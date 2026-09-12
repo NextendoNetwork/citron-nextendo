@@ -36,6 +36,7 @@ import androidx.core.view.updatePadding
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.drawerlayout.widget.DrawerLayout.DrawerListener
 import androidx.fragment.app.Fragment
+import androidx.preference.PreferenceManager
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.findNavController
@@ -51,6 +52,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
+import org.citron.citron_emu.CitronApplication
 import org.citron.citron_emu.HomeNavigationDirections
 import org.citron.citron_emu.NativeLibrary
 import org.citron.citron_emu.R
@@ -71,6 +74,8 @@ import org.citron.citron_emu.model.Patch
 import org.citron.citron_emu.model.PatchType
 import org.citron.citron_emu.overlay.model.OverlayControl
 import org.citron.citron_emu.overlay.model.OverlayLayout
+import org.json.JSONArray
+import org.json.JSONObject
 import org.citron.citron_emu.utils.*
 import org.citron.citron_emu.utils.ViewUtils.setVisible
 import java.lang.NullPointerException
@@ -206,7 +211,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         // So this fragment doesn't restart on configuration changes; i.e. rotation.
         @Suppress("DEPRECATION")
         retainInstance = true
-        emulationState = EmulationState(game.path) {
+        emulationState = EmulationState(game.path, game.programId.toLongOrNull() ?: 0L) {
             return@EmulationState driverViewModel.isInteractionAllowed.value
         }
     }
@@ -436,6 +441,92 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         emulationViewModel.shaderMessage.collect(viewLifecycleOwner) {
             if (it.isNotEmpty()) {
                 binding.loadingText.text = it
+            }
+        }
+
+        // Nextendo friends, presence, play-time and cloud-save sync. Mirrors the desktop's
+        // game start/stop hooks.
+        var sawEmulationStart = false
+        var startElapsedRealtime = 0L
+        var pumpTicks = 0
+        val friendStatuses = ConcurrentHashMap<Long, Int>()
+        val nextendoHandler = Handler(Looper.getMainLooper())
+        val nextendoPump = object : Runnable {
+            override fun run() {
+                if (!sawEmulationStart) {
+                    return
+                }
+                val programId = game.programId.toLongOrNull() ?: 0L
+                NativeLibrary.nextendoPresenceTick(programId, game.title)
+                if (pumpTicks++ % FRIENDS_POLL_TICKS == 0) {
+                    Thread {
+                        NativeLibrary.nextendoRefreshFriends()
+                        notifyNextendoFriendChanges(friendStatuses)
+                    }.start()
+                }
+                nextendoHandler.postDelayed(this, PRESENCE_TICK_MS)
+            }
+        }
+        emulationViewModel.emulationStarted.collect(viewLifecycleOwner) { started ->
+            if (started) {
+                sawEmulationStart = true
+                startElapsedRealtime = SystemClock.elapsedRealtime()
+                pumpTicks = 0
+                nextendoHandler.removeCallbacks(nextendoPump)
+                nextendoPump.run()
+                if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
+                    Thread {
+                        val blocked = nextendoBlockedReason()
+                        if (blocked.isNotEmpty()) {
+                            nextendoHandler.post {
+                                context?.let {
+                                    Toast.makeText(it, blocked, Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    }.start()
+                }
+            } else {
+                if (!sawEmulationStart) {
+                    return@collect
+                }
+                sawEmulationStart = false
+                nextendoHandler.removeCallbacks(nextendoPump)
+                NativeLibrary.nextendoPresenceTick(0, "")
+                val programId = game.programId.toLongOrNull() ?: 0L
+                if (NativeLibrary.getNextendoAccountStatus().isNotEmpty()) {
+                    val seconds = (SystemClock.elapsedRealtime() - startElapsedRealtime) / 1000
+                    if (programId != 0L && seconds > 0) {
+                        val preferences =
+                            PreferenceManager.getDefaultSharedPreferences(requireContext())
+                        val key = PLAY_TIME_PREF_PREFIX + programId.toString(16)
+                        val total = preferences.getLong(key, 0L) + seconds
+                        preferences.edit().putLong(key, total).apply()
+                        NativeLibrary.nextendoSyncPlayTime(programId, total)
+                    }
+                    // Only push a save this session actually started with: a title that had no
+                    // local save at boot either got the cloud copy back ("applied") or had
+                    // nothing to restore; pushing the fresh save the game creates in the
+                    // latter cases would replace a real cloud save with an empty one.
+                    val pullResult = emulationState.nextendoCloudPullResult
+                    if (pullResult == "kept" || pullResult == "applied") {
+                        Thread {
+                            val result =
+                                NativeLibrary.nextendoCloudSavePush(programId, manual = false)
+                            if (result == "kept" || result == "too_large" || result == "failed") {
+                                nextendoHandler.post {
+                                    context?.let {
+                                        Toast.makeText(
+                                            it,
+                                            NextendoCloudSaveResult.push(result),
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                }
+                            }
+                        }.start()
+                    }
+                }
             }
         }
 
@@ -1348,6 +1439,54 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         binding.surfaceInputOverlay.refreshControls()
     }
 
+    // Friends polls run every 20s while a game is on; a status moving from offline to any
+    // online state is the only change worth a toast. Starts empty, so the first poll seeds the
+    // map silently instead of announcing everyone already online at boot.
+    private fun notifyNextendoFriendChanges(statuses: MutableMap<Long, Int>) {
+        if (!BooleanSetting.NEXTENDO_FRIEND_NOTIFICATIONS.getBoolean() ||
+            NativeLibrary.getNextendoAccountStatus().isEmpty()
+        ) {
+            return
+        }
+
+        val array = JSONArray(NativeLibrary.nextendoFriendsJson())
+        val seen = HashSet<Long>()
+        for (i in 0 until array.length()) {
+            val friend = array.getJSONObject(i)
+            val pid = friend.getLong("pid")
+            val status = friend.getInt("status")
+            seen.add(pid)
+            if (statuses.put(pid, status) == 0 && status > 0) {
+                val name = friend.getString("name")
+                Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(
+                        CitronApplication.appContext,
+                        CitronApplication.appContext.getString(
+                            R.string.nextendo_friend_online,
+                            name
+                        ),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+        statuses.keys.retainAll(seen)
+    }
+
+    // The account server knows why a NEX login will be refused (session active elsewhere,
+    // unverified, ...). The game would only show a bare communication error, so surface the
+    // reason before it happens.
+    private fun nextendoBlockedReason(): String = try {
+        val status = JSONObject(NativeLibrary.nextendoGetOnlineStatusJson())
+        if (status.optBoolean("queried") && !status.optBoolean("allow")) {
+            status.optString("message").ifEmpty { status.optString("reason") }
+        } else {
+            ""
+        }
+    } catch (_: Exception) {
+        ""
+    }
+
     private fun setInsets() {
         ViewCompat.setOnApplyWindowInsetsListener(
             binding.inGameMenu
@@ -1368,11 +1507,20 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
     private class EmulationState(
         private val gamePath: String,
+        private val programId: Long,
         private val emulationCanStart: () -> Boolean
     ) {
         private var state: State
         private var surface: Surface? = null
         lateinit var emulationThread: Thread
+
+        // This session's pre-boot cloud pull result. The post-game auto-push only runs when the
+        // pull confirmed a real local save ("kept") or restored one ("applied"), so a title that
+        // starts without a save (e.g. after a local delete) can never push a fresh, empty save
+        // over a real cloud one.
+        @Volatile
+        var nextendoCloudPullResult: String = ""
+            private set
 
         init {
             // Starting state is stopped.
@@ -1439,9 +1587,74 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             emulationThread.join()
             emulationThread = Thread({
                 Log.debug("[EmulationFragment] Starting emulation thread.")
+                pullNextendoCloudSave()
+                ensureNextendoBcat()
+                installNextendoSsbuMods()
                 NativeLibrary.run(gamePath, programIndex, false)
             }, "NativeEmulation")
             emulationThread.start()
+        }
+
+        // Desktop pulls cloud saves before the title boots; doing it here keeps the download
+        // from racing the game's own first save read.
+        private fun pullNextendoCloudSave() {
+            if (programId != 0L) {
+                val result = NativeLibrary.nextendoCloudSavePull(programId, force = false)
+                nextendoCloudPullResult = result
+                Log.debug("[EmulationFragment] Nextendo cloud save pull: $result")
+                if (result == "applied") {
+                    Handler(Looper.getMainLooper()).post {
+                        Toast.makeText(
+                            CitronApplication.appContext,
+                            R.string.nextendo_cloud_save_restored,
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+
+        // Splatoon 2 refuses online play without its BCAT schedule, and the desktop installs it
+        // before boot. Only that title reaches the server here; other games return immediately.
+        private fun ensureNextendoBcat() {
+            if (programId == 0L) {
+                return
+            }
+            when (NativeLibrary.nextendoEnsureBcat(programId)) {
+                "installed" -> Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(
+                        CitronApplication.appContext,
+                        R.string.nextendo_bcat_installed,
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+
+                "failed" -> Log.warning("[EmulationFragment] Nextendo BCAT download failed.")
+            }
+        }
+
+        // SSBU needs its Skyline mods before it can go online; the plugin folder check makes
+        // this a no-op after the first install.
+        private fun installNextendoSsbuMods() {
+            if (programId == 0L || !NativeLibrary.isNextendoSsbuTitle(programId)) {
+                return
+            }
+            when (val result = NativeLibrary.nextendoInstallSsbuMods(programId, force = false)) {
+                "" -> {}
+
+                "failed" -> Log.warning("[EmulationFragment] SSBU mod install failed.")
+
+                else -> Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(
+                        CitronApplication.appContext,
+                        CitronApplication.appContext.getString(
+                            R.string.nextendo_ssbu_mods_installed,
+                            result
+                        ),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
         }
 
         // Surface callbacks
@@ -1498,6 +1711,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 State.STOPPED -> {
                     emulationThread = Thread({
                         Log.debug("[EmulationFragment] Starting emulation thread.")
+                        pullNextendoCloudSave()
+                        ensureNextendoBcat()
+                        installNextendoSsbuMods()
                         NativeLibrary.run(gamePath, programIndex, true)
                     }, "NativeEmulation")
                     emulationThread.start()
@@ -1519,6 +1735,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     }
 
     companion object {
+        private const val PRESENCE_TICK_MS = 5_000L
+        private const val FRIENDS_POLL_TICKS = 4
+        private const val PLAY_TIME_PREF_PREFIX = "nextendo_playtime_"
         private val perfStatsUpdateHandler = Handler(Looper.getMainLooper())
         private val thermalStatsUpdateHandler = Handler(Looper.getMainLooper())
         private val ramStatsUpdateHandler = Handler(Looper.getMainLooper())

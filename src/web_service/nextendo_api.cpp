@@ -31,6 +31,16 @@
 
 namespace WebService::NextendoApi {
 
+std::string g_ca_cert_override;
+
+void SetCaCertPathOverride(const std::string& path) {
+    g_ca_cert_override = path;
+}
+
+std::string GetCaCertPathOverride() {
+    return g_ca_cert_override;
+}
+
 namespace {
 
 constexpr const char* CanonicalUrl = "https://nextendo.network";
@@ -195,6 +205,10 @@ bool IsLoopback(const std::string& host) {
 // bundle directly. On Windows/macOS there's no equivalent fixed path; leave the client's cert
 // path unset so httplib falls through to its own native cert-store loader for those platforms.
 void ApplyCaCertPath(httplib::Client& client) {
+    if (!g_ca_cert_override.empty() && std::filesystem::exists(g_ca_cert_override)) {
+        client.set_ca_cert_path(g_ca_cert_override);
+        return;
+    }
 #ifdef __linux__
     static constexpr std::array<const char*, 4> candidates{
         "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu/Arch
@@ -333,6 +347,10 @@ std::string BaseUrl() {
     }();
 
     return url;
+}
+
+std::string WebsiteProfileUrl() {
+    return BaseUrl() + "/compte";
 }
 
 LoginResult SignInWithBrowser(const std::function<void(const std::string&)>& open_url) {
@@ -532,21 +550,40 @@ std::optional<std::vector<u8>> PullSave(const std::string& title_id_hex) {
     return std::vector<u8>(result->body.begin(), result->body.end());
 }
 
-std::string PushSave(const std::string& title_id_hex, std::span<const u8> data) {
+PushSaveOutcome PushSave(const std::string& title_id_hex, std::span<const u8> data) {
+    PushSaveOutcome out;
     const std::string token = Common::NextendoAccount::GetToken();
+    if (token.empty()) {
+        out.error = "Not signed in.";
+        return out;
+    }
     const std::string body(reinterpret_cast<const char*>(data.data()), data.size());
     const auto result = Send("POST", "/api/save/" + title_id_hex, body, token);
 
     if (ClearSessionIfRejected(result)) {
-        return "Session expired.";
+        out.error = "Session expired.";
+        return out;
     }
     if (!result) {
-        return "Could not reach the Nextendo account server.";
+        out.error = "Could not reach the Nextendo account server.";
+        return out;
+    }
+    if (result->status == 413) {
+        out.too_large = true;
+        out.error = ErrorFrom(result->body, "Cloud storage limit reached.");
+        return out;
     }
     if (result->status != 200) {
-        return ErrorFrom(result->body, "Could not upload the save.");
+        out.error = ErrorFrom(result->body, "Could not upload the save.");
+        return out;
     }
-    return {};
+
+    out.ok = true;
+    try {
+        out.kept = nlohmann::json::parse(result->body).value("kept", false);
+    } catch (const nlohmann::json::exception&) {
+    }
+    return out;
 }
 
 std::map<std::string, int> GetOnlineCounts() {
@@ -675,6 +712,43 @@ std::string PushProfilePicture(const std::string& image_base64) {
     return {};
 }
 
+std::string PushProfileMii(const std::string& mii_base64) {
+    const std::string token = Common::NextendoAccount::GetToken();
+    if (token.empty()) {
+        return "Not signed in.";
+    }
+
+    const Profile current = GetProfile();
+    if (!current.ok) {
+        return current.error.empty() ? "Could not load your current profile." : current.error;
+    }
+
+    nlohmann::json body{{"mii", mii_base64}};
+    if (!current.console_nickname.empty()) {
+        body["name"] = current.console_nickname;
+    }
+    if (!current.image_base64.empty()) {
+        body["image"] = current.image_base64;
+    }
+    if (!current.avatar_id.empty()) {
+        body["avatar"] = current.avatar_id;
+    }
+    if (!current.color_hex.empty()) {
+        body["color"] = current.color_hex;
+    }
+
+    const auto result = Send("POST", "/api/profile", body.dump(), token);
+    if (ClearSessionIfRejected(result)) {
+        return "Your session expired. Sign in again.";
+    }
+    if (!result || result->status != 200) {
+        return ErrorFrom(result ? result->body : std::string{},
+                         fmt::format("Could not update your Mii (HTTP {}).",
+                                     result ? result->status : 0));
+    }
+    return {};
+}
+
 std::string SetUsername(const std::string& username) {
     const std::string token = Common::NextendoAccount::GetToken();
     if (token.empty()) {
@@ -691,6 +765,8 @@ std::string SetUsername(const std::string& username) {
                          fmt::format("Could not change your username (HTTP {}).",
                                      result ? result->status : 0));
     }
+    // The stored account is what the settings row and the guest bridge read; keep it truthful.
+    Common::NextendoAccount::UpdateUsername(username);
     return {};
 }
 
@@ -1044,6 +1120,19 @@ std::string GetAvatarByPid(u64 pid) {
     // No bearer: /api/avatar is public, and the token must never leave with a request whose
     // target could be influenced by server-supplied data. The path is built from pid alone.
     const auto result = Send("GET", fmt::format("/api/avatar?pid={}", pid), {}, {});
+    if (!result || result->status != 200) {
+        return {};
+    }
+    return Base64StdEncode(
+        std::span<const u8>{reinterpret_cast<const u8*>(result->body.data()), result->body.size()});
+}
+
+std::string GetGalleryAvatar(const std::string& avatar_id) {
+    if (avatar_id.empty()) {
+        return {};
+    }
+    // Same public file server the website's picker uses; the id comes from our own profile.
+    const auto result = Send("GET", "/avatars/" + avatar_id + ".jpg", {}, {});
     if (!result || result->status != 200) {
         return {};
     }

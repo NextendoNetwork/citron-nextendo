@@ -5,12 +5,16 @@
 package org.citron.citron_emu
 
 import android.content.DialogInterface
+import android.content.Intent
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.text.Html
 import android.text.method.LinkMovementMethod
 import android.view.Surface
 import android.view.View
 import android.widget.TextView
+import android.widget.Toast
 import androidx.annotation.Keep
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import java.lang.ref.WeakReference
@@ -19,6 +23,7 @@ import org.citron.citron_emu.fragments.CoreErrorDialogFragment
 import org.citron.citron_emu.utils.DocumentsTree
 import org.citron.citron_emu.utils.FileUtil
 import org.citron.citron_emu.utils.Log
+import org.citron.citron_emu.utils.NextendoAccountState
 import org.citron.citron_emu.model.InstallResult
 import org.citron.citron_emu.model.Patch
 import org.citron.citron_emu.model.GameVerificationResult
@@ -193,6 +198,122 @@ object NativeLibrary {
 
     external fun logSettings()
 
+    external fun nextendoSignIn()
+
+    external fun nextendoSignOut()
+
+    external fun getNextendoAccountStatus(): String
+
+    // Live account profile: name, console nickname, resolved avatar image (uploaded picture or
+    // gallery id), gallery id, color, friend code and pid. Refreshes the emulated self avatar.
+    external fun nextendoGetProfileJson(): String
+
+    // Gate state with enough detail for a status indicator: queried, allow, reason, message.
+    external fun nextendoGetOnlineStatusJson(): String
+
+    // Play history: {ok, error, entries:[{title_id, name, icon, seconds, last_played}]}.
+    external fun nextendoGetHistoryJson(): String
+
+    // Renames the account. Returns an error message, or "" on success.
+    external fun nextendoSetUsername(username: String): String
+
+    // Account Mii: raw StoreData bytes (0x44) in, result codes out; "" upload error on push.
+    external fun nextendoMiiCreate(): ByteArray?
+    external fun nextendoMiiApply(data: ByteArray): String
+    external fun nextendoMiiRemove(data: ByteArray): String
+    external fun nextendoPushProfileMii(miiBase64: String): String
+
+    // The account page on the Nextendo website, for actions this client doesn't cover.
+    external fun nextendoWebsiteProfileUrl(): String
+
+    // Round-trip time to the account backend in milliseconds, or -1 on failure.
+    external fun nextendoPingBackend(): Int
+
+    // GET /api/online-counts as a JSON object keyed by lowercase-hex title id.
+    external fun nextendoOnlineCountsJson(): String
+
+    external fun isNextendoTitle(programId: Long): Boolean
+
+    external fun isNextendoCloudSaveTitle(programId: Long): Boolean
+
+    external fun nextendoRequiredVersion(programId: Long): String
+
+    // Publishes the running title's presence, including the game's own room/join field.
+    external fun nextendoPresenceTick(programId: Long, appName: String)
+
+    // Refreshes the friends snapshot the in-game friend service reads from.
+    external fun nextendoRefreshFriends()
+
+    // Cached friends snapshot as a JSON array of {pid, name, status}.
+    external fun nextendoFriendsJson(): String
+
+    // Live friends + incoming requests from the account server, as JSON.
+    external fun nextendoFriendsListJson(): String
+
+    // All return an empty string on success, else a message fit to show the user.
+    external fun nextendoAddFriend(friendCode: String): String
+
+    external fun nextendoAcceptFriend(pid: Long): String
+
+    external fun nextendoDeclineFriend(pid: Long): String
+
+    external fun nextendoRemoveFriend(pid: Long): String
+
+    external fun nextendoSyncPlayTime(programId: Long, seconds: Long)
+
+    // No-op when cloud sync is off, not linked, or the title isn't Nextendo-supported.
+    // Returns "applied", "kept" (local save present), "none", "no_dir", "failed" or "disabled".
+    external fun nextendoCloudSavePull(programId: Long, force: Boolean): String
+
+    // Splatoon 2's BCAT schedule, fetched before boot when missing or stale. Returns
+    // "installed" on a fresh download, "failed" on error, "" when it was already current.
+    external fun nextendoEnsureBcat(programId: Long): String
+
+    // True for Super Smash Bros. Ultimate, the one title that uses the Skyline mod set.
+    external fun isNextendoSsbuTitle(programId: Long): Boolean
+
+    // Installs/refreshes the SSBU online mods. Returns the count installed as a string,
+    // "failed" on error, or "" when there was nothing to do.
+    external fun nextendoInstallSsbuMods(programId: Long, force: Boolean): String
+
+    // Returns "uploaded", "none", "failed" or "disabled".
+    external fun nextendoCloudSavePush(programId: Long, manual: Boolean): String
+
+    // Server-side availability for the manual cloud-save actions: "available" or "none".
+    external fun nextendoCloudSaveProbe(programId: Long): String
+
+    // Android has no system CA file OpenSSL can read; the CA store is exported to a PEM.
+    external fun setNextendoCaCertPath(path: String)
+
+    @JvmStatic
+    fun exportNextendoCaCerts(): String {
+        return try {
+            val keystore = java.security.KeyStore.getInstance("AndroidCAStore").apply {
+                load(null)
+            }
+            val pem = StringBuilder()
+            val aliases = keystore.aliases()
+            while (aliases.hasMoreElements()) {
+                val alias = aliases.nextElement()
+                val cert = keystore.getCertificate(alias) ?: continue
+                val encoded = android.util.Base64.encodeToString(
+                    cert.encoded,
+                    android.util.Base64.NO_WRAP
+                )
+                pem.append("-----BEGIN CERTIFICATE-----\n")
+                pem.append(encoded.chunked(64).joinToString("\n"))
+                pem.append("\n-----END CERTIFICATE-----\n")
+            }
+            val file = java.io.File(CitronApplication.appContext.filesDir, "nextendo_cacert.pem")
+            file.writeText(pem.toString())
+            setNextendoCaCertPath(file.absolutePath)
+            file.absolutePath
+        } catch (e: Exception) {
+            Log.error("[NativeLibrary] Nextendo CA export failed: ${e.message}")
+            ""
+        }
+    }
+
     enum class CoreError {
         ErrorSystemFiles,
         ErrorSavestate,
@@ -342,6 +463,43 @@ object NativeLibrary {
     @JvmStatic
     fun onProgramChanged(programIndex: Int) {
         sEmulationActivity.get()!!.onProgramChanged(programIndex)
+    }
+
+    @Keep
+    @JvmStatic
+    fun onNextendoOAuthUrl(url: String) {
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                CitronApplication.appContext.startActivity(intent)
+            } catch (e: Exception) {
+                Log.error("[NativeLibrary] Could not open Nextendo sign-in browser: ${e.message}")
+            }
+        }
+    }
+
+    @Keep
+    @JvmStatic
+    fun onNextendoSignInResult(success: Boolean, message: String) {
+        Handler(Looper.getMainLooper()).post {
+            val text = CitronApplication.appContext.getString(
+                if (success) R.string.nextendo_sign_in_success else R.string.nextendo_sign_in_failed,
+                message
+            )
+            Toast.makeText(CitronApplication.appContext, text, Toast.LENGTH_LONG).show()
+            if (success) {
+                Thread {
+                    NativeLibrary.nextendoRefreshFriends()
+                    NextendoAccountState.refresh()
+                }.start()
+            }
+            try {
+                org.citron.citron_emu.service.NextendoSignInService.stop(CitronApplication.appContext)
+            } catch (_: Exception) {
+            }
+        }
     }
 
     /**

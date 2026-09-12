@@ -18,7 +18,18 @@ object GameHelper {
     private const val KEY_OLD_GAME_PATH = "game_path"
     const val KEY_GAMES = "Games"
 
+    // The last full scan's result. Screens that only need the list can reuse it instead of
+    // paying for another SAF walk -- the cloud save manager used to rescan and hang on large
+    // libraries. The games screen populates this on every reload.
+    @Volatile
+    var cachedGames: List<Game> = emptyList()
+        private set
+
     private lateinit var preferences: SharedPreferences
+
+    fun cacheGames(games: List<Game>) {
+        cachedGames = games
+    }
 
     fun getGames(): List<Game> {
         val games = mutableListOf<Game>()

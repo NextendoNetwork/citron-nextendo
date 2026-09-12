@@ -732,7 +732,7 @@ struct Values {
                                            Category::Network};
     Setting<std::string> lobby_api_url{linkage, "api.ynet-fun.xyz", "lobby_api_url",
                                        Category::Network};
-    Setting<bool> enable_nextendo{linkage, false, "enable_nextendo", Category::Network};
+    Setting<bool> enable_nextendo{linkage, true, "enable_nextendo", Category::Network};
     Setting<std::string> nextendo_server_ip{linkage, "51.178.29.194", "nextendo_server_ip",
                                             Category::Network};
     Setting<std::string> nextendo_nat_ip{linkage, "164.132.111.120", "nextendo_nat_ip",
@@ -743,6 +743,9 @@ struct Values {
     // and isn't gated by this, since that's already opt-in every time.
     Setting<bool> nextendo_cloud_sync_enabled{linkage, true, "nextendo_cloud_sync_enabled",
                                               Category::Network};
+    // Only the Android client reads this; the desktop shows friend activity in its own UI.
+    Setting<bool> nextendo_friend_notifications{linkage, true, "nextendo_friend_notifications",
+                                                Category::Network};
 
     // WebService
     Setting<bool> enable_telemetry{linkage, false, "enable_telemetry", Category::WebService};

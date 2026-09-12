@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <vector>
 #include "common/assert.h"
 #include "common/common_types.h"
@@ -415,6 +416,95 @@ void SaveDataFactory::PerformStartupMirrorSync() const {
     }
 }
 
+namespace {
+
+// [Nextendo] The console's active user, used to pick the right profile directory when an
+// imported save left a second profile holding the same title (the guest only reads its own).
+std::optional<Common::UUID> GetActiveProfileUUID(Core::System& system,
+                                                 const FileSys::VirtualDir& nand_root) {
+    // [Nextendo] Read the console's own profile file directly. Outside a game session the
+    // in-memory ProfileManager isn't guaranteed to have parsed it yet, and the profile-directory
+    // scan then picks the zero-UUID directory first -- where e.g. Mario Kart 8 Deluxe keeps its
+    // replays -- so cloud sync operated on a directory the guest never reads its saves from.
+    if (nand_root) {
+        constexpr std::size_t entry_size = 0xC8;
+        constexpr std::size_t data_offset = 0x10;
+        constexpr std::size_t max_profiles = 8;
+        const auto file =
+            nand_root->GetFile("system/save/8000000000000010/su/avators/profiles.dat");
+        if (file) {
+            const auto bytes = file->ReadAllBytes();
+            if (bytes.size() >= data_offset + entry_size * max_profiles) {
+                std::vector<Common::UUID> users;
+                for (std::size_t i = 0; i < max_profiles; ++i) {
+                    Common::UUID uuid{};
+                    std::memcpy(uuid.uuid.data(),
+                                bytes.data() + data_offset + i * entry_size, sizeof(uuid.uuid));
+                    if (uuid.IsInvalid()) {
+                        continue;
+                    }
+                    users.push_back(uuid);
+                }
+                if (!users.empty()) {
+                    // Same rule as the emulated profile manager: an out-of-range (or empty)
+                    // selection falls back to the first user, not the last.
+                    s32 index = static_cast<s32>(Settings::values.current_user);
+                    if (index < 0 || index >= static_cast<s32>(users.size())) {
+                        index = 0;
+                    }
+                    return users[static_cast<std::size_t>(index)];
+                }
+            }
+        }
+    }
+
+    const auto& profiles = system.GetProfileManager();
+    if (profiles.GetUserCount() == 0) {
+        return std::nullopt;
+    }
+    auto uuid = profiles.GetLastOpenedUser();
+    if (!profiles.UserExists(uuid)) {
+        const auto first = profiles.GetUser(0);
+        if (!first) {
+            return std::nullopt;
+        }
+        uuid = *first;
+    }
+    return uuid;
+}
+
+FileSys::VirtualDir GetActiveProfileDirectory(Core::System& system,
+                                              const FileSys::VirtualDir& nand_root,
+                                              const FileSys::VirtualDir& user_save_root) {
+    const auto uuid = GetActiveProfileUUID(system, nand_root);
+    if (!uuid) {
+        return nullptr;
+    }
+    const auto id = uuid->AsU128();
+    return user_save_root->GetDirectoryRelative(fmt::format("{:016X}{:016X}", id[1], id[0]));
+}
+
+FileSys::VirtualDir FindTitleSaveDir(const FileSys::VirtualDir& profile_dir,
+                                     const std::string& title_id_str) {
+    if (!profile_dir) {
+        return nullptr;
+    }
+    if (auto save_dir = profile_dir->GetDirectoryRelative(title_id_str); save_dir != nullptr) {
+        return save_dir;
+    }
+    for (const auto& sub : profile_dir->GetSubdirectories()) {
+        if (!sub) {
+            continue;
+        }
+        if (auto save_dir = sub->GetDirectoryRelative(title_id_str); save_dir != nullptr) {
+            return save_dir;
+        }
+    }
+    return nullptr;
+}
+
+} // Anonymous namespace
+
 VirtualDir SaveDataFactory::GetTitleSaveDirectory(u64 title_id) const {
     if (!dir) {
         return nullptr;
@@ -429,26 +519,73 @@ VirtualDir SaveDataFactory::GetTitleSaveDirectory(u64 title_id) const {
     }
 
     const std::string title_id_str = fmt::format("{:016X}", title_id);
+
+    if (GetActiveProfileUUID(system, dir).has_value()) {
+        // [Nextendo] The console's active profile is known, so its directory is authoritative --
+        // even when this title has no save there yet (the caller then creates it). Scanning the
+        // other profile directories here used to pick the zero-UUID one, where e.g. Mario Kart 8
+        // Deluxe keeps its replays, and sync then operated on files the guest never reads.
+        return FindTitleSaveDir(GetActiveProfileDirectory(system, dir, user_save_root),
+                                title_id_str);
+    }
+
+    // Without profile information (profiles.dat missing or unreadable), fall back to the scan.
+    for (const auto& profile_dir : user_save_root->GetSubdirectories()) {
+        if (auto save_dir = FindTitleSaveDir(profile_dir, title_id_str); save_dir != nullptr) {
+            return save_dir;
+        }
+    }
+    return nullptr;
+}
+
+VirtualDir SaveDataFactory::GetOrCreateTitleSaveDirectory(u64 title_id) const {
+    if (auto existing = GetTitleSaveDirectory(title_id)) {
+        return existing;
+    }
+    if (!dir) {
+        return nullptr;
+    }
+
+    VirtualDir user_save_root = dir->GetDirectoryRelative("user/save/0000000000000000");
+    if (!user_save_root) {
+        user_save_root = dir->GetDirectoryRelative("user/save");
+    }
+    if (!user_save_root) {
+        return nullptr;
+    }
+
+    // The active profile is known: create the save where the guest itself will look for it,
+    // with the proper owner metadata. Never guess another profile's directory.
+    if (const auto uuid = GetActiveProfileUUID(system, dir); uuid.has_value()) {
+        const auto meta =
+            SaveDataAttribute::Make(title_id, SaveDataType::Account, uuid->AsU128(), 0);
+        return Create(SaveDataSpaceId::User, meta);
+    }
+
+    // Without profile information, reuse the profile layout the console already created: those
+    // directories are named after the profile's user id, so recreating one reproduces the
+    // guest's own layout exactly.
     for (const auto& profile_dir : user_save_root->GetSubdirectories()) {
         if (!profile_dir) {
             continue;
         }
-        auto save_dir = profile_dir->GetDirectoryRelative(title_id_str);
-        if (!save_dir) {
-            for (const auto& sub : profile_dir->GetSubdirectories()) {
-                if (!sub) {
-                    continue;
-                }
-                save_dir = sub->GetDirectoryRelative(title_id_str);
-                if (save_dir) {
-                    break;
-                }
-            }
+        const std::string name = profile_dir->GetName();
+        if (name.size() != sizeof(u128) * 2) {
+            continue;
         }
-        if (save_dir) {
-            return save_dir;
+        u128 user_id{};
+        try {
+            user_id[1] = std::stoull(name.substr(0, 16), nullptr, 16);
+            user_id[0] = std::stoull(name.substr(16, 16), nullptr, 16);
+        } catch (...) {
+            continue;
+        }
+        const auto meta = SaveDataAttribute::Make(title_id, SaveDataType::Account, user_id, 0);
+        if (auto created = Create(SaveDataSpaceId::User, meta)) {
+            return created;
         }
     }
+
     return nullptr;
 }
 

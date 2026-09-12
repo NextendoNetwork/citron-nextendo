@@ -60,6 +60,21 @@ friend code, accept or decline requests, see who's online.
 > as an identity. This fork deliberately never displays or logs it. Don't paste it anywhere, and
 > don't ship `nextendo_account.txt` — it holds your session token — inside a build or archive.
 
+## Android
+
+The Android app carries the same Nextendo Network client: browser sign-in, hostname
+redirection, game-list badges, friends and presence, cloud saves and the account profile.
+It targets arm64 devices with Android 11 or newer (minSdk 30) and a Vulkan-capable GPU.
+
+Build and install instructions live in
+[`docs/BUILDING-CITRON-ANDROID.md`](docs/BUILDING-CITRON-ANDROID.md):
+
+```bash
+cd src/android
+./gradlew assembleMainlineRelease
+adb install -r app/build/outputs/apk/mainline/release/app-mainline-release.apk
+```
+
 ## Credits and how this was built
 
 This is [Citron](https://git.citron-emu.org/citron/emu), itself derived from
