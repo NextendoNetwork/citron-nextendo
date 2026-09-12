@@ -16,6 +16,8 @@ add_library(citron-android SHARED
     native_input.cpp
     ${CMAKE_SOURCE_DIR}/src/citron/nextendo_byaml.cpp
     ${CMAKE_SOURCE_DIR}/src/citron/nextendo_byaml.h
+    ${CMAKE_SOURCE_DIR}/src/citron/nextendo_mii.cpp
+    ${CMAKE_SOURCE_DIR}/src/citron/nextendo_mii.h
     ${CMAKE_SOURCE_DIR}/src/citron/nextendo_save_sync.cpp
     ${CMAKE_SOURCE_DIR}/src/citron/nextendo_save_sync.h
     ${CMAKE_SOURCE_DIR}/src/citron/nextendo_ssbu_mods.cpp
