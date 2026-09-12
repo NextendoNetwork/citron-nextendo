@@ -712,6 +712,43 @@ std::string PushProfilePicture(const std::string& image_base64) {
     return {};
 }
 
+std::string PushProfileMii(const std::string& mii_base64) {
+    const std::string token = Common::NextendoAccount::GetToken();
+    if (token.empty()) {
+        return "Not signed in.";
+    }
+
+    const Profile current = GetProfile();
+    if (!current.ok) {
+        return current.error.empty() ? "Could not load your current profile." : current.error;
+    }
+
+    nlohmann::json body{{"mii", mii_base64}};
+    if (!current.console_nickname.empty()) {
+        body["name"] = current.console_nickname;
+    }
+    if (!current.image_base64.empty()) {
+        body["image"] = current.image_base64;
+    }
+    if (!current.avatar_id.empty()) {
+        body["avatar"] = current.avatar_id;
+    }
+    if (!current.color_hex.empty()) {
+        body["color"] = current.color_hex;
+    }
+
+    const auto result = Send("POST", "/api/profile", body.dump(), token);
+    if (ClearSessionIfRejected(result)) {
+        return "Your session expired. Sign in again.";
+    }
+    if (!result || result->status != 200) {
+        return ErrorFrom(result ? result->body : std::string{},
+                         fmt::format("Could not update your Mii (HTTP {}).",
+                                     result ? result->status : 0));
+    }
+    return {};
+}
+
 std::string SetUsername(const std::string& username) {
     const std::string token = Common::NextendoAccount::GetToken();
     if (token.empty()) {

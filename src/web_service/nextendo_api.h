@@ -205,6 +205,10 @@ Profile GetProfile();
 // just the image changed). Returns an error message, or empty on success.
 std::string PushProfilePicture(const std::string& image_base64);
 
+// Uploads a new account Mii (raw StoreData, base64), preserving the rest of the profile blob
+// the same way PushProfilePicture does. Returns an error message, or empty on success.
+std::string PushProfileMii(const std::string& mii_base64);
+
 // Renames the account (3-16 chars: letters, digits, '_' or '-'). Returns an error message, or
 // empty on success.
 std::string SetUsername(const std::string& username);
