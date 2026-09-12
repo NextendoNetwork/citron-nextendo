@@ -504,20 +504,28 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                         preferences.edit().putLong(key, total).apply()
                         NativeLibrary.nextendoSyncPlayTime(programId, total)
                     }
-                    Thread {
-                        val result = NativeLibrary.nextendoCloudSavePush(programId, manual = false)
-                        if (result == "kept" || result == "too_large" || result == "failed") {
-                            nextendoHandler.post {
-                                context?.let {
-                                    Toast.makeText(
-                                        it,
-                                        NextendoCloudSaveResult.push(result),
-                                        Toast.LENGTH_LONG
-                                    ).show()
+                    // Only push a save this session actually started with: a title that had no
+                    // local save at boot either got the cloud copy back ("applied") or had
+                    // nothing to restore; pushing the fresh save the game creates in the
+                    // latter cases would replace a real cloud save with an empty one.
+                    val pullResult = emulationState.nextendoCloudPullResult
+                    if (pullResult == "kept" || pullResult == "applied") {
+                        Thread {
+                            val result =
+                                NativeLibrary.nextendoCloudSavePush(programId, manual = false)
+                            if (result == "kept" || result == "too_large" || result == "failed") {
+                                nextendoHandler.post {
+                                    context?.let {
+                                        Toast.makeText(
+                                            it,
+                                            NextendoCloudSaveResult.push(result),
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
                                 }
                             }
-                        }
-                    }.start()
+                        }.start()
+                    }
                 }
             }
         }
@@ -1506,6 +1514,14 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         private var surface: Surface? = null
         lateinit var emulationThread: Thread
 
+        // This session's pre-boot cloud pull result. The post-game auto-push only runs when the
+        // pull confirmed a real local save ("kept") or restored one ("applied"), so a title that
+        // starts without a save (e.g. after a local delete) can never push a fresh, empty save
+        // over a real cloud one.
+        @Volatile
+        var nextendoCloudPullResult: String = ""
+            private set
+
         init {
             // Starting state is stopped.
             state = State.STOPPED
@@ -1583,7 +1599,18 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         // from racing the game's own first save read.
         private fun pullNextendoCloudSave() {
             if (programId != 0L) {
-                NativeLibrary.nextendoCloudSavePull(programId, force = false)
+                val result = NativeLibrary.nextendoCloudSavePull(programId, force = false)
+                nextendoCloudPullResult = result
+                Log.debug("[EmulationFragment] Nextendo cloud save pull: $result")
+                if (result == "applied") {
+                    Handler(Looper.getMainLooper()).post {
+                        Toast.makeText(
+                            CitronApplication.appContext,
+                            R.string.nextendo_cloud_save_restored,
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
             }
         }
 

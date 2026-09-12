@@ -78,6 +78,7 @@
     <string name="nextendo_cloud_save_upload_description">Upload this game\'s save to the cloud now</string>
     <string name="nextendo_cloud_save_confirm">This replaces the local save for %1$s.</string>
     <string name="nextendo_cloud_save_applied">Cloud save downloaded</string>
+    <string name="nextendo_cloud_save_restored">Cloud save restored</string>
     <string name="nextendo_cloud_save_kept_local">Kept the local save (upload it to replace the cloud copy)</string>
     <string name="nextendo_cloud_save_uploaded">Save uploaded</string>
     <string name="nextendo_cloud_save_kept_server">Server kept its larger save (the local one is much smaller)</string>
