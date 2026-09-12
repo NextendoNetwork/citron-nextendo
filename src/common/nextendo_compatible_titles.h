@@ -5,6 +5,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "common/common_types.h"
 
@@ -42,6 +43,24 @@ inline bool IsVersionOk(u64 program_id, const std::string& installed_version) {
         return true;
     }
     return installed_version.empty() || installed_version == it->second;
+}
+
+// Titles the account server accepts cloud saves for without a Discord booster (mirrors the
+// server's cloudSaveTitles list -- keep both in sync).
+inline const std::unordered_set<u64>& CloudSaveTable() {
+    static const std::unordered_set<u64> table{
+        0x0100152000022000, // Mario Kart 8 Deluxe
+        0x01006a800016e000, // Super Smash Bros. Ultimate
+        0x0100f8f0000a2000, // Splatoon 2 (EU)
+        0x01003bc0000a0000, // Splatoon 2 (US)
+        0x01003c700009c800, // Splatoon 2 (JP)
+        0x01006f8002326000, // Animal Crossing: New Horizons
+    };
+    return table;
+}
+
+inline bool IsCloudSaveTitle(u64 program_id) {
+    return CloudSaveTable().count(program_id) != 0;
 }
 
 } // namespace Nextendo::CompatibleTitles

@@ -228,6 +228,8 @@ object NativeLibrary {
 
     external fun isNextendoTitle(programId: Long): Boolean
 
+    external fun isNextendoCloudSaveTitle(programId: Long): Boolean
+
     external fun nextendoRequiredVersion(programId: Long): String
 
     // Publishes the running title's presence, including the game's own room/join field.

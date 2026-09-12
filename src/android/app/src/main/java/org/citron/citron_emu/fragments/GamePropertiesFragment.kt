@@ -352,7 +352,8 @@ class GamePropertiesFragment : Fragment() {
             }
 
             val nextendoProgramId = args.game.programId.toLongOrNull() ?: 0L
-            if (nextendoProgramId != 0L && NativeLibrary.isNextendoTitle(nextendoProgramId)) {
+            if (nextendoProgramId != 0L &&
+                NativeLibrary.isNextendoCloudSaveTitle(nextendoProgramId)) {
                 add(
                     SubmenuProperty(
                         R.string.nextendo_cloud_save_download,

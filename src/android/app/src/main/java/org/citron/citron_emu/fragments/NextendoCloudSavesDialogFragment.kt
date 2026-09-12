@@ -40,7 +40,7 @@ class NextendoCloudSavesDialogFragment : NextendoDialogFragment<DialogNextendoCl
             val blocked = NativeLibrary.isRunning()
             val loaded = GameHelper.cachedGames.ifEmpty { GameHelper.getGames() }
             val games = loaded.filter {
-                NativeLibrary.isNextendoTitle(it.programId.toLongOrNull() ?: 0L)
+                NativeLibrary.isNextendoCloudSaveTitle(it.programId.toLongOrNull() ?: 0L)
             }
             post {
                 adapter.submit(games.map {

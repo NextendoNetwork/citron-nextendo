@@ -257,6 +257,12 @@ jboolean Java_org_citron_citron_1emu_NativeLibrary_isNextendoTitle(JNIEnv* env, 
     return Nextendo::CompatibleTitles::Table().count(static_cast<u64>(program_id)) > 0;
 }
 
+jboolean Java_org_citron_citron_1emu_NativeLibrary_isNextendoCloudSaveTitle(JNIEnv* env,
+                                                                            jobject jobj,
+                                                                            jlong program_id) {
+    return Nextendo::CompatibleTitles::IsCloudSaveTitle(static_cast<u64>(program_id));
+}
+
 jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoRequiredVersion(JNIEnv* env,
                                                                           jobject jobj,
                                                                           jlong program_id) {
