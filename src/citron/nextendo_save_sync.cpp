@@ -227,6 +227,8 @@ bool ExtractZipToDirectory(std::span<const u8> zip_data, const std::filesystem::
 Result Pull(Core::System& system, u64 title_id, bool force) {
 #if defined(ENABLE_WEB_SERVICE) && (defined(CITRON_ENABLE_LIBARCHIVE) || defined(_WIN32))
     if (!IsEligible(title_id)) {
+        LOG_WARNING(Frontend, "Nextendo save pull {:016X}: ineligible (title or account)",
+                    title_id);
         return Result::Failed;
     }
 
@@ -240,6 +242,7 @@ Result Pull(Core::System& system, u64 title_id, bool force) {
 
     const auto zip = WebService::NextendoApi::PullSave(fmt::format("{:016x}", title_id));
     if (!zip || zip->empty()) {
+        LOG_INFO(Frontend, "Nextendo save pull {:016X}: no cloud save on the server", title_id);
         return Result::NoData;
     }
 
