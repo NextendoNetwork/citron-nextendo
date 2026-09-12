@@ -505,7 +505,18 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                         NativeLibrary.nextendoSyncPlayTime(programId, total)
                     }
                     Thread {
-                        NativeLibrary.nextendoCloudSavePush(programId, manual = false)
+                        val result = NativeLibrary.nextendoCloudSavePush(programId, manual = false)
+                        if (result == "kept" || result == "too_large" || result == "failed") {
+                            nextendoHandler.post {
+                                context?.let {
+                                    Toast.makeText(
+                                        it,
+                                        NextendoCloudSaveResult.push(result),
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            }
+                        }
                     }.start()
                 }
             }
