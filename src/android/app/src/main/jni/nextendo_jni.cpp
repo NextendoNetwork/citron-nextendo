@@ -25,6 +25,7 @@
 #include "common/settings.h"
 
 #include "citron/nextendo_byaml.h"
+#include "citron/nextendo_mii.h"
 #include "citron/nextendo_save_sync.h"
 #include "citron/nextendo_ssbu_mods.h"
 #include "core/hle/service/friend/friend.h"
@@ -341,12 +342,78 @@ jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoGetProfileJson(JNIEnv*
     std::string json = "{\"ok\":" + std::string(profile.ok ? "true" : "false") + ",\"error\":\"" +
                        EscapeJson(profile.error) + "\",\"name\":\"" + EscapeJson(profile.name) +
                        "\",\"console_nickname\":\"" + EscapeJson(profile.console_nickname) +
-                       "\",\"image\":\"" + image + "\",\"avatar_id\":\"" +
-                       EscapeJson(profile.avatar_id) + "\",\"color\":\"" +
-                       EscapeJson(profile.color_hex) + "\",\"friend_code\":\"" +
+                       "\",\"mii\":\"" + EscapeJson(profile.mii_base64) + "\",\"image\":\"" +
+                       image + "\",\"avatar_id\":\"" + EscapeJson(profile.avatar_id) +
+                       "\",\"color\":\"" + EscapeJson(profile.color_hex) + "\",\"friend_code\":\"" +
                        EscapeJson(Common::NextendoAccount::GetFriendCode()) +
                        "\",\"pid\":" + std::to_string(Common::NextendoAccount::GetPid()) + "}";
     return Common::Android::ToJString(env, json);
+}
+
+// The account Mii is raw StoreData bytes (0x44); Kotlin does the base64 for the profile blob.
+jbyteArray Java_org_citron_citron_1emu_NativeLibrary_nextendoMiiCreate(JNIEnv* env, jobject jobj) {
+    const auto bytes = Nextendo::Mii::Create();
+    if (bytes.empty()) {
+        return nullptr;
+    }
+    jbyteArray out = env->NewByteArray(static_cast<jsize>(bytes.size()));
+    env->SetByteArrayRegion(out, 0, static_cast<jsize>(bytes.size()),
+                            reinterpret_cast<const jbyte*>(bytes.data()));
+    return out;
+}
+
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoMiiApply(JNIEnv* env, jobject jobj,
+                                                                   jbyteArray data) {
+    if (data == nullptr) {
+        return Common::Android::ToJString(env, "invalid");
+    }
+    const jsize size = env->GetArrayLength(data);
+    std::vector<u8> bytes(size);
+    env->GetByteArrayRegion(data, 0, size, reinterpret_cast<jbyte*>(bytes.data()));
+
+    switch (Nextendo::Mii::Apply(bytes)) {
+    case Nextendo::Mii::Result::Applied:
+        return Common::Android::ToJString(env, "applied");
+    case Nextendo::Mii::Result::Invalid:
+        return Common::Android::ToJString(env, "invalid");
+    case Nextendo::Mii::Result::Removed:
+    case Nextendo::Mii::Result::NotFound:
+    case Nextendo::Mii::Result::Failed:
+        break;
+    }
+    return Common::Android::ToJString(env, "failed");
+}
+
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoMiiRemove(JNIEnv* env, jobject jobj,
+                                                                    jbyteArray data) {
+    if (data == nullptr) {
+        return Common::Android::ToJString(env, "invalid");
+    }
+    const jsize size = env->GetArrayLength(data);
+    std::vector<u8> bytes(size);
+    env->GetByteArrayRegion(data, 0, size, reinterpret_cast<jbyte*>(bytes.data()));
+
+    switch (Nextendo::Mii::Remove(bytes)) {
+    case Nextendo::Mii::Result::Removed:
+        return Common::Android::ToJString(env, "removed");
+    case Nextendo::Mii::Result::NotFound:
+        return Common::Android::ToJString(env, "not_found");
+    case Nextendo::Mii::Result::Invalid:
+        return Common::Android::ToJString(env, "invalid");
+    case Nextendo::Mii::Result::Applied:
+    case Nextendo::Mii::Result::Failed:
+        break;
+    }
+    return Common::Android::ToJString(env, "failed");
+}
+
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoPushProfileMii(JNIEnv* env, jobject jobj,
+                                                                         jstring mii_base64) {
+    if (mii_base64 == nullptr) {
+        return Common::Android::ToJString(env, "Invalid Mii data.");
+    }
+    return Common::Android::ToJString(
+        env, WebService::NextendoApi::PushProfileMii(Common::Android::GetJString(env, mii_base64)));
 }
 
 jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoEnsureBcat(JNIEnv* env, jobject jobj,

@@ -12,6 +12,7 @@ import android.content.Intent
 import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Bundle
+import android.util.Base64
 import android.widget.Toast
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AlertDialog
@@ -36,6 +37,7 @@ class NextendoProfileDialogFragment : NextendoDialogFragment<DialogNextendoProfi
             R.string.nextendo_change_username,
             R.string.nextendo_change_username_description
         ) { showChangeUsername() }
+        addAction(R.string.nextendo_mii, R.string.nextendo_mii_description) { showMiiDialog() }
         addAction(R.string.nextendo_friends, R.string.nextendo_friends_description) {
             NextendoFriendsDialogFragment().show(
                 parentFragmentManager,
@@ -183,6 +185,102 @@ class NextendoProfileDialogFragment : NextendoDialogFragment<DialogNextendoProfi
                 if (error.isEmpty()) {
                     NextendoAccountState.refresh()
                 }
+            }
+        }.start()
+    }
+
+    // The database write happens with no guest running; a running game holds its own copy of
+    // the Mii database in memory and would overwrite it on exit.
+    private fun showMiiDialog() {
+        if (NativeLibrary.isRunning()) {
+            Toast.makeText(
+                CitronApplication.appContext,
+                R.string.nextendo_mii_stop_game,
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        val miiBase64 = NextendoAccountState.profile?.miiBase64.orEmpty()
+        val actions = mutableListOf<Pair<Int, () -> Unit>>()
+        if (miiBase64.isNotEmpty()) {
+            actions += R.string.nextendo_mii_apply to { applyAccountMii(miiBase64) }
+            actions += R.string.nextendo_mii_remove to { removeAccountMii(miiBase64) }
+        }
+        actions += R.string.nextendo_mii_create to { createAccountMii() }
+
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.nextendo_mii)
+            .setItems(actions.map { getString(it.first) }.toTypedArray()) { _, which ->
+                actions[which].second()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun accountMiiBytes(base64: String): ByteArray? = try {
+        Base64.decode(base64, Base64.DEFAULT)
+    } catch (_: IllegalArgumentException) {
+        null
+    }
+
+    private fun toastMii(@StringRes message: Int) {
+        Toast.makeText(CitronApplication.appContext, message, Toast.LENGTH_LONG).show()
+    }
+
+    private fun applyAccountMii(base64: String) {
+        val bytes = accountMiiBytes(base64)
+        if (bytes == null) {
+            toastMii(R.string.nextendo_mii_invalid)
+            return
+        }
+        Thread {
+            val message = when (NativeLibrary.nextendoMiiApply(bytes)) {
+                "applied" -> R.string.nextendo_mii_applied
+                "invalid" -> R.string.nextendo_mii_invalid
+                else -> R.string.nextendo_mii_failed
+            }
+            post { toastMii(message) }
+        }.start()
+    }
+
+    private fun removeAccountMii(base64: String) {
+        val bytes = accountMiiBytes(base64)
+        if (bytes == null) {
+            toastMii(R.string.nextendo_mii_invalid)
+            return
+        }
+        Thread {
+            val message = when (NativeLibrary.nextendoMiiRemove(bytes)) {
+                "removed" -> R.string.nextendo_mii_removed
+                "not_found" -> R.string.nextendo_mii_not_found
+                "invalid" -> R.string.nextendo_mii_invalid
+                else -> R.string.nextendo_mii_failed
+            }
+            post { toastMii(message) }
+        }.start()
+    }
+
+    private fun createAccountMii() {
+        Thread {
+            val bytes = NativeLibrary.nextendoMiiCreate()
+            if (bytes == null) {
+                post { toastMii(R.string.nextendo_mii_failed) }
+                return@Thread
+            }
+            val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+            if (NativeLibrary.nextendoPushProfileMii(base64).isNotEmpty()) {
+                post { toastMii(R.string.nextendo_mii_failed) }
+                return@Thread
+            }
+            val message = if (NativeLibrary.nextendoMiiApply(bytes) == "applied") {
+                R.string.nextendo_mii_created
+            } else {
+                R.string.nextendo_mii_uploaded_only
+            }
+            post {
+                toastMii(message)
+                NextendoAccountState.refresh()
             }
         }.start()
     }

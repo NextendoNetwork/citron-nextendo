@@ -18,6 +18,7 @@ import org.json.JSONObject
 data class NextendoProfile(
     val name: String,
     val consoleNickname: String,
+    val miiBase64: String,
     val imageBase64: String,
     val avatarId: String,
     val colorHex: String,
@@ -88,6 +89,7 @@ object NextendoAccountState {
             NextendoProfile(
                 name = entry.optString("name"),
                 consoleNickname = entry.optString("console_nickname"),
+                miiBase64 = entry.optString("mii"),
                 imageBase64 = entry.optString("image"),
                 avatarId = entry.optString("avatar_id"),
                 colorHex = entry.optString("color"),

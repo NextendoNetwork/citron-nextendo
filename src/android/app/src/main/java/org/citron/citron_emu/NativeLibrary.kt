@@ -217,6 +217,12 @@ object NativeLibrary {
     // Renames the account. Returns an error message, or "" on success.
     external fun nextendoSetUsername(username: String): String
 
+    // Account Mii: raw StoreData bytes (0x44) in, result codes out; "" upload error on push.
+    external fun nextendoMiiCreate(): ByteArray?
+    external fun nextendoMiiApply(data: ByteArray): String
+    external fun nextendoMiiRemove(data: ByteArray): String
+    external fun nextendoPushProfileMii(miiBase64: String): String
+
     // The account page on the Nextendo website, for actions this client doesn't cover.
     external fun nextendoWebsiteProfileUrl(): String
 
