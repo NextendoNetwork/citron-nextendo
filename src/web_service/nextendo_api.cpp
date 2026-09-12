@@ -550,21 +550,40 @@ std::optional<std::vector<u8>> PullSave(const std::string& title_id_hex) {
     return std::vector<u8>(result->body.begin(), result->body.end());
 }
 
-std::string PushSave(const std::string& title_id_hex, std::span<const u8> data) {
+PushSaveOutcome PushSave(const std::string& title_id_hex, std::span<const u8> data) {
+    PushSaveOutcome out;
     const std::string token = Common::NextendoAccount::GetToken();
+    if (token.empty()) {
+        out.error = "Not signed in.";
+        return out;
+    }
     const std::string body(reinterpret_cast<const char*>(data.data()), data.size());
     const auto result = Send("POST", "/api/save/" + title_id_hex, body, token);
 
     if (ClearSessionIfRejected(result)) {
-        return "Session expired.";
+        out.error = "Session expired.";
+        return out;
     }
     if (!result) {
-        return "Could not reach the Nextendo account server.";
+        out.error = "Could not reach the Nextendo account server.";
+        return out;
+    }
+    if (result->status == 413) {
+        out.too_large = true;
+        out.error = ErrorFrom(result->body, "Cloud storage limit reached.");
+        return out;
     }
     if (result->status != 200) {
-        return ErrorFrom(result->body, "Could not upload the save.");
+        out.error = ErrorFrom(result->body, "Could not upload the save.");
+        return out;
     }
-    return {};
+
+    out.ok = true;
+    try {
+        out.kept = nlohmann::json::parse(result->body).value("kept", false);
+    } catch (const nlohmann::json::exception&) {
+    }
+    return out;
 }
 
 std::map<std::string, int> GetOnlineCounts() {

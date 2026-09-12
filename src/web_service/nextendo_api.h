@@ -171,10 +171,16 @@ int GetNzpOnlineCount();
 // cloud save stored yet, the account can't use cloud saves (guest), or the request failed.
 std::optional<std::vector<u8>> PullSave(const std::string& title_id_hex);
 
+struct PushSaveOutcome {
+    bool ok = false;
+    bool kept = false;      // The server kept its larger save instead of storing this one.
+    bool too_large = false; // Over the account's cloud storage limit.
+    std::string error;      // Server message; empty when ok.
+};
+
 // Uploads this title's save. The server rejects a drastically smaller upload against an existing
-// larger save rather than clobbering it (kept=true in that case, still reported as success here).
-// Returns an error message fit to show the user, or empty on success.
-std::string PushSave(const std::string& title_id_hex, std::span<const u8> data);
+// larger save (kept=true) and enforces a per-account storage limit (too_large=true).
+PushSaveOutcome PushSave(const std::string& title_id_hex, std::span<const u8> data);
 
 struct Profile {
     bool ok = false;

@@ -299,23 +299,27 @@ std::vector<u8> CaptureForPush(Core::System& system, u64 title_id) {
 #endif
 }
 
-std::string UploadCaptured(u64 title_id, std::vector<u8> zip_bytes) {
+Result UploadCaptured(u64 title_id, std::vector<u8> zip_bytes) {
 #ifdef ENABLE_WEB_SERVICE
     if (zip_bytes.empty()) {
-        return "empty";
+        return Result::NoData;
     }
-    const std::string error =
+    const auto outcome =
         WebService::NextendoApi::PushSave(fmt::format("{:016x}", title_id), zip_bytes);
-    if (!error.empty()) {
-        LOG_WARNING(Frontend, "Nextendo save push {:016X} failed: {}", title_id, error);
-    } else {
-        LOG_INFO(Frontend, "Nextendo save push {:016X}: {} B", title_id, zip_bytes.size());
+    if (!outcome.ok) {
+        LOG_WARNING(Frontend, "Nextendo save push {:016X} failed: {}", title_id, outcome.error);
+        return outcome.too_large ? Result::TooLarge : Result::Failed;
     }
-    return error;
+    if (outcome.kept) {
+        LOG_INFO(Frontend, "Nextendo save push {:016X}: server kept the larger save", title_id);
+        return Result::Kept;
+    }
+    LOG_INFO(Frontend, "Nextendo save push {:016X}: {} B", title_id, zip_bytes.size());
+    return Result::Ok;
 #else
     (void)title_id;
     (void)zip_bytes;
-    return "disabled";
+    return Result::Failed;
 #endif
 }
 
@@ -324,7 +328,7 @@ Result Push(Core::System& system, u64 title_id) {
     if (zip.empty()) {
         return Result::NoData;
     }
-    return UploadCaptured(title_id, std::move(zip)).empty() ? Result::Ok : Result::Failed;
+    return UploadCaptured(title_id, std::move(zip));
 }
 
 } // namespace Nextendo::SaveSync

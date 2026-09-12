@@ -22,6 +22,8 @@ enum class Result {
     NoData,    // Nothing stored on the server for this title.
     LocalKept, // Pull skipped: a local save exists and force wasn't set.
     NoSaveDir, // Pull: no local save directory, and none could be created.
+    Kept,      // Push: the server kept its larger save instead of this one.
+    TooLarge,  // Push: over the account's cloud storage limit.
     Failed,    // Ineligible, offline, or the archive step failed.
 };
 
@@ -31,9 +33,8 @@ Result Pull(Core::System& system, u64 title_id, bool force = false);
 // Local I/O only -- safe to call before filesystem teardown. Empty if ineligible.
 std::vector<u8> CaptureForPush(Core::System& system, u64 title_id);
 
-// The network step for a zip from CaptureForPush -- call from a detached thread. Returns the
-// server's error message, or empty on success.
-std::string UploadCaptured(u64 title_id, std::vector<u8> zip_bytes);
+// The network step for a zip from CaptureForPush -- call from a detached thread.
+Result UploadCaptured(u64 title_id, std::vector<u8> zip_bytes);
 
 // Capture + upload in one blocking call, for the manual "Upload now" action.
 Result Push(Core::System& system, u64 title_id);

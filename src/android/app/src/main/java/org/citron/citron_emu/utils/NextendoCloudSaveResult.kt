@@ -21,6 +21,8 @@ object NextendoCloudSaveResult {
     @StringRes
     fun push(code: String): Int = when (code) {
         "uploaded" -> R.string.nextendo_cloud_save_uploaded
+        "kept" -> R.string.nextendo_cloud_save_kept_server
+        "too_large" -> R.string.nextendo_cloud_save_too_large
         "none" -> R.string.nextendo_cloud_save_none
         "disabled" -> R.string.nextendo_cloud_save_disabled
         else -> R.string.nextendo_cloud_save_failed

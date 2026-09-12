@@ -394,6 +394,8 @@ jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoCloudSavePull(JNIEnv* 
         return Common::Android::ToJString(env, "kept");
     case Nextendo::SaveSync::Result::NoSaveDir:
         return Common::Android::ToJString(env, "no_dir");
+    case Nextendo::SaveSync::Result::Kept:
+    case Nextendo::SaveSync::Result::TooLarge:
     case Nextendo::SaveSync::Result::Failed:
         break;
     }
@@ -414,11 +416,19 @@ jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoCloudSavePush(JNIEnv* 
         system.GetFileSystemController().InitializeContentSystem(*filesystem, true);
     }
     const auto result = Nextendo::SaveSync::Push(system, static_cast<u64>(program_id));
-    if (result == Nextendo::SaveSync::Result::Ok) {
+    switch (result) {
+    case Nextendo::SaveSync::Result::Ok:
         return Common::Android::ToJString(env, "uploaded");
+    case Nextendo::SaveSync::Result::Kept:
+        return Common::Android::ToJString(env, "kept");
+    case Nextendo::SaveSync::Result::TooLarge:
+        return Common::Android::ToJString(env, "too_large");
+    case Nextendo::SaveSync::Result::NoData:
+        return Common::Android::ToJString(env, "none");
+    default:
+        break;
     }
-    return Common::Android::ToJString(
-        env, result == Nextendo::SaveSync::Result::NoData ? "none" : "failed");
+    return Common::Android::ToJString(env, "failed");
 }
 
 jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoCloudSaveProbe(JNIEnv* env, jobject jobj,

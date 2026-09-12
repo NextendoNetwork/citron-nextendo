@@ -80,6 +80,8 @@
     <string name="nextendo_cloud_save_applied">Cloud save downloaded</string>
     <string name="nextendo_cloud_save_kept_local">Kept the local save (upload it to replace the cloud copy)</string>
     <string name="nextendo_cloud_save_uploaded">Save uploaded</string>
+    <string name="nextendo_cloud_save_kept_server">Server kept its larger save (the local one is much smaller)</string>
+    <string name="nextendo_cloud_save_too_large">Save too large for the cloud storage limit</string>
     <string name="nextendo_cloud_save_failed">Cloud save sync failed</string>
     <string name="nextendo_cloud_save_disabled">Cloud save sync is disabled</string>
     <string name="nextendo_friends">Friends</string>
