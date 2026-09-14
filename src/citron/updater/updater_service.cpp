@@ -114,7 +114,7 @@ void UpdaterService::InitializeSSL() {
 #ifdef _WIN32
         // Try to provide helpful information about missing DLLs
         std::filesystem::path app_dir =
-            std::filesystem::path(QCoreApplication::applicationDirPath().toStdString());
+            Common::FS::PathFromUTF8(QCoreApplication::applicationDirPath().toStdString());
         std::filesystem::path crypto_dll = app_dir / "libcrypto-3-x64.dll";
         std::filesystem::path ssl_dll = app_dir / "libssl-3-x64.dll";
 
@@ -333,8 +333,9 @@ void UpdaterService::OnDownloadFinished() {
 #if defined(_WIN32)
     QString filename = QStringLiteral("citron_update_%1.zip")
                            .arg(QString::fromStdString(current_update_info.version));
-    std::filesystem::path download_path = temp_download_path / filename.toStdString();
-    QFile file(QString::fromStdString(download_path.string()));
+    std::filesystem::path download_path =
+        temp_download_path / Common::FS::PathFromUTF8(filename.toStdString());
+    QFile file(QString::fromStdString(Common::FS::PathToUTF8String(download_path)));
     if (!file.open(QIODevice::WriteOnly)) {
         emit UpdateCompleted(UpdateResult::Failed,
                              QStringLiteral("Failed to save downloaded file"));
@@ -654,7 +655,7 @@ bool UpdaterService::CleanupFiles() {
         if (std::filesystem::exists(backup_path)) {
             for (const auto& entry : std::filesystem::directory_iterator(backup_path)) {
                 if (entry.is_directory() &&
-                    entry.path().filename().string().starts_with("backup_")) {
+                    Common::FS::PathToUTF8String(entry.path().filename()).starts_with("backup_")) {
                     backup_dirs.push_back(entry.path());
                 }
             }
@@ -676,13 +677,13 @@ bool UpdaterService::CleanupFiles() {
 }
 
 std::filesystem::path UpdaterService::GetTempDirectory() const {
-    return std::filesystem::path(
+    return Common::FS::PathFromUTF8(
                QStandardPaths::writableLocation(QStandardPaths::TempLocation).toStdString()) /
            "citron_updater";
 }
 
 std::filesystem::path UpdaterService::GetApplicationDirectory() const {
-    return std::filesystem::path(QCoreApplication::applicationDirPath().toStdString());
+    return Common::FS::PathFromUTF8(QCoreApplication::applicationDirPath().toStdString());
 }
 
 std::filesystem::path UpdaterService::GetBackupDirectory() const {

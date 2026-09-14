@@ -175,7 +175,11 @@ bool ExtractToScratch(const std::filesystem::path& zip_path, const std::filesyst
     archive_read_support_format_zip(reader);
     archive_read_support_filter_all(reader);
 
+#ifdef _WIN32
+    if (archive_read_open_filename_w(reader, zip_path.c_str(), 10240) != ARCHIVE_OK) {
+#else
     if (archive_read_open_filename(reader, zip_path.string().c_str(), 10240) != ARCHIVE_OK) {
+#endif
         detail_out = L"Failed to open update archive: " + Widen(archive_error_string(reader));
         archive_read_free(reader);
         return false;
@@ -186,7 +190,14 @@ bool ExtractToScratch(const std::filesystem::path& zip_path, const std::filesyst
     std::error_code ec;
 
     while (archive_read_next_header(reader, &entry) == ARCHIVE_OK) {
+#ifdef _WIN32
+        const wchar_t* entry_name = archive_entry_pathname_w(entry);
+        const std::filesystem::path rel_path =
+            entry_name != nullptr ? std::filesystem::path{entry_name}
+                                  : std::filesystem::path{archive_entry_pathname(entry)};
+#else
         const std::filesystem::path rel_path = archive_entry_pathname(entry);
+#endif
         const std::filesystem::path dest_path = scratch_dir / rel_path;
 
         if (archive_entry_filetype(entry) == AE_IFDIR) {
