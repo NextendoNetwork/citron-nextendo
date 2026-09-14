@@ -20,8 +20,6 @@ add_library(citron-android SHARED
     ${CMAKE_SOURCE_DIR}/src/citron/nextendo_mii.h
     ${CMAKE_SOURCE_DIR}/src/citron/nextendo_save_sync.cpp
     ${CMAKE_SOURCE_DIR}/src/citron/nextendo_save_sync.h
-    ${CMAKE_SOURCE_DIR}/src/citron/nextendo_ssbu_mods.cpp
-    ${CMAKE_SOURCE_DIR}/src/citron/nextendo_ssbu_mods.h
 )
 
 set_property(TARGET citron-android PROPERTY IMPORTED_LOCATION ${FFmpeg_LIBRARY_DIR})
