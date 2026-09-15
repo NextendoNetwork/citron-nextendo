@@ -54,6 +54,23 @@ constexpr std::array<u8, 29> kPeerNameWonder121{{
     0x45, 0x45, 0x4F, 0x46,
 }};
 
+// Nintendo 64 - Nintendo Classics v4.2.0, build 44EFA84EE9C32B466EA27215D3D91DFD0EBAE625.
+constexpr std::array<u8, 19> kCertificateN64v420{{
+    0x49, 0x50, 0x53, 0x33, 0x32,
+    0x00, 0x29, 0xDB, 0xE0, 0x00, 0x04, // offset 0x0029DBE0, 4 bytes
+    0x2A, 0x00, 0x80, 0x52,
+    0x45, 0x45, 0x4F, 0x46,
+}};
+
+constexpr std::array<u8, 29> kPeerHostnameFixN64v420{{
+    0x49, 0x50, 0x53, 0x33, 0x32,
+    0x00, 0x29, 0x42, 0x70, 0x00, 0x04, // offset 0x00294270, 4 bytes
+    0x1F, 0x20, 0x03, 0xD5,
+    0x00, 0x29, 0x3E, 0x40, 0x00, 0x04, // offset 0x00293E40, 4 bytes
+    0xF4, 0x03, 0x1F, 0x2A,
+    0x45, 0x45, 0x4F, 0x46,
+}};
+
 struct KnownBuild {
     std::string_view build_id_hex; // Uppercase, trailing zero bytes stripped -- same convention
                                     // PatchManager::PatchNSO already uses for build_id matching.
@@ -63,15 +80,17 @@ struct KnownBuild {
 constexpr std::array<std::span<const u8>, 2> kSplatoon3PeerPatches{{kCertificateBypass, kPeerHostnameFix}};
 constexpr std::array<std::span<const u8>, 1> kSplatoon3CertOnlyPatches{{kCertificateBypass}};
 constexpr std::array<std::span<const u8>, 2> kWonder121Patches{{kCertificateWonder121, kPeerNameWonder121}};
+constexpr std::array<std::span<const u8>, 2> kN64v420Patches{{kCertificateN64v420, kPeerHostnameFixN64v420}};
 
 // NSO build ID -> which patches it needs. An unrecognized build gets nothing, exactly like an
 // .ips file whose name didn't match any program. Splatoon 3 v11.3.0's build was verified
 // byte-identical to v11.2.0's at all three patch offsets before adding it here.
-constexpr std::array<KnownBuild, 4> kKnownBuilds{{
+constexpr std::array<KnownBuild, 5> kKnownBuilds{{
     {"6830B3A12406CB4716FEC5ADDC35D3E2DC92D212", kSplatoon3PeerPatches},
     {"726D2B882DD9EF10F4A9D73EED088740630FB6C8", kSplatoon3CertOnlyPatches},
     {"28C4287AEE36F7499DA60F3E68B54C70DA382D75", kSplatoon3PeerPatches},
     {"FF773E90972D544EB79406EAA65396D53C43EFB9", kWonder121Patches},
+    {"44EFA84EE9C32B466EA27215D3D91DFD0EBAE625", kN64v420Patches},
 }};
 
 FileSys::VirtualFile MakeIpsFile(std::span<const u8> bytes) {
