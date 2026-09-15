@@ -502,7 +502,7 @@ if ((ARCHITECTURE_x86_64 OR ARCHITECTURE_arm64) AND NOT (MSVC AND ARCHITECTURE_a
         CPMAddPackage(
             NAME dynarmic
             GITHUB_REPOSITORY xinitrcn1/dynarmic
-            GIT_TAG 908a3d74b54f1cf863d22772bd257046f681dfe6
+            GIT_TAG c08207ddec63447d625a382b56b04f68c17526c4
             OPTIONS
                 "DYNARMIC_USE_PRECOMPILED_HEADERS ${CITRON_USE_PRECOMPILED_HEADERS}"
                 "DYNARMIC_IGNORE_ASSERTS ON"
@@ -510,6 +510,15 @@ if ((ARCHITECTURE_x86_64 OR ARCHITECTURE_arm64) AND NOT (MSVC AND ARCHITECTURE_a
         )
         if (TARGET dynarmic AND NOT TARGET dynarmic::dynarmic)
             add_library(dynarmic::dynarmic ALIAS dynarmic)
+        endif()
+        if (dynarmic_ADDED)
+            execute_process(
+                COMMAND git apply --ignore-whitespace
+                        "${CMAKE_SOURCE_DIR}/patches/dynarmic_a32_sha1.patch"
+                WORKING_DIRECTORY "${dynarmic_SOURCE_DIR}"
+                RESULT_VARIABLE _dynarmic_sha1_patch
+                OUTPUT_QUIET ERROR_QUIET
+            )
         endif()
         if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND dynarmic_ADDED)
             execute_process(
