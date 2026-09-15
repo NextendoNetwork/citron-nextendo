@@ -2970,7 +2970,7 @@ void BSD::SendMMsg(HLERequestContext& ctx) {
 
     IPC::ResponseBuilder rb{ctx, 4};
     rb.Push(ResultSuccess);
-    rb.Push<s32>(processed);
+    rb.Push<s32>(last_errno == Errno::SUCCESS ? processed : -1);
     rb.PushEnum(last_errno);
 }
 
@@ -3069,7 +3069,7 @@ void BSD::RecvMMsg(HLERequestContext& ctx) {
 
     IPC::ResponseBuilder rb{ctx, 4};
     rb.Push(ResultSuccess);
-    rb.Push<s32>(processed);
+    rb.Push<s32>(last_errno == Errno::SUCCESS ? processed : -1);
     rb.PushEnum(last_errno);
 }
 
