@@ -108,6 +108,9 @@ fi
 QUICK_SHARUN_REF="e9414c02f713359b551bcfa3832576d2992b13da"
 QUICK_SHARUN_URL="https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/${QUICK_SHARUN_REF}/useful-tools/quick-sharun.sh"
 export HOOKSRC="https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/${QUICK_SHARUN_REF}/useful-tools/hooks"
+# quick-sharun defaults these to upstream main, where they no longer exist since e3de1528a.
+export ANYLINUX_LIB_SOURCE="https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/${QUICK_SHARUN_REF}/useful-tools/lib/anylinux.c"
+export GTK_CLASS_FIX_SOURCE="https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/${QUICK_SHARUN_REF}/useful-tools/lib/gtk-class-fix.c"
 curl -fL --retry 30 "${QUICK_SHARUN_URL}" -o quick-sharun \
     || { echo "Error: failed to fetch quick-sharun from ${QUICK_SHARUN_URL}" >&2; exit 1; }
 chmod +x quick-sharun

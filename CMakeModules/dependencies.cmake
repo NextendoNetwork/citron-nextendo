@@ -511,6 +511,15 @@ if ((ARCHITECTURE_x86_64 OR ARCHITECTURE_arm64) AND NOT (MSVC AND ARCHITECTURE_a
         if (TARGET dynarmic AND NOT TARGET dynarmic::dynarmic)
             add_library(dynarmic::dynarmic ALIAS dynarmic)
         endif()
+        if (dynarmic_ADDED)
+            execute_process(
+                COMMAND git apply --ignore-whitespace
+                        "${CMAKE_SOURCE_DIR}/patches/dynarmic_a32_sha1.patch"
+                WORKING_DIRECTORY "${dynarmic_SOURCE_DIR}"
+                RESULT_VARIABLE _dynarmic_sha1_patch
+                OUTPUT_QUIET ERROR_QUIET
+            )
+        endif()
         if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND dynarmic_ADDED)
             execute_process(
                 COMMAND git apply --ignore-whitespace

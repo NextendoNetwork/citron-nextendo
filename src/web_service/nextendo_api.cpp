@@ -44,7 +44,7 @@ std::string GetCaCertPathOverride() {
 namespace {
 
 constexpr const char* CanonicalUrl = "https://nextendo.network";
-constexpr const char* ClientId = "nextendo-emulator";
+constexpr const char* ClientId = "nextendo-citron";
 constexpr int TimeoutSeconds = 15;
 
 struct Callback {
@@ -388,7 +388,8 @@ LoginResult SignInWithBrowser(const std::function<void(const std::string&)>& ope
 
     const std::string auth_url =
         fmt::format("{}/api/oauth/authorize?response_type=code&client_id={}"
-                    "&redirect_uri={}&scope=identity+friends&state={}"
+                    "&redirect_uri={}&scope=identity+friends+sauvegardes+history+presence"
+                    "&app=citron&state={}"
                     "&code_challenge={}&code_challenge_method=S256",
                     BaseUrl(), ClientId, PercentEncode(redirect_uri), state, challenge);
     LOG_INFO(WebService, "SignInWithBrowser: opening {}", auth_url);
