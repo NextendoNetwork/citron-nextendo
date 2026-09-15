@@ -32,6 +32,7 @@ inline const std::unordered_map<u64, std::string>& Table() {
         {0x010015100b514000, "1.2.1"},  // Super Mario Bros. Wonder
         {0x0100277011f1a000, "1.0.2"},  // Super Mario Bros. 35
         {0x0100770008dd8000, "1.4.0"},  // Monster Hunter Generations Ultimate
+        {0x010047700d540000, "2.0.1"},  // Clubhouse Games: 51 Worldwide Classics
     };
     return table;
 }
