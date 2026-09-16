@@ -167,7 +167,10 @@ void Puller::CallPullerMethod(const MethodCall& method_call) {
         break;
     }
     case BufferMethods::NonStallInterrupt: {
-        LOG_ERROR(HW_GPU, "Special puller engine method NonStallInterrupt not implemented");
+        // Notifies the host that the GPU reached this point without stalling the pusher. Dropping
+        // it leaves a guest driver waiting on work it is never told has completed, so it reads
+        // result buffers the GPU has not written yet.
+        rasterizer->SignalReference();
         break;
     }
     case BufferMethods::MemOpA: {
