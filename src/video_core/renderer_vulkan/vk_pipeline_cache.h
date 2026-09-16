@@ -10,6 +10,7 @@
 #include <memory>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "common/common_types.h"
@@ -117,12 +118,12 @@ private:
 
     [[nodiscard]] GraphicsPipeline* BuiltPipeline(GraphicsPipeline* pipeline) const noexcept;
 
-    std::unique_ptr<GraphicsPipeline> CreateGraphicsPipeline();
+    std::unique_ptr<GraphicsPipeline> CreateGraphicsPipeline(bool* shader_failed = nullptr);
 
     std::unique_ptr<GraphicsPipeline> CreateGraphicsPipeline(
         ShaderPools& pools, const GraphicsPipelineCacheKey& key,
         std::span<Shader::Environment* const> envs, PipelineStatistics* statistics,
-        bool build_in_parallel);
+        bool build_in_parallel, bool* shader_failed = nullptr);
 
     std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineCacheKey& key,
                                                            const ShaderInfo* shader);
@@ -158,6 +159,9 @@ public:
     std::unordered_map<GraphicsPipelineCacheKey, std::unique_ptr<GraphicsPipeline>> graphics_cache;
     // Keep replaced failed pipelines alive for stale transition edges and async build cleanup.
     std::vector<std::unique_ptr<GraphicsPipeline>> retired_graphics_pipelines;
+    // A shader that fails translation fails identically forever; without this it is retranslated
+    // every frame the draw is issued.
+    std::unordered_set<GraphicsPipelineCacheKey> failed_graphics_keys;
 
     ShaderPools main_pools;
 

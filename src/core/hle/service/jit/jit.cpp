@@ -179,7 +179,7 @@ public:
         // Function prototype:
         // u64 GetVersion();
         const auto version{context.CallFunction(callbacks.GetVersion)};
-        if (version != 1) {
+        if (version > 1) {
             LOG_ERROR(Service_JIT, "unknown plugin version {}", version);
             R_THROW(ResultUnknown);
         }

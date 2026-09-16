@@ -146,6 +146,13 @@ public:
                              "Fatal: fault at {:#016x} (consecutive={}), suspending thread",
                              pc, m_consecutive_faults);
                 m_parent.LogBacktrace(m_process);
+
+                // A call through a null pointer is recoverable: resume at the return address so
+                // the caller continues instead of the thread dying. Fixed up in RunThread, where
+                // touching the jit is safe.
+                if (pc < 0x1000) {
+                    m_parent.m_recover_null_exec = true;
+                }
             }
 
             ReturnException(pc, PrefetchAbort);
@@ -398,6 +405,27 @@ std::shared_ptr<Dynarmic::A64::Jit> ArmDynarmic64::MakeJit(Common::PageTable* pa
 HaltReason ArmDynarmic64::RunThread(Kernel::KThread* thread) {
     CITRON_PROFILE_SCOPE("Dynarmic64::Run");
     m_jit->ClearExclusiveState();
+
+    // Bounded so a pathological caller cannot spin here forever.
+    for (u32 recoveries = 0; recoveries < 64; ++recoveries) {
+        const HaltReason hr = TranslateHaltReason(m_jit->Run());
+        if (!m_recover_null_exec) {
+            return hr;
+        }
+        m_recover_null_exec = false;
+
+        Kernel::Svc::ThreadContext ctx;
+        this->GetContext(ctx);
+        if (ctx.lr < 0x1000) {
+            return hr;
+        }
+        LOG_WARNING(Core_ARM, "Skipping call through null pointer, resuming at {:#016x}", ctx.lr);
+        ctx.pc = ctx.lr;
+        this->SetContext(ctx);
+        m_jit->ClearExclusiveState();
+    }
+
+    m_recover_null_exec = false;
     return TranslateHaltReason(m_jit->Run());
 }
 
