@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <deque>
 #include <filesystem>
 #include <memory>
@@ -33,6 +34,7 @@
 #include "core/hle/service/sockets/sockets_translate.h"
 #include "core/hle/service/ssl/ssl_pending_registry.h"
 #include "core/internal_network/network.h"
+#include "core/internal_network/network_interface.h"
 #include "core/internal_network/socket_proxy.h"
 #include "core/internal_network/sockets.h"
 #include "network/network.h"
@@ -2155,7 +2157,7 @@ std::pair<s32, Errno> BSD::RecvFromImpl(s32 fd, u32 flags, std::vector<u8>& mess
         std::copy_n(buffered_data.begin(), ret, message.begin());
 
         if (p_addr_in) {
-            ASSERT(addr.size() == sizeof(SockAddrIn));
+            addr.resize(sizeof(SockAddrIn));
             PutValue(addr, Translate(buffered_addr));
             LOG_DEBUG(Service, "RecvFrom fd={} <- {}:{} len={} (buffered) {}", fd,
                       Network::IPv4AddressToRedactedString(buffered_addr.ip),
@@ -2203,7 +2205,7 @@ std::pair<s32, Errno> BSD::RecvFromImpl(s32 fd, u32 flags, std::vector<u8>& mess
         if (ret < 0) {
             addr.clear();
         } else {
-            ASSERT(addr.size() == sizeof(SockAddrIn));
+            addr.resize(sizeof(SockAddrIn));
             const SockAddrIn result = Translate(addr_in);
             PutValue(addr, result);
             LOG_DEBUG(Service, "RecvFrom fd={} <- {}:{} len={} {}", fd,
@@ -3137,12 +3139,106 @@ void BSD::Unknown40(HLERequestContext& ctx) {
     rb.PushEnum(static_cast<Errno>(EOPNOTSUPP));
 }
 
+static std::vector<u8> BuildInterfaceList() {
+    constexpr u8 RTM_VERSION = 5;
+    constexpr u8 RTM_NEWADDR = 0xc;
+    constexpr u8 RTM_IFINFO = 0xe;
+    constexpr size_t header_size = 0x18;
+    constexpr size_t if_data_size = 152;
+    constexpr size_t addrs_offset = header_size + if_data_size;
+
+    const auto iface = Network::GetSelectedNetworkInterface();
+    if (!iface) {
+        return {};
+    }
+    const u32 ip = iface->ip_address.s_addr;
+    const u32 mask = iface->subnet_mask.s_addr;
+
+    std::vector<u8> out;
+    const auto begin_message = [&](u8 type, u32 addrs, u32 flags, size_t sockaddr_bytes) {
+        const size_t start = out.size();
+        const size_t length = addrs_offset + sockaddr_bytes;
+        out.resize(start + length);
+        u8* m = out.data() + start;
+        const u16 msglen = static_cast<u16>(length);
+        std::memcpy(m, &msglen, 2);
+        m[2] = RTM_VERSION;
+        m[3] = type;
+        std::memcpy(m + 4, &addrs, 4);
+        std::memcpy(m + 8, &flags, 4);
+        const u16 index = 1;
+        std::memcpy(m + 0xc, &index, 2);
+        const u16 len = static_cast<u16>(addrs_offset);
+        const u16 data_off = static_cast<u16>(header_size);
+        std::memcpy(m + 0x10, &len, 2);
+        std::memcpy(m + 0x12, &data_off, 2);
+        u8* data = m + header_size;
+        data[0] = 6;
+        data[2] = 6;
+        data[3] = 14;
+        data[4] = 2;
+        data[7] = static_cast<u8>(if_data_size);
+        const u64 mtu = 1500;
+        std::memcpy(data + 8, &mtu, 8);
+        return m + addrs_offset;
+    };
+
+    static constexpr char name[] = "wl0";
+    u8* dl = begin_message(RTM_IFINFO, 0x10, 0x8843, 24);
+    dl[0] = 8 + 3 + 6;
+    dl[1] = 18;
+    dl[2] = 1;
+    dl[4] = 6;
+    dl[5] = 3;
+    dl[6] = 6;
+    std::memcpy(dl + 8, name, 3);
+
+    u8* sa = begin_message(RTM_NEWADDR, 0x4 | 0x20 | 0x80, 0, 48);
+    const auto write_sockaddr_in = [](u8* p, u32 addr) {
+        p[0] = 16;
+        p[1] = 2;
+        std::memcpy(p + 4, &addr, 4);
+    };
+    write_sockaddr_in(sa, mask);
+    write_sockaddr_in(sa + 16, ip);
+    write_sockaddr_in(sa + 32, (ip & mask) | ~mask);
+    return out;
+}
+
 void BSD::Sysctl(HLERequestContext& ctx) {
-    LOG_WARNING(Service, "(STUBBED) called Sysctl");
-    IPC::ResponseBuilder rb{ctx, 4};
+    std::vector<s32> mib;
+    if (ctx.CanReadBuffer(0)) {
+        const auto name = ctx.ReadBuffer(0);
+        mib.resize(name.size() / sizeof(s32));
+        std::memcpy(mib.data(), name.data(), mib.size() * sizeof(s32));
+    }
+    const size_t capacity = ctx.CanWriteBuffer(0) ? ctx.GetWriteBufferSize(0) : 0;
+
+    s32 ret = -1;
+    Errno bsd_errno = Errno::SUCCESS;
+    u32 old_length = 0;
+    const bool interface_list = mib.size() == 6 && mib[0] == 4 && mib[1] == 17 && mib[2] == 0 &&
+                                (mib[3] == 0 || mib[3] == 2) && mib[4] == 5;
+    if (interface_list) {
+        const auto list = BuildInterfaceList();
+        old_length = static_cast<u32>(list.size());
+        if (capacity == 0) {
+            ret = 0;
+        } else if (capacity < list.size()) {
+            bsd_errno = Errno::NOMEM;
+        } else {
+            ctx.WriteBuffer(list, 0);
+            ret = 0;
+        }
+    } else {
+        bsd_errno = Errno::OPNOTSUPP;
+    }
+
+    IPC::ResponseBuilder rb{ctx, 5};
     rb.Push(ResultSuccess);
-    rb.Push<s32>(-1);
-    rb.PushEnum(static_cast<Errno>(EOPNOTSUPP));
+    rb.Push<s32>(ret);
+    rb.PushEnum(bsd_errno);
+    rb.Push<u32>(old_length);
 }
 
 } // namespace Service::Sockets
