@@ -34,6 +34,7 @@ inline const std::unordered_map<u64, std::string>& Table() {
         {0x0100770008dd8000, "1.4.0"},  // Monster Hunter Generations Ultimate
         {0x010047700d540000, "2.0.1"},  // Clubhouse Games: 51 Worldwide Classics
         {0x0100c6f01c4f8000, "1.3.0"},  // METAL GEAR SOLID: Peace Walker - Master Collection Version
+        {0x01006fe013472000, "1.1.1"},  // Mario Party Superstars
     };
     return table;
 }
