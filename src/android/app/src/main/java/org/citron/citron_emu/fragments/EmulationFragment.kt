@@ -360,6 +360,16 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                     true
                 }
 
+                R.id.menu_nextendo_lobby -> {
+                    binding.drawerLayout.close()
+                    binding.inGameMenu.requestFocus()
+                    NextendoLobbyDialogFragment().show(
+                        parentFragmentManager,
+                        NextendoLobbyDialogFragment.TAG
+                    )
+                    true
+                }
+
                 R.id.menu_lock_drawer -> {
                     when (IntSetting.LOCK_DRAWER.getInt()) {
                         DrawerLayout.LOCK_MODE_UNLOCKED -> {
