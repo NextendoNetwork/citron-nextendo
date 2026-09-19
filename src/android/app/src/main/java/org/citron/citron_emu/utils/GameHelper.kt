@@ -18,7 +18,18 @@ object GameHelper {
     private const val KEY_OLD_GAME_PATH = "game_path"
     const val KEY_GAMES = "Games"
 
+    // The last full scan's result. Screens that only need the list can reuse it instead of
+    // paying for another SAF walk -- the cloud save manager used to rescan and hang on large
+    // libraries. The games screen populates this on every reload.
+    @Volatile
+    var cachedGames: List<Game> = emptyList()
+        private set
+
     private lateinit var preferences: SharedPreferences
+
+    fun cacheGames(games: List<Game>) {
+        cachedGames = games
+    }
 
     fun getGames(): List<Game> {
         val games = mutableListOf<Game>()
@@ -28,7 +39,11 @@ object GameHelper {
         val gameDirs = mutableListOf<GameDir>()
         val oldGamesDir = preferences.getString(KEY_OLD_GAME_PATH, "") ?: ""
         if (oldGamesDir.isNotEmpty()) {
-            gameDirs.add(GameDir(oldGamesDir, true))
+            val legacyDir = GameDir(oldGamesDir, true)
+            if (NativeConfig.getGameDirs().none { it.uriString == legacyDir.uriString }) {
+                gameDirs.add(legacyDir)
+                NativeConfig.addGameDir(legacyDir)
+            }
             preferences.edit().remove(KEY_OLD_GAME_PATH).apply()
         }
         gameDirs.addAll(NativeConfig.getGameDirs())
@@ -42,30 +57,24 @@ object GameHelper {
         // Remove previous filesystem provider information so we can get up to date version info
         NativeLibrary.clearFilesystemProvider()
 
-        val badDirs = mutableListOf<Int>()
-        gameDirs.forEachIndexed { index: Int, gameDir: GameDir ->
+        gameDirs.forEach { gameDir: GameDir ->
             val gameDirUri = Uri.parse(gameDir.uriString)
-            val isValid = FileUtil.isTreeUriValid(gameDirUri)
-            if (isValid) {
+            if (FileUtil.isTreeUriValid(gameDirUri)) {
                 addGamesRecursive(
                     games,
                     FileUtil.listFiles(gameDirUri),
                     if (gameDir.deepScan) 3 else 1
                 )
             } else {
-                badDirs.add(index)
+                // A single failed probe (provider restart, transient I/O, ...) must not delete
+                // the user's folder registration; keep it and retry on the next reload.
+                Log.warning("[GameHelper] Game folder unavailable, keeping it: ${gameDir.uriString}")
             }
         }
 
-        // Remove all game dirs with insufficient permissions from config
-        if (badDirs.isNotEmpty()) {
-            var offset = 0
-            badDirs.forEach {
-                gameDirs.removeAt(it - offset)
-                offset++
-            }
-        }
-        NativeConfig.setGameDirs(gameDirs.toTypedArray())
+        // Do NOT persist `gameDirs` here: it is this scan's snapshot, taken before the scan
+        // ran. Adds/removes already save through NativeConfig, and writing the snapshot back
+        // would drop a folder added while the scan was in progress.
 
         // Cache list of games found on disk
         val serializedGames = mutableSetOf<String>()

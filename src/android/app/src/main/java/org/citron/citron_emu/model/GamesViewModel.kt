@@ -35,6 +35,11 @@ class GamesViewModel : ViewModel() {
 
     private val reloading = AtomicBoolean(false)
 
+    // A scan was requested while another one was still running (e.g. a folder was added
+    // mid-scan); run it once the current one finishes instead of silently skipping it.
+    private val reloadPending = AtomicBoolean(false)
+    private val reloadPendingDirectoriesChanged = AtomicBoolean(false)
+
     val shouldSwapData: StateFlow<Boolean> get() = _shouldSwapData
     private val _shouldSwapData = MutableStateFlow(false)
 
@@ -64,6 +69,7 @@ class GamesViewModel : ViewModel() {
         )
 
         _games.value = sortedList
+        GameHelper.cacheGames(sortedList)
     }
 
     fun setSearchedGames(games: List<Game>) {
@@ -84,6 +90,8 @@ class GamesViewModel : ViewModel() {
 
     fun reloadGames(directoriesChanged: Boolean, firstStartup: Boolean = false) {
         if (reloading.get()) {
+            reloadPending.set(true)
+            reloadPendingDirectoriesChanged.set(directoriesChanged)
             return
         }
         reloading.set(true)
@@ -126,6 +134,11 @@ class GamesViewModel : ViewModel() {
 
                 if (directoriesChanged) {
                     setShouldSwapData(true)
+                }
+
+                if (reloadPending.getAndSet(false)) {
+                    reloadGames(reloadPendingDirectoriesChanged.getAndSet(false),
+                                firstStartup = false)
                 }
             }
         }

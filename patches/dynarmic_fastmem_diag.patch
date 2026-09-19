@@ -1,0 +1,58 @@
+diff --git a/src/dynarmic/backend/arm64/address_space.cpp b/src/dynarmic/backend/arm64/address_space.cpp
+index aa36119..7bd9b35 100644
+--- a/src/dynarmic/backend/arm64/address_space.cpp
++++ b/src/dynarmic/backend/arm64/address_space.cpp
+@@ -7,6 +7,12 @@
+  */
+ 
+ #include <cstdio>
++#include <cstdint>
++#include <string>
++
++#ifdef __ANDROID__
++#include <android/log.h>
++#endif
+ 
+ #include <bit>
+ 
+@@ -344,8 +350,38 @@ FakeCall AddressSpace::FastmemCallback(u64 host_pc) {
+     }
+ 
+ fail:
+-    fmt::print("dynarmic: Segfault happened within JITted code at host_pc = {:016x}\n"
+-        "Segfault wasn't at a fastmem patch location!\n", host_pc);
++    {
++        // [DIAG] Phase-1 instrumentation: figure out which fastmem bookkeeping
++        // step failed (reverse map, block info, or patch-site lookup) before
++        // Dynarmic aborts the whole process.
++        const auto diag_ptr = std::bit_cast<CodePtr>(host_pc);
++        const auto diag_entry = ReverseGetEntryPoint(diag_ptr);
++        std::string diag_detail;
++        if (!diag_entry) {
++            diag_detail = fmt::format("no reverse-map entry for this pc ({} live block entries)",
++                                      reverse_block_entries.size());
++        } else if (const auto diag_block = block_infos.find(diag_entry);
++                   diag_block == block_infos.end()) {
++            diag_detail = fmt::format("entry {:016x} not in block_infos ({} blocks, "
++                                      "{} reverse entries)",
++                                      reinterpret_cast<std::uintptr_t>(diag_entry),
++                                      block_infos.size(), reverse_block_entries.size());
++        } else {
++            diag_detail =
++                fmt::format("entry {:016x}, offset {:x}, {} fastmem patch site(s)",
++                            reinterpret_cast<std::uintptr_t>(diag_entry),
++                            static_cast<std::size_t>(diag_ptr - diag_entry),
++                            diag_block->second.fastmem_patch_info.size());
++        }
++        const auto diag_text = fmt::format(
++            "dynarmic: Segfault happened within JITted code at host_pc = {:016x}\n"
++            "Segfault wasn't at a fastmem patch location! [{}]\n",
++            host_pc, diag_detail);
++#ifdef __ANDROID__
++        __android_log_print(ANDROID_LOG_ERROR, "citron-dynarmic", "%s", diag_text.c_str());
++#endif
++        fmt::print(stderr, "%s", diag_text.c_str());
++    }
+     UNREACHABLE();
+ }
+ 

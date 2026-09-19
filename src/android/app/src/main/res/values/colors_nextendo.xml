@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Nextendo Network -->
+    <color name="status_signed_in">#2E7D32</color>
+    <color name="status_not_signed_in">#C62828</color>
+    <color name="nextendo_avatar_background">#33808080</color>
+    <color name="nextendo_pill_text">#FFFFFF</color>
+</resources>

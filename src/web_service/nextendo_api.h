@@ -34,6 +34,17 @@ struct OnlineStatus {
 // request carries the account token.
 std::string BaseUrl();
 
+// The account page on the Nextendo website: friend code, friends and the account settings this
+// client doesn't cover.
+std::string WebsiteProfileUrl();
+
+// Overrides the CA bundle for the account server's TLS certificate (Android
+// exports the system CA store to a PEM file at startup).
+void SetCaCertPathOverride(const std::string& path);
+
+// The override set above; empty when the platform's default CA store should be used.
+std::string GetCaCertPathOverride();
+
 // Signs in through the user's browser (OAuth loopback + PKCE), so the emulator never sees the
 // e-mail or password: password login on /api/login is website-only, behind a captcha. `open_url` is
 // handed the authorize URL to open. Blocks until the browser reaches the loopback callback.
@@ -121,6 +132,10 @@ std::vector<LobbyPlayer> GetRecentPlayers();
 // is never attached. Empty on failure or if the player has no avatar set.
 std::string GetAvatarByPid(u64 pid);
 
+// Downloads a gallery avatar by its id (the `avatar` field of a profile). Public and
+// unauthenticated, same as GetAvatarByPid. Empty on failure.
+std::string GetGalleryAvatar(const std::string& avatar_id);
+
 // Reports a player. The server refuses if the account never actually shared a lobby with pid.
 // Returns an empty string on success, else an error code ("not_encountered", "quota", or a
 // message fit to show the user).
@@ -156,10 +171,16 @@ int GetNzpOnlineCount();
 // cloud save stored yet, the account can't use cloud saves (guest), or the request failed.
 std::optional<std::vector<u8>> PullSave(const std::string& title_id_hex);
 
+struct PushSaveOutcome {
+    bool ok = false;
+    bool kept = false;      // The server kept its larger save instead of storing this one.
+    bool too_large = false; // Over the account's cloud storage limit.
+    std::string error;      // Server message; empty when ok.
+};
+
 // Uploads this title's save. The server rejects a drastically smaller upload against an existing
-// larger save rather than clobbering it (kept=true in that case, still reported as success here).
-// Returns an error message fit to show the user, or empty on success.
-std::string PushSave(const std::string& title_id_hex, std::span<const u8> data);
+// larger save (kept=true) and enforces a per-account storage limit (too_large=true).
+PushSaveOutcome PushSave(const std::string& title_id_hex, std::span<const u8> data);
 
 struct Profile {
     bool ok = false;
@@ -183,6 +204,10 @@ Profile GetProfile();
 // server replaces it wholesale, so this fetches the current profile first and resends it with
 // just the image changed). Returns an error message, or empty on success.
 std::string PushProfilePicture(const std::string& image_base64);
+
+// Uploads a new account Mii (raw StoreData, base64), preserving the rest of the profile blob
+// the same way PushProfilePicture does. Returns an error message, or empty on success.
+std::string PushProfileMii(const std::string& mii_base64);
 
 // Renames the account (3-16 chars: letters, digits, '_' or '-'). Returns an error message, or
 // empty on success.

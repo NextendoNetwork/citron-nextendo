@@ -69,7 +69,10 @@ class SearchFragment : Fragment() {
                 requireContext(),
                 requireContext().resources.getDimensionPixelSize(R.dimen.card_width)
             )
-            adapter = GameAdapter(requireActivity() as AppCompatActivity)
+            adapter = GameAdapter(requireActivity() as AppCompatActivity).apply {
+                // Pills would overlap the title in the compact search grid.
+                setShowNextendoPills(false)
+            }
         }
 
         binding.chipGroup.setOnCheckedStateChangeListener { _, _ -> filterAndSearch() }

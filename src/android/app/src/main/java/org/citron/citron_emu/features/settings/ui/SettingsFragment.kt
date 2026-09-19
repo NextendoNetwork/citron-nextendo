@@ -13,20 +13,35 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.transition.MaterialSharedAxis
+import kotlinx.coroutines.launch
 import org.citron.citron_emu.R
 import org.citron.citron_emu.databinding.FragmentSettingsBinding
 import org.citron.citron_emu.features.input.NativeInput
 import org.citron.citron_emu.features.settings.model.Settings
 import org.citron.citron_emu.fragments.MessageDialogFragment
+import org.citron.citron_emu.fragments.NextendoCloudSavesDialogFragment
+import org.citron.citron_emu.fragments.NextendoFriendsDialogFragment
+import org.citron.citron_emu.fragments.NextendoProfileDialogFragment
+import org.citron.citron_emu.utils.NextendoAccountState
 import org.citron.citron_emu.utils.ViewUtils.updateMargins
 import org.citron.citron_emu.utils.collect
 
 class SettingsFragment : Fragment() {
     private lateinit var presenter: SettingsFragmentPresenter
+
+    override fun onResume() {
+        super.onResume()
+        // The Nextendo section shows account state; rebuild it when returning to the
+        // app (e.g. after the OAuth sign-in completed in the browser).
+        if (::presenter.isInitialized && args.menuTag == Settings.MenuTag.SECTION_NEXTENDO) {
+            presenter.loadSettingsList()
+        }
+    }
     private var settingsAdapter: SettingsAdapter? = null
 
     private var _binding: FragmentSettingsBinding? = null
@@ -138,6 +153,42 @@ class SettingsFragment : Fragment() {
                     DirectConnectDialogFragment.TAG
                 )
             }
+        }
+        settingsViewModel.shouldShowNextendoCloudSaves.collect(
+            viewLifecycleOwner,
+            resetState = { settingsViewModel.setShouldShowNextendoCloudSaves(false) }
+        ) {
+            if (it) {
+                NextendoCloudSavesDialogFragment().show(
+                    parentFragmentManager,
+                    NextendoCloudSavesDialogFragment.TAG
+                )
+            }
+        }
+        settingsViewModel.shouldShowNextendoFriends.collect(
+            viewLifecycleOwner,
+            resetState = { settingsViewModel.setShouldShowNextendoFriends(false) }
+        ) {
+            if (it) {
+                NextendoFriendsDialogFragment().show(
+                    parentFragmentManager,
+                    NextendoFriendsDialogFragment.TAG
+                )
+            }
+        }
+        settingsViewModel.shouldShowNextendoProfile.collect(
+            viewLifecycleOwner,
+            resetState = { settingsViewModel.setShouldShowNextendoProfile(false) }
+        ) {
+            if (it) {
+                NextendoProfileDialogFragment().show(
+                    parentFragmentManager,
+                    NextendoProfileDialogFragment.TAG
+                )
+            }
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            NextendoAccountState.generation.collect { presenter.loadSettingsList(true) }
         }
 
         if (args.menuTag == Settings.MenuTag.SECTION_ROOT) {
