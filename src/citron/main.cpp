@@ -101,6 +101,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QProcess>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QScreen>
@@ -3103,7 +3104,7 @@ void GMainWindow::OnGameListOpenFolder(u64 program_id, GameListOpenTarget target
             const std::string& global_path_str =
                 Settings::values.global_custom_save_path.GetValue();
             if (!global_path_str.empty() && Common::FS::IsDir(global_path_str)) {
-                nand_dir = std::filesystem::path(global_path_str);
+                nand_dir = Common::FS::PathFromUTF8(global_path_str);
             }
         }
 
@@ -3858,7 +3859,7 @@ void GMainWindow::OnGameListCreateShortcut(u64 program_id, const std::string& ga
                                            GameListShortcutTarget target) {
     // Get path to citron executable
     const QStringList args = QApplication::arguments();
-    std::filesystem::path citron_command = args[0].toStdString();
+    std::filesystem::path citron_command = Common::FS::PathFromUTF8(args[0].toStdString());
     // If relative path, make it an absolute path
     if (citron_command.c_str()[0] == '.') {
         citron_command = Common::FS::GetCurrentDir() / citron_command;
@@ -3866,18 +3867,19 @@ void GMainWindow::OnGameListCreateShortcut(u64 program_id, const std::string& ga
     // Shortcut path
     std::filesystem::path shortcut_path{};
     if (target == GameListShortcutTarget::Desktop) {
-        shortcut_path =
-            QStandardPaths::writableLocation(QStandardPaths::DesktopLocation).toStdString();
+        shortcut_path = Common::FS::PathFromUTF8(
+            QStandardPaths::writableLocation(QStandardPaths::DesktopLocation).toStdString());
     } else if (target == GameListShortcutTarget::Applications) {
-        shortcut_path =
-            QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation).toStdString();
+        shortcut_path = Common::FS::PathFromUTF8(
+            QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation).toStdString());
     }
 
     if (!std::filesystem::exists(shortcut_path)) {
         GMainWindow::CreateShortcutMessagesGUI(
             this, GMainWindow::CREATE_SHORTCUT_MSGBOX_ERROR,
-            QString::fromStdString(shortcut_path.generic_string()));
-        LOG_ERROR(Frontend, "Invalid shortcut target {}", shortcut_path.generic_string());
+            QString::fromStdString(Common::FS::PathToUTF8String(shortcut_path)));
+        LOG_ERROR(Frontend, "Invalid shortcut target {}",
+                  Common::FS::PathToUTF8String(shortcut_path));
         return;
     }
 
@@ -3963,7 +3965,7 @@ void GMainWindow::OnGameListOpenDirectory(const QString& directory) {
         fs_path = Common::FS::GetCitronPath(Common::FS::CitronPath::NANDDir) /
                   "system/Contents/registered";
     } else {
-        fs_path = directory.toStdString();
+        fs_path = Common::FS::PathFromUTF8(directory.toStdString());
     }
 
     const auto qt_path = QString::fromStdString(Common::FS::PathToUTF8String(fs_path));
@@ -5326,7 +5328,11 @@ bool GMainWindow::ExtractZipToDirectory(const std::filesystem::path& zip_path,
     archive_write_disk_set_options(ext, ARCHIVE_EXTRACT_TIME | ARCHIVE_EXTRACT_PERM);
     archive_write_disk_set_standard_lookup(ext);
 
-    r = archive_read_open_filename(a, zip_path.string().c_str(), 10240);
+#ifdef _WIN32
+    r = archive_read_open_filename_w(a, zip_path.c_str(), 10240);
+#else
+    r = archive_read_open_filename(a, Common::FS::PathToUTF8String(zip_path).c_str(), 10240);
+#endif
     if (r != ARCHIVE_OK) {
         archive_read_free(a);
         archive_write_free(ext);
@@ -5339,8 +5345,17 @@ bool GMainWindow::ExtractZipToDirectory(const std::filesystem::path& zip_path,
     // Extract files
     while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
         // Set the extraction path
-        std::filesystem::path entry_path = extract_path / archive_entry_pathname(entry);
-        archive_entry_set_pathname(entry, entry_path.string().c_str());
+#ifdef _WIN32
+        const wchar_t* entry_name = archive_entry_pathname_w(entry);
+        const std::filesystem::path entry_path =
+            entry_name != nullptr ? extract_path / entry_name
+                                  : extract_path / Common::FS::PathFromUTF8(archive_entry_pathname(entry));
+        archive_entry_copy_pathname_w(entry, entry_path.c_str());
+#else
+        const std::filesystem::path entry_path =
+            extract_path / Common::FS::PathFromUTF8(archive_entry_pathname(entry));
+        archive_entry_set_pathname(entry, Common::FS::PathToUTF8String(entry_path).c_str());
+#endif
 
         r = archive_write_header(ext, entry);
         if (r != ARCHIVE_OK) {
@@ -5359,6 +5374,7 @@ bool GMainWindow::ExtractZipToDirectory(const std::filesystem::path& zip_path,
             }
         }
         archive_write_finish_entry(ext);
+        QCoreApplication::processEvents();
     }
 
     archive_read_free(a);
@@ -5366,38 +5382,38 @@ bool GMainWindow::ExtractZipToDirectory(const std::filesystem::path& zip_path,
     return true;
 #else
 #ifdef _WIN32
-    // Windows fallback: use PowerShell Expand-Archive
+    // Hidden fallback. _popen/std::system use the console code page, so a path outside that
+    // page is rejected even when the process ACP is UTF-8. Pass the paths as UTF-16 environment
+    // values and still log PowerShell's output on failure.
     std::filesystem::create_directories(extract_path);
 
-    std::string powershell_cmd =
-        "powershell -NoProfile -NonInteractive -Command \"Expand-Archive -Path \\\"" +
-        zip_path.string() + "\\\" -DestinationPath \\\"" + extract_path.string() +
-        "\\\" -Force 2>&1\"";
+    const QString zip_q = QString::fromStdString(Common::FS::PathToUTF8String(zip_path));
+    const QString extract_q = QString::fromStdString(Common::FS::PathToUTF8String(extract_path));
 
-    LOG_INFO(Frontend, "Extracting ZIP with PowerShell: {}", powershell_cmd);
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("CITRON_FW_ZIP"), zip_q);
+    env.insert(QStringLiteral("CITRON_FW_DEST"), extract_q);
 
-    // std::system() discards PowerShell's stdout/stderr entirely, so a failure here used to
-    // produce no information beyond "it failed". Use _popen so the actual PowerShell error
-    // (bad zip, path issue, etc.) ends up in the log instead of being thrown away.
-    std::string output;
-    FILE* pipe = _popen(powershell_cmd.c_str(), "r");
-    if (!pipe) {
-        LOG_ERROR(Frontend, "Failed to launch PowerShell for ZIP extraction");
+    QProcess process;
+    process.setProcessEnvironment(env);
+    process.setProcessChannelMode(QProcess::MergedChannels);
+    process.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
+        args->flags |= CREATE_NO_WINDOW;
+    });
+    process.start(QStringLiteral("powershell"),
+                  {QStringLiteral("-NoProfile"), QStringLiteral("-NonInteractive"),
+                   QStringLiteral("-WindowStyle"), QStringLiteral("Hidden"),
+                   QStringLiteral("-Command"),
+                   QStringLiteral("Expand-Archive -LiteralPath $env:CITRON_FW_ZIP "
+                                  "-DestinationPath $env:CITRON_FW_DEST -Force")});
+    if (!process.waitForStarted(15000) || !process.waitForFinished(-1) || process.exitCode() != 0) {
+        LOG_ERROR(Frontend, "Failed to extract ZIP file (exit code {}): {}", process.exitCode(),
+                  process.readAll().toStdString());
         return false;
     }
-    char buffer[256];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        output += buffer;
-    }
-    const int result = _pclose(pipe);
 
-    if (result == 0) {
-        LOG_INFO(Frontend, "ZIP extracted successfully");
-        return true;
-    }
-
-    LOG_ERROR(Frontend, "Failed to extract ZIP file (exit code {}): {}", result, output);
-    return false;
+    LOG_INFO(Frontend, "ZIP extracted successfully");
+    return true;
 #else
     // On other platforms, require libarchive
     LOG_ERROR(Frontend, "ZIP extraction requires libarchive on this platform");
@@ -5458,7 +5474,8 @@ void GMainWindow::OnInstallFirmwareFromZip() {
     QtProgressCallback(100, 10);
 
     // Extract the ZIP file
-    if (!ExtractZipToDirectory(firmware_zip_location.toStdString(), temp_extract_path)) {
+    if (!ExtractZipToDirectory(Common::FS::PathFromUTF8(firmware_zip_location.toStdString()),
+                               temp_extract_path)) {
         progress.close();
         std::filesystem::remove_all(temp_extract_path);
         QMessageBox::critical(
@@ -5522,14 +5539,14 @@ void GMainWindow::OnInstallFirmwareFromZip() {
     int i = 0;
     for (const auto& firmware_src_path : out) {
         i++;
-        auto firmware_src_vfile =
-            vfs->OpenFile(firmware_src_path.generic_string(), FileSys::OpenMode::Read);
-        auto firmware_dst_vfile =
-            firmware_vdir->CreateFileRelative(firmware_src_path.filename().string());
+        const auto firmware_src_utf8 = Common::FS::PathToUTF8String(firmware_src_path);
+        const auto firmware_name_utf8 = Common::FS::PathToUTF8String(firmware_src_path.filename());
+        auto firmware_src_vfile = vfs->OpenFile(firmware_src_utf8, FileSys::OpenMode::Read);
+        auto firmware_dst_vfile = firmware_vdir->CreateFileRelative(firmware_name_utf8);
 
         if (!VfsRawCopy(firmware_src_vfile, firmware_dst_vfile)) {
             LOG_ERROR(Frontend, "Failed to copy firmware file {} to {} in registered folder!",
-                      firmware_src_path.generic_string(), firmware_src_path.filename().string());
+                      firmware_src_utf8, firmware_name_utf8);
             success = false;
         }
 
@@ -5649,7 +5666,8 @@ void GMainWindow::OnInstallFirmware() {
 
     // Check for a reasonable number of .nca files (don't hardcode them, just see if there's some in
     // there.)
-    std::filesystem::path firmware_source_path = firmware_source_location.toStdString();
+    const std::filesystem::path firmware_source_path =
+        Common::FS::PathFromUTF8(firmware_source_location.toStdString());
     if (!Common::FS::IsDir(firmware_source_path)) {
         progress.close();
         return;
@@ -5703,14 +5721,14 @@ void GMainWindow::OnInstallFirmware() {
     int i = 0;
     for (const auto& firmware_src_path : out) {
         i++;
-        auto firmware_src_vfile =
-            vfs->OpenFile(firmware_src_path.generic_string(), FileSys::OpenMode::Read);
-        auto firmware_dst_vfile =
-            firmware_vdir->CreateFileRelative(firmware_src_path.filename().string());
+        const auto firmware_src_utf8 = Common::FS::PathToUTF8String(firmware_src_path);
+        const auto firmware_name_utf8 = Common::FS::PathToUTF8String(firmware_src_path.filename());
+        auto firmware_src_vfile = vfs->OpenFile(firmware_src_utf8, FileSys::OpenMode::Read);
+        auto firmware_dst_vfile = firmware_vdir->CreateFileRelative(firmware_name_utf8);
 
         if (!VfsRawCopy(firmware_src_vfile, firmware_dst_vfile)) {
             LOG_ERROR(Frontend, "Failed to copy firmware file {} to {} in registered folder!",
-                      firmware_src_path.generic_string(), firmware_src_path.filename().string());
+                      firmware_src_utf8, firmware_name_utf8);
             success = false;
         }
 
@@ -5778,7 +5796,8 @@ void GMainWindow::OnInstallDecryptionKeys() {
     // Verify that it contains prod.keys, title.keys and optionally, key_retail.bin
     LOG_INFO(Frontend, "Installing key files from {}", key_source_location.toStdString());
 
-    const std::filesystem::path prod_key_path = key_source_location.toStdString();
+    const std::filesystem::path prod_key_path =
+        Common::FS::PathFromUTF8(key_source_location.toStdString());
     const std::filesystem::path key_source_path = prod_key_path.parent_path();
     if (!Common::FS::IsDir(key_source_path)) {
         return;
@@ -5812,8 +5831,9 @@ void GMainWindow::OnInstallDecryptionKeys() {
         std::filesystem::path destination_key_file = citron_keys_dir / key_file.filename();
         if (!std::filesystem::copy_file(key_file, destination_key_file,
                                         std::filesystem::copy_options::overwrite_existing)) {
-            LOG_ERROR(Frontend, "Failed to copy file {} to {}", key_file.string(),
-                      destination_key_file.string());
+            LOG_ERROR(Frontend, "Failed to copy file {} to {}",
+                      Common::FS::PathToUTF8String(key_file),
+                      Common::FS::PathToUTF8String(destination_key_file));
             QMessageBox::critical(this, tr("Decryption Keys install failed"),
                                   tr("One or more keys failed to copy."));
             return;
@@ -7427,7 +7447,7 @@ int main(int argc, char* argv[]) {
 
 #ifdef CITRON_USE_AUTO_UPDATER
     std::filesystem::path app_dir =
-        std::filesystem::path(QCoreApplication::applicationDirPath().toStdString());
+        Common::FS::PathFromUTF8(QCoreApplication::applicationDirPath().toStdString());
 
 #ifdef _WIN32
     std::filesystem::path update_result_path = app_dir / "update_result.txt";
@@ -7614,7 +7634,12 @@ bool ZipContainsPathTraversal(const std::filesystem::path& zip_path) {
     archive_read_support_format_zip(a);
     archive_read_support_filter_all(a);
 
-    if (archive_read_open_filename(a, zip_path.string().c_str(), 10240) != ARCHIVE_OK) {
+#ifdef _WIN32
+    if (archive_read_open_filename_w(a, zip_path.c_str(), 10240) != ARCHIVE_OK) {
+#else
+    if (archive_read_open_filename(a, Common::FS::PathToUTF8String(zip_path).c_str(), 10240) !=
+        ARCHIVE_OK) {
+#endif
         archive_read_free(a);
         return true;
     }
@@ -7622,7 +7647,17 @@ bool ZipContainsPathTraversal(const std::filesystem::path& zip_path) {
     bool unsafe = false;
     struct archive_entry* entry;
     while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
+#ifdef _WIN32
+        const wchar_t* entry_name = archive_entry_pathname_w(entry);
+        const char* entry_name_narrow = archive_entry_pathname(entry);
+        const std::filesystem::path entry_path =
+            entry_name != nullptr ? std::filesystem::path{entry_name}
+                                  : Common::FS::PathFromUTF8(entry_name_narrow != nullptr
+                                                                 ? entry_name_narrow
+                                                                 : "");
+#else
         const std::filesystem::path entry_path{archive_entry_pathname(entry)};
+#endif
         if (entry_path.is_absolute()) {
             unsafe = true;
             break;

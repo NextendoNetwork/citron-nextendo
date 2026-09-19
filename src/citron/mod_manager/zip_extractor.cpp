@@ -5,6 +5,13 @@
 #include <QDir>
 #include <QFile>
 #include <QProcess>
+#include <QProcessEnvironment>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -70,20 +77,35 @@ bool ZipExtractor::ExtractToPath(const QString& zip_path, const QString& dest_pa
         archive_write_disk_set_options(ext, ARCHIVE_EXTRACT_TIME | ARCHIVE_EXTRACT_PERM);
         archive_write_disk_set_standard_lookup(ext);
 
+#ifdef _WIN32
+        const auto zip_path_fs = Common::FS::PathFromUTF8(zip_path.toStdString());
+        if (archive_read_open_filename_w(a, zip_path_fs.c_str(), 10240) != ARCHIVE_OK) {
+#else
         const std::string zip_path_std = zip_path.toStdString();
         if (archive_read_open_filename(a, zip_path_std.c_str(), 10240) != ARCHIVE_OK) {
+#endif
             archive_read_free(a);
             archive_write_free(ext);
             return false;
         }
 
-        const std::filesystem::path dest_root(dest_path.toStdString());
+        const std::filesystem::path dest_root = Common::FS::PathFromUTF8(dest_path.toStdString());
         struct archive_entry* entry;
         bool any_entry = false;
         while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
             any_entry = true;
-            const std::filesystem::path entry_path = dest_root / archive_entry_pathname(entry);
-            archive_entry_set_pathname(entry, entry_path.string().c_str());
+#ifdef _WIN32
+            const wchar_t* entry_name = archive_entry_pathname_w(entry);
+            const std::filesystem::path entry_path =
+                entry_name != nullptr
+                    ? dest_root / entry_name
+                    : dest_root / Common::FS::PathFromUTF8(archive_entry_pathname(entry));
+            archive_entry_copy_pathname_w(entry, entry_path.c_str());
+#else
+            const std::filesystem::path entry_path =
+                dest_root / Common::FS::PathFromUTF8(archive_entry_pathname(entry));
+            archive_entry_set_pathname(entry, Common::FS::PathToUTF8String(entry_path).c_str());
+#endif
 
             if (archive_write_header(ext, entry) != ARCHIVE_OK) {
                 continue;
@@ -112,16 +134,28 @@ bool ZipExtractor::ExtractToPath(const QString& zip_path, const QString& dest_pa
 #endif
 
 #ifdef _WIN32
-    // On Windows, use PowerShell's Expand-Archive for .zip, or 7z for others
+    // On Windows, use PowerShell's Expand-Archive for .zip, or 7z for others.
+    // Paths go through the environment so a folder outside the console code page still extracts,
+    // and the console itself stays hidden.
     if (zip_path.endsWith(QStringLiteral(".zip"), Qt::CaseInsensitive)) {
         QString powershell = QStandardPaths::findExecutable(QStringLiteral("powershell"));
         if (!powershell.isEmpty()) {
+            QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+            env.insert(QStringLiteral("CITRON_MOD_ZIP"), zip_path);
+            env.insert(QStringLiteral("CITRON_MOD_DEST"), dest_path);
+
             QProcess process;
             process.setProgram(powershell);
+            process.setProcessEnvironment(env);
+            process.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
+                args->flags |= CREATE_NO_WINDOW;
+            });
             process.setArguments(
-                {QStringLiteral("-Command"),
-                 QStringLiteral("Expand-Archive -Path '%1' -DestinationPath '%2' -Force")
-                     .arg(zip_path, dest_path)});
+                {QStringLiteral("-NoProfile"), QStringLiteral("-NonInteractive"),
+                 QStringLiteral("-WindowStyle"), QStringLiteral("Hidden"),
+                 QStringLiteral("-Command"),
+                 QStringLiteral("Expand-Archive -LiteralPath $env:CITRON_MOD_ZIP "
+                                "-DestinationPath $env:CITRON_MOD_DEST -Force")});
             process.start();
             process.waitForFinished(60000);
             if (process.exitCode() == 0)
@@ -204,8 +238,13 @@ QStringList ZipExtractor::ListContents(const QString& zip_path) {
             archive_read_support_format_zip(a);
             archive_read_support_filter_all(a);
 
+#ifdef _WIN32
+            const auto zip_path_fs = Common::FS::PathFromUTF8(zip_path.toStdString());
+            if (archive_read_open_filename_w(a, zip_path_fs.c_str(), 10240) == ARCHIVE_OK) {
+#else
             const std::string zip_path_std = zip_path.toStdString();
             if (archive_read_open_filename(a, zip_path_std.c_str(), 10240) == ARCHIVE_OK) {
+#endif
                 struct archive_entry* entry;
                 while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
                     contents.append(QString::fromUtf8(archive_entry_pathname(entry)));
