@@ -562,6 +562,29 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT CITRON_USE_CPM)
     endif()
 endif()
 
+# Diagnostic logging for unhandled Dynarmic fastmem faults (submodule path; the CPM path
+# fetches its own copy and does not ship this patch).
+if(NOT CITRON_USE_CPM)
+    message(STATUS "Applying custom patch to dynarmic for fastmem fault diagnostics...")
+
+    set(DYNARMIC_DIAG_PATCH_FILE "${CMAKE_CURRENT_SOURCE_DIR}/patches/dynarmic_fastmem_diag.patch")
+    set(DYNARMIC_PATCH_TARGET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/externals/dynarmic")
+
+    if(EXISTS "${DYNARMIC_PATCH_TARGET_DIR}")
+        execute_process(
+            COMMAND git apply --ignore-whitespace "${DYNARMIC_DIAG_PATCH_FILE}"
+            WORKING_DIRECTORY "${DYNARMIC_PATCH_TARGET_DIR}"
+            RESULT_VARIABLE DYNARMIC_DIAG_PATCH_RESULT
+            OUTPUT_QUIET
+            ERROR_QUIET
+        )
+
+        if(NOT DYNARMIC_DIAG_PATCH_RESULT EQUAL 0)
+            message(WARNING "Failed to apply dynarmic fastmem diagnostics patch! This might be okay if it's already applied.")
+        endif()
+    endif()
+endif()
+
 # Apply a patch to stb_image.h to fix a string overflow warning with modern compilers
 message(STATUS "Applying custom patch to stb_image.h...")
 
