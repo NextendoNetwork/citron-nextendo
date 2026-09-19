@@ -250,6 +250,12 @@ object NativeLibrary {
     // Live friends + incoming requests from the account server, as JSON.
     external fun nextendoFriendsListJson(): String
 
+    // The lobby the account is in right now (state, counts, members) and the recent-players
+    // list, as JSON. Both include base64 avatars for players that have one.
+    external fun nextendoGetLobbyJson(): String
+
+    external fun nextendoGetRecentPlayersJson(): String
+
     // All return an empty string on success, else a message fit to show the user.
     external fun nextendoAddFriend(friendCode: String): String
 

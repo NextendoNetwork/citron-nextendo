@@ -72,6 +72,22 @@ std::string FriendJson(const WebService::NextendoApi::Friend& entry) {
            "\",\"image\":\"" + entry.image_base64 + "\"}";
 }
 
+std::string LobbyPlayerJson(const WebService::NextendoApi::LobbyPlayer& player,
+                            bool include_seen_at) {
+    // Avatars are a per-player download; only ask when the server said one exists.
+    std::string image;
+    if (!player.avatar_url.empty() && player.pid != 0) {
+        image = WebService::NextendoApi::GetAvatarByPid(player.pid);
+    }
+    return "{\"pid\":" + std::to_string(player.pid) + ",\"name\":\"" + EscapeJson(player.name) +
+           "\",\"known\":" + (player.known ? "true" : "false") + ",\"friend_code\":\"" +
+           EscapeJson(player.friend_code) + "\",\"host\":" + (player.host ? "true" : "false") +
+           ",\"is_me\":" + (player.is_me ? "true" : "false") + ",\"title_id\":\"" +
+           EscapeJson(player.title_id) + "\",\"seen_at\":\"" +
+           (include_seen_at ? EscapeJson(player.seen_at) : std::string{}) + "\",\"image\":\"" +
+           image + "\"}";
+}
+
 void RefreshFriendsCache() {
     const auto list = WebService::NextendoApi::GetFriends();
     if (!list.ok) {
@@ -204,6 +220,33 @@ jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoFriendsListJson(JNIEnv
     for (std::size_t i = 0; i < list.requests.size(); ++i) {
         json += i == 0 ? "" : ",";
         json += FriendJson(list.requests[i]);
+    }
+    json += "]}";
+    return Common::Android::ToJString(env, json);
+}
+
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoGetLobbyJson(JNIEnv* env, jobject jobj) {
+    const auto lobby = WebService::NextendoApi::GetMyLobby();
+    std::string json = "{\"in_lobby\":" + std::string(lobby.in_lobby ? "true" : "false") +
+                       ",\"title_id\":\"" + EscapeJson(lobby.title_id) + "\",\"state_code\":\"" +
+                       EscapeJson(lobby.state_code) + "\",\"count\":" +
+                       std::to_string(lobby.count) + ",\"max\":" + std::to_string(lobby.max) +
+                       ",\"players\":[";
+    for (std::size_t i = 0; i < lobby.players.size(); ++i) {
+        json += i == 0 ? "" : ",";
+        json += LobbyPlayerJson(lobby.players[i], false);
+    }
+    json += "]}";
+    return Common::Android::ToJString(env, json);
+}
+
+jstring Java_org_citron_citron_1emu_NativeLibrary_nextendoGetRecentPlayersJson(JNIEnv* env,
+                                                                               jobject jobj) {
+    const auto players = WebService::NextendoApi::GetRecentPlayers();
+    std::string json = "{\"players\":[";
+    for (std::size_t i = 0; i < players.size(); ++i) {
+        json += i == 0 ? "" : ",";
+        json += LobbyPlayerJson(players[i], true);
     }
     json += "]}";
     return Common::Android::ToJString(env, json);
