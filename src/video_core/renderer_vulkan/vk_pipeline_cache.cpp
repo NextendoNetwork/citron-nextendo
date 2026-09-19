@@ -665,6 +665,9 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
 }
 
 GraphicsPipeline* PipelineCache::CurrentGraphicsPipelineSlowPath() {
+    if (failed_graphics_keys.contains(graphics_key)) {
+        return nullptr;
+    }
     const auto [pair, is_new]{graphics_cache.try_emplace(graphics_key)};
     auto& pipeline{pair->second};
     GraphicsPipeline* transition_source = current_pipeline;
@@ -675,10 +678,14 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipelineSlowPath() {
         }
         retired_graphics_pipelines.push_back(std::move(pipeline));
     }
+    bool shader_failed = false;
     if (is_new || !pipeline) {
-        pipeline = CreateGraphicsPipeline();
+        pipeline = CreateGraphicsPipeline(&shader_failed);
     }
     if (!pipeline) {
+        if (shader_failed) {
+            failed_graphics_keys.insert(graphics_key);
+        }
         return nullptr;
     }
     if (transition_source && transition_source != pipeline.get()) {
@@ -708,7 +715,7 @@ GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) const
 std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
     ShaderPools& pools, const GraphicsPipelineCacheKey& key,
     std::span<Shader::Environment* const> envs, PipelineStatistics* statistics,
-    bool build_in_parallel) try {
+    bool build_in_parallel, bool* shader_failed) try {
     auto hash = key.Hash();
     LOG_INFO(Render_Vulkan, "0x{:016x}", hash);
     size_t env_index{0};
@@ -803,24 +810,27 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         Shader::Environment& env{*envs[env_index]};
         ++env_index;
 
-        const u32 cfg_offset{static_cast<u32>(env.StartAddress() + sizeof(Shader::ProgramHeader))};
-        Shader::Maxwell::Flow::CFG cfg(env, pools.flow_block, cfg_offset, index == 0);
+        // Do not rebuild the CFG here: it re-walks the code that just threw, on a block pool the
+        // unwind left mid-allocation.
         env.Dump(hash, key.unique_hashes[index]);
     }
     LOG_ERROR(Render_Vulkan, "{}", exception.what());
+    if (shader_failed) {
+        *shader_failed = true;
+    }
     return nullptr;
 } catch (const vk::Exception& exception) {
     LOG_ERROR(Render_Vulkan, "{}", exception.what());
     return nullptr;
 }
 
-std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline() {
+std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(bool* shader_failed) {
     GraphicsEnvironments environments;
     GetGraphicsEnvironments(environments, graphics_key.unique_hashes);
 
     main_pools.ReleaseContents();
-    auto pipeline{
-        CreateGraphicsPipeline(main_pools, graphics_key, environments.Span(), nullptr, true)};
+    auto pipeline{CreateGraphicsPipeline(main_pools, graphics_key, environments.Span(), nullptr,
+                                         true, shader_failed)};
     if (!pipeline || pipeline_cache_filename.empty()) {
         return pipeline;
     }

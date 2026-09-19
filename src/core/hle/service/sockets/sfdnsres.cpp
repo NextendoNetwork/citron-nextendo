@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: Copyright 2025 citron Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <charconv>
 #include <chrono>
+#include <cstring>
 #include <cstdlib>
 #include <mutex>
 #include <string_view>
@@ -499,16 +501,46 @@ static std::pair<u32, GetAddrInfoError> GetAddrInfoRequestImpl(HLERequestContext
     // every cycle regardless of timing -- consistent with the game building an HTTP/2
     // :authority header from a corrupted canonical name, not any citron-side socket/scheduling
     // issue (both were separately investigated at length and ruled out).
+    std::optional<std::string> service = std::nullopt;
+    if (ctx.CanReadBuffer(1)) {
+        const std::span<const u8> service_buffer = ctx.ReadBuffer(1);
+        service = Common::StringFromBuffer(service_buffer);
+    }
+
     if (Network::IPv4Address literal_ip; Network::TryParseIPv4Literal(host, literal_ip)) {
+        u32 requested_type = 0;
+        u32 requested_protocol = 0;
+        if (ctx.CanReadBuffer(2)) {
+            const auto hints = ctx.ReadBuffer(2);
+            if (hints.size() >= 24) {
+                std::array<u32_be, 6> header{};
+                std::memcpy(header.data(), hints.data(), sizeof(header));
+                if (header[0] == 0xBEEFCAFE) {
+                    requested_type = header[3];
+                    requested_protocol = header[4];
+                }
+            }
+        }
+        const bool udp = requested_type == static_cast<u32>(Type::DGRAM) ||
+                         requested_protocol == static_cast<u32>(Protocol::UDP);
+        u16 literal_port = 0;
+        if (service.has_value() && !service->empty()) {
+            const char* const first = service->data();
+            const char* const last = first + service->size();
+            const auto [end, ec] = std::from_chars(first, last, literal_port);
+            if (ec != std::errc{} || end != last) {
+                return {0, GetAddrInfoError::SERVICE};
+            }
+        }
         LOG_DEBUG(Service, "[Nextendo] Host '{}' is already a literal address: returned as-is",
                   host);
         Network::AddrInfo entry{};
         entry.family = Network::Domain::INET;
-        entry.socket_type = Network::Type::STREAM;
-        entry.protocol = Network::Protocol::TCP;
+        entry.socket_type = udp ? Network::Type::DGRAM : Network::Type::STREAM;
+        entry.protocol = udp ? Network::Protocol::UDP : Network::Protocol::TCP;
         entry.addr.family = Network::Domain::INET;
         entry.addr.ip = literal_ip;
-        entry.addr.portno = 0;
+        entry.addr.portno = literal_port;
         entry.canon_name = host;
 
         // Deliberately no SetLastHostForIp here, matching Ryujinx-Nextendo's own fix -- a
@@ -542,12 +574,6 @@ static std::pair<u32, GetAddrInfoError> GetAddrInfoRequestImpl(HLERequestContext
     } else if (blocked_domains.find(host) != blocked_domains.end()) {
         LOG_WARNING(Network, "Resolution of hostname {} requested, returning EAI_AGAIN", host);
         return {0, GetAddrInfoError::AGAIN};
-    }
-
-    std::optional<std::string> service = std::nullopt;
-    if (ctx.CanReadBuffer(1)) {
-        const std::span<const u8> service_buffer = ctx.ReadBuffer(1);
-        service = Common::StringFromBuffer(service_buffer);
     }
 
     auto res = Network::GetAddressInfo(query_host, service);

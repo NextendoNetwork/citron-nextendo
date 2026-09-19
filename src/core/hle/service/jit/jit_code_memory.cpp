@@ -13,16 +13,26 @@ Result CodeMemory::Initialize(Kernel::KProcess& process, Kernel::KCodeMemory& co
         GetInteger(page_table.GetAliasCodeRegionStart()) / Kernel::PageSize;
     const u64 alias_code_size = page_table.GetAliasCodeRegionSize() / Kernel::PageSize;
 
-    // NOTE: This will retry indefinitely until mapping the code memory succeeds.
-    while (true) {
+    // Only consider addresses that leave room for the whole allocation: picking from the entire
+    // region lets address + size run past its end, which fails as ResultInvalidCurrentMemory and
+    // reaches the game as 2010-0106 rather than being retried.
+    const u64 size_pages = Common::DivideUp(size, Kernel::PageSize);
+    R_UNLESS(alias_code_size > size_pages, Kernel::ResultOutOfMemory);
+    const u64 candidate_pages = alias_code_size - size_pages;
+
+    for (size_t trial = 0; trial < 4096; trial++) {
         // Generate a new trial address.
         const u64 mapped_address =
-            (alias_code_start + (generate_random() % alias_code_size)) * Kernel::PageSize;
+            (alias_code_start + (generate_random() % candidate_pages)) * Kernel::PageSize;
 
         // Try to map the address
         R_TRY_CATCH(code_memory.MapToOwner(mapped_address, size, perm)) {
             R_CATCH(Kernel::ResultInvalidMemoryRegion) {
                 // If we could not map here, retry.
+                continue;
+            }
+            R_CATCH(Kernel::ResultInvalidCurrentMemory) {
+                // The range is occupied or does not fit; retry elsewhere.
                 continue;
             }
         }
@@ -40,6 +50,8 @@ Result CodeMemory::Initialize(Kernel::KProcess& process, Kernel::KCodeMemory& co
         // We succeeded.
         R_SUCCEED();
     }
+
+    R_THROW(Kernel::ResultOutOfMemory);
 }
 
 void CodeMemory::Finalize() {

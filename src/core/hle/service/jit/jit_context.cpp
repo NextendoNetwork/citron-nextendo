@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
+#include <limits>
 #include <map>
 #include <span>
 #include <boost/icl/interval_set.hpp>
@@ -27,7 +28,15 @@ constexpr std::array<u8, 8> SVC0_ARM64 = {
 };
 
 constexpr std::array HELPER_FUNCTIONS{
-    "_stop", "_resolve", "_panic", "memcpy", "memmove", "memset",
+    "_stop",
+    "_resolve",
+    "_panic",
+    "memcpy",
+    "memmove",
+    "memset",
+    "PanicForPlugin",
+    "_ZN2nn4diag6detail9AbortImplEPKcS3_S3_i",
+    "_ZN2nn6detail21UnexpectedDefaultImplEPKcS2_i",
 };
 
 constexpr size_t STACK_ALIGN = 16;
@@ -52,6 +61,11 @@ public:
             last_code_addr = aligned_vaddr;
         }
         return cached_code_page.inst[(vaddr & Core::Memory::CITRON_PAGEMASK) / sizeof(u32)];
+    }
+    // The plugin is itself a JIT: it writes code and then issues an ISB. Without dropping the
+    // cached page here, the stale copy keeps executing.
+    void InstructionSynchronizationBarrierRaised() override {
+        last_code_addr = std::numeric_limits<u64>::max();
     }
     u8 MemoryRead8(u64 vaddr) override {
         return ReadMemory<u8>(vaddr);
@@ -153,7 +167,8 @@ private:
     IntervalSet& mapped_ranges;
     JITContextImpl& parent;
     Dynarmic::CodePage cached_code_page;
-    u64 last_code_addr = 0;
+    // Zero is a valid page address, so it cannot double as "nothing cached yet".
+    u64 last_code_addr = std::numeric_limits<u64>::max();
 };
 
 class JITContextImpl {
@@ -414,7 +429,9 @@ void DynarmicCallbacks64::CallSVC(u32 swi) {
         }
     } else if (pc == helpers["_stop"]) {
         parent.jit->HaltExecution();
-    } else if (pc == helpers["_panic"]) {
+    } else if (pc == helpers["_panic"] || pc == helpers["PanicForPlugin"] ||
+               pc == helpers["_ZN2nn4diag6detail9AbortImplEPKcS3_S3_i"] ||
+               pc == helpers["_ZN2nn6detail21UnexpectedDefaultImplEPKcS2_i"]) {
         LOG_CRITICAL(Service_JIT, "plugin panicked!");
         parent.jit->HaltExecution();
     } else {

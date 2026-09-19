@@ -31,20 +31,6 @@ Result CreateThread(Core::System& system, Handle* out_handle, u64 entry_point, u
               "priority=0x{:08X}, core_id=0x{:08X}",
               entry_point, arg, stack_bottom, priority, core_id);
 
-    // [Nextendo][DIAG] Every guest thread is spawned through the same SDK trampoline, so
-    // entry_point alone can't tell two CreateThread call sites apart -- capture the caller's
-    // own backtrace instead, which is unique per spawn site.
-    if (const auto* caller = GetCurrentThreadPointer(system.Kernel())) {
-        const auto backtrace = Core::GetBacktrace(caller);
-        std::string trace_str;
-        for (const auto& entry : backtrace) {
-            trace_str += fmt::format("\n    {}+0x{:x} ({})", entry.module, entry.offset, entry.name);
-        }
-        LOG_INFO(Kernel_SVC,
-                 "[Nextendo][DIAG] CreateThread entry_point=0x{:08X} caller backtrace:{}",
-                 entry_point, trace_str);
-    }
-
     // Adjust core id, if it's the default magic.
     auto& kernel = system.Kernel();
     auto& process = GetCurrentProcess(kernel);
