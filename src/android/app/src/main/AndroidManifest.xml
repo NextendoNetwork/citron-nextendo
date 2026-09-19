@@ -46,6 +46,9 @@ SPDX-License-Identifier: GPL-3.0-or-later
         android:persistent="false"                   
         android:resizeableActivity="true">           
 
+        <!-- Allow root/shell profiling (heapprofd) for memory diagnostics -->
+        <profileable android:shell="true" />
+
         <!-- Game Mode Configuration for better performance -->
         <meta-data
             android:name="android.game_mode_config"
