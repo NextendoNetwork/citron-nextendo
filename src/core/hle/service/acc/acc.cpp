@@ -223,6 +223,22 @@ std::string GetInstalledTitleVersion(Core::System& system) {
     return metadata.first != nullptr ? metadata.first->GetVersionString() : std::string{};
 }
 
+u64 ConfiguredTestPid() {
+    const std::string pid_setting = Settings::values.nextendo_pid.GetValue();
+    if (!pid_setting.empty()) {
+        try {
+            return std::stoull(pid_setting);
+        } catch (...) {}
+    }
+    const char* pid_env = std::getenv("NEXTENDO_PID");
+    if (pid_env && *pid_env) {
+        try {
+            return std::stoull(pid_env);
+        } catch (...) {}
+    }
+    return 0;
+}
+
 std::string BuildIdToken(const std::string& installed_version) {
     const auto now = std::chrono::duration_cast<std::chrono::seconds>(
                          std::chrono::system_clock::now().time_since_epoch())
@@ -240,6 +256,9 @@ std::string BuildIdToken(const std::string& installed_version) {
         if (!tok.empty()) {
             nnex_claim = fmt::format(R"("nnex":"{}",)", tok);
         }
+    } else if (const u64 test_pid = ConfiguredTestPid(); test_pid != 0) {
+        // Unsigned test identity; NPLN servers only honour it in the bare-PID test range.
+        nnex_claim = fmt::format(R"("npid":"{}",)", test_pid);
     }
 
     // [Nextendo] The console's own nnAccount module expects a "nintendo" claim dictionary
@@ -279,19 +298,22 @@ std::vector<u8> GetIdTokenBytes(Core::System& system) {
     static std::chrono::steady_clock::time_point expiry{};
     static u64 cached_generation = 0;
     static std::string cached_version;
+    static u64 cached_test_pid = 0;
 
     std::lock_guard lock{mutex};
 
     const u64 generation = Common::NextendoAccount::GetGeneration();
     const std::string installed_version = GetInstalledTitleVersion(system);
+    const u64 test_pid = ConfiguredTestPid();
     const auto now = std::chrono::steady_clock::now();
     if (cached.empty() || now >= expiry || generation != cached_generation ||
-        installed_version != cached_version) {
+        installed_version != cached_version || test_pid != cached_test_pid) {
         const std::string token = BuildIdToken(installed_version);
         cached.assign(token.begin(), token.end());
         expiry = now + std::chrono::hours{2};
         cached_generation = generation;
         cached_version = installed_version;
+        cached_test_pid = test_pid;
         LOG_INFO(Service_ACC, "[Nextendo] Issued a signed BAAS id_token ({} bytes)", cached.size());
     }
 
@@ -1118,19 +1140,7 @@ private:
             if (const u64 linked = Common::NextendoAccount::GetPid(); linked != 0) {
                 return linked;
             }
-            std::string pid_setting = Settings::values.nextendo_pid.GetValue();
-            if (!pid_setting.empty()) {
-                try {
-                    return std::stoull(pid_setting);
-                } catch (...) {}
-            }
-            const char* pid_env = std::getenv("NEXTENDO_PID");
-            if (pid_env && *pid_env) {
-                try {
-                    return std::stoull(pid_env);
-                } catch (...) {}
-            }
-            return 0;
+            return ConfiguredTestPid();
         }();
 
         if (raw_pid == 0) {

@@ -35,6 +35,7 @@ inline const std::unordered_map<u64, std::string>& Table() {
         {0x010047700d540000, "2.0.1"},  // Clubhouse Games: 51 Worldwide Classics
         {0x0100c6f01c4f8000, "1.3.0"},  // METAL GEAR SOLID: Peace Walker - Master Collection Version
         {0x01006fe013472000, "1.1.1"},  // Mario Party Superstars
+        {0x0100f9f00c696000, "1.0.15"}, // Crash Team Racing Nitro-Fueled
     };
     return table;
 }
