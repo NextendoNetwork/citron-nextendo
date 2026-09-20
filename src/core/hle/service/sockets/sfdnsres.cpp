@@ -129,6 +129,14 @@ static std::optional<std::string> GetNextendoRedirectIp(const std::string& host)
         return server_ip;
     }
 
+    // Titles published by Activision/Blizzard reach Demonware rather than Nintendo's own
+    // services: auth over TLS, the lobby and NAT discovery on 3074, and the shared
+    // stun.<region>.demonware.net responders.
+    if (host == "demonware.net" || host.ends_with(".demonware.net")) {
+        LOG_INFO(Service, "[Nextendo] Redirecting Demonware host '{}' -> '{}'", host, server_ip);
+        return server_ip;
+    }
+
     return std::nullopt;
 }
 
