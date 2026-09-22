@@ -123,6 +123,23 @@ jobs:
           PYTHON_EXECUTABLE="$(cygpath -u '${{ steps.python.outputs.python-path }}')" \
             ./build-clangtron-windows.sh setup --compiler clang-cl
 
+      - name: Generate Nextendo client id header
+        shell: bash
+        env:
+          NEXTENDO_CLIENT_ID: ${{ secrets.NEXTENDO_CLIENT_ID }}
+        run: |
+          if [ -z "$NEXTENDO_CLIENT_ID" ]; then
+            echo "::error::NEXTENDO_CLIENT_ID secret is not set; the build would ship unauthenticated"
+            exit 1
+          fi
+          cat > src/web_service/nextendo_secrets.h <<EOF
+          #pragma once
+
+          namespace WebService::NextendoApi {
+          constexpr const char* AppClientId = "$NEXTENDO_CLIENT_ID";
+          }
+          EOF
+
       - name: Build Citron (clang-cl)
         shell: "msys2 {0}"
         env:

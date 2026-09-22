@@ -29,12 +29,20 @@
 #include "common/string_util.h"
 #include "web_service/nextendo_api.h"
 
+#if __has_include("web_service/nextendo_secrets.h")
+#include "web_service/nextendo_secrets.h"
+#else
+namespace WebService::NextendoApi {
+constexpr const char* AppClientId = "";
+}
+#endif
+
 namespace WebService::NextendoApi {
 
 namespace {
 
 constexpr const char* CanonicalUrl = "https://nextendo.network";
-constexpr const char* ClientId = "nextendo-citron";
+constexpr const char* ClientId = AppClientId;
 constexpr int TimeoutSeconds = 15;
 
 struct Callback {
@@ -265,13 +273,23 @@ httplib::Client& SharedClient() {
     return client;
 }
 
+// Every /api/ route requires the issued client id. Public checkouts build without the secret
+// header and send nothing, which the server answers with 401.
+httplib::Headers BaseHeaders() {
+    httplib::Headers headers{{"User-Agent", "citron"}};
+    if (*ClientId != '\0') {
+        headers.emplace("X-Nextendo-Client-Id", ClientId);
+    }
+    return headers;
+}
+
 httplib::Result Send(const std::string& method, const std::string& path, const std::string& body,
                      const std::string& bearer, const httplib::Headers& extra_headers = {}) {
     static std::mutex client_mutex;
     std::lock_guard lock{client_mutex};
     httplib::Client& client = SharedClient();
 
-    httplib::Headers headers{{"User-Agent", "citron"}};
+    httplib::Headers headers = BaseHeaders();
     if (!bearer.empty()) {
         headers.emplace("Authorization", "Bearer " + bearer);
     }
@@ -421,7 +439,7 @@ LoginResult SignInWithBrowser(const std::function<void(const std::string&)>& ope
     client.set_follow_location(true);
     ApplyCaCertPath(client);
 
-    const auto result = client.Post("/api/oauth/token", form);
+    const auto result = client.Post("/api/oauth/token", BaseHeaders(), form);
     if (!result) {
         out.error = "Could not reach the Nextendo account server.";
         const long verify_result = client.get_openssl_verify_result();
@@ -769,7 +787,8 @@ void SyncHistory(const std::vector<HistoryEntry>& entries) {
     client.set_follow_location(true);
     ApplyCaCertPath(client);
 
-    httplib::Headers headers{{"User-Agent", "citron"}, {"Authorization", "Bearer " + token}};
+    httplib::Headers headers = BaseHeaders();
+    headers.emplace("Authorization", "Bearer " + token);
     const auto result = client.Put("/api/history", headers,
                                    nlohmann::json{{"history", history}}.dump(), "application/json");
 

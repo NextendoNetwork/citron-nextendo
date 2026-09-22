@@ -33,9 +33,10 @@ inline const std::unordered_map<u64, std::string>& Table() {
         {0x0100277011f1a000, "1.0.2"},  // Super Mario Bros. 35
         {0x0100770008dd8000, "1.4.0"},  // Monster Hunter Generations Ultimate
         {0x010047700d540000, "2.0.1"},  // Clubhouse Games: 51 Worldwide Classics
-        {0x0100c6f01c4f8000, "1.3.0"},  // METAL GEAR SOLID: Peace Walker - Master Collection Version
-        {0x01006fe013472000, "1.1.1"},  // Mario Party Superstars
-        {0x0100f9f00c696000, "1.0.15"}, // Crash Team Racing Nitro-Fueled
+        {0x0100c6f01c4f8000, "1.3.0"}, // METAL GEAR SOLID: Peace Walker - Master Collection Version
+        {0x01006fe013472000, "1.1.1"}, // Mario Party Superstars
+        {0x0100f9f00c696000, "1.0.15"},      // Crash Team Racing Nitro-Fueled
+        {0x01001b300b9be000, "2.7.7.92380"}, // Diablo III: Eternal Collection
     };
     return table;
 }

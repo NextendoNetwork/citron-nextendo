@@ -120,6 +120,22 @@ jobs:
         id: version
         run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
+      - name: Generate Nextendo client id header
+        env:
+          NEXTENDO_CLIENT_ID: ${{ secrets.NEXTENDO_CLIENT_ID }}
+        run: |
+          if [ -z "$NEXTENDO_CLIENT_ID" ]; then
+            echo "::error::NEXTENDO_CLIENT_ID secret is not set; the build would ship unauthenticated"
+            exit 1
+          fi
+          cat > src/web_service/nextendo_secrets.h <<EOF
+          #pragma once
+
+          namespace WebService::NextendoApi {
+          constexpr const char* AppClientId = "$NEXTENDO_CLIENT_ID";
+          }
+          EOF
+
       - name: Build Citron
         env:
           APP_VERSION: ${{ steps.version.outputs.sha }}
