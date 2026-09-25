@@ -95,7 +95,7 @@ android {
                 signingConfigs.getByName("default")
             }
 
-            resValue("string", "app_name_suffixed", "citron-neo: The switch fell off")
+            resValue("string", "app_name_suffixed", "Nextendo Citron")
             isDebuggable = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -119,7 +119,7 @@ android {
         // Attaches 'debug' suffix to version and package name, allowing installation alongside the release build.
         debug {
             signingConfig = signingConfigs.getByName("default")
-            resValue("string", "app_name_suffixed", "citron-neo: The switch fell off Debug")
+            resValue("string", "app_name_suffixed", "Nextendo Citron Debug")
             isDebuggable = true
             isJniDebuggable = true
             versionNameSuffix = "-debug"
@@ -155,7 +155,7 @@ android {
                 arguments(
                     "-DENABLE_QT=0", // Don't use QT
                     "-DENABLE_SDL2=0", // Don't use SDL
-                    "-DENABLE_WEB_SERVICE=0", // Don't use telemetry
+                    "-DENABLE_WEB_SERVICE=1", // Nextendo Network API/account layer (local fork)
                     "-DENABLE_OPENSSL=1",
                     "-DBUNDLE_SPEEX=ON",
                     "-DANDROID_ARM_NEON=true", // cryptopp requires Neon to work
@@ -164,7 +164,11 @@ android {
                     "-DCITRON_ENABLE_LTO=ON",
                     "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
                     "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
-                    "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
+                    "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
+                    // vcpkg host-triplet fix for macOS hosts (AGP leaks the NDK clang
+                    // into CC/CXX). The overlay applies by name to the auto-detected
+                    // host triplet; other hosts are unaffected.
+                    "-DVCPKG_OVERLAY_TRIPLETS=${rootProject.rootDir}/vcpkg-overlay"
                 )
 
                 abiFilters("arm64-v8a", "x86_64")

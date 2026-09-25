@@ -8,7 +8,11 @@ import org.citron.citron_emu.utils.NativeConfig
 enum class StringSetting(override val key: String) : AbstractStringSetting {
     DRIVER_PATH("driver_path"),
     DEVICE_NAME("device_name"),
-    LOG_FILTER("log_filter");
+    LOG_FILTER("log_filter"),
+
+    // Nextendo Network
+    NEXTENDO_SERVER_IP("nextendo_server_ip"),
+    NEXTENDO_NAT_IP("nextendo_nat_ip");
 
     override fun getString(needsGlobal: Boolean): String = NativeConfig.getString(key, needsGlobal)
 

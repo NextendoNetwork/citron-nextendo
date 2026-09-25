@@ -42,6 +42,10 @@ class CitronApplication : Application() {
         NativeLibrary.logDeviceInfo()
         Log.logDeviceInfo()
 
+        // Export the system CA store for the Nextendo API client (Android has no
+        // OpenSSL-readable CA file by default).
+        NativeLibrary.exportNextendoCaCerts()
+
         createNotificationChannels()
     }
 

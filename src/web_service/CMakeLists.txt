@@ -1,6 +1,16 @@
 # SPDX-FileCopyrightText: 2018 yuzu Emulator Project
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+# The SSBU Skyline mod downloader only serves the desktop frontend; Android has no Skyline
+# runtime, so keep it out of the Android build.
+set(WEB_SERVICE_SSBU_MOD_INSTALLER
+    ssbu_mod_installer.cpp
+    ssbu_mod_installer.h
+)
+if (ANDROID)
+    set(WEB_SERVICE_SSBU_MOD_INSTALLER "")
+endif()
+
 add_library(web_service STATIC
     announce_room_json.cpp
     announce_room_json.h
@@ -11,8 +21,7 @@ add_library(web_service STATIC
     population_scraper_client.cpp
     population_scraper_client.h
     precompiled_headers.h
-    ssbu_mod_installer.cpp
-    ssbu_mod_installer.h
+    ${WEB_SERVICE_SSBU_MOD_INSTALLER}
     verify_login.cpp
     verify_login.h
     verify_user_jwt.cpp

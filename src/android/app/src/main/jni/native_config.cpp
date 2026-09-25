@@ -305,23 +305,27 @@ jobjectArray Java_org_citron_citron_1emu_utils_NativeConfig_getGameDirs(JNIEnv* 
 void Java_org_citron_citron_1emu_utils_NativeConfig_setGameDirs(JNIEnv* env, jobject obj,
                                                             jobjectArray gameDirs) {
     AndroidSettings::values.game_dirs.clear();
-    int size = env->GetArrayLength(gameDirs);
+    const int size = env->GetArrayLength(gameDirs);
 
-    if (size == 0) {
-        return;
+    if (size > 0) {
+        jclass gameDirClass = Common::Android::GetGameDirClass();
+        jfieldID uriStringField =
+            env->GetFieldID(gameDirClass, "uriString", "Ljava/lang/String;");
+        jfieldID deepScanBooleanField = env->GetFieldID(gameDirClass, "deepScan", "Z");
+        for (int i = 0; i < size; ++i) {
+            jobject dir = env->GetObjectArrayElement(gameDirs, i);
+            jstring juriString = static_cast<jstring>(env->GetObjectField(dir, uriStringField));
+            jboolean jdeepScanBoolean = env->GetBooleanField(dir, deepScanBooleanField);
+            std::string uriString = Common::Android::GetJString(env, juriString);
+            AndroidSettings::values.game_dirs.push_back(
+                AndroidSettings::GameDir{uriString, static_cast<bool>(jdeepScanBoolean)});
+        }
     }
 
-    jobject dir = env->GetObjectArrayElement(gameDirs, 0);
-    jclass gameDirClass = Common::Android::GetGameDirClass();
-    jfieldID uriStringField = env->GetFieldID(gameDirClass, "uriString", "Ljava/lang/String;");
-    jfieldID deepScanBooleanField = env->GetFieldID(gameDirClass, "deepScan", "Z");
-    for (int i = 0; i < size; ++i) {
-        dir = env->GetObjectArrayElement(gameDirs, i);
-        jstring juriString = static_cast<jstring>(env->GetObjectField(dir, uriStringField));
-        jboolean jdeepScanBoolean = env->GetBooleanField(dir, deepScanBooleanField);
-        std::string uriString = Common::Android::GetJString(env, juriString);
-        AndroidSettings::values.game_dirs.push_back(
-            AndroidSettings::GameDir{uriString, static_cast<bool>(jdeepScanBoolean)});
+    // Persist immediately: the UI keeps its own copy and some screens reload the config from
+    // disk (e.g. on emulation start/stop), which would drop a change left only in memory.
+    if (global_config) {
+        global_config->AndroidConfig::SaveAllValues();
     }
 }
 
@@ -336,6 +340,12 @@ void Java_org_citron_citron_1emu_utils_NativeConfig_addGameDir(JNIEnv* env, jobj
     std::string uriString = Common::Android::GetJString(env, juriString);
     AndroidSettings::values.game_dirs.push_back(
         AndroidSettings::GameDir{uriString, static_cast<bool>(jdeepScanBoolean)});
+
+    // Persist immediately: an added folder must not live only in memory until the next save
+    // (a config reload or process death would otherwise drop it).
+    if (global_config) {
+        global_config->AndroidConfig::SaveAllValues();
+    }
 }
 
 jobjectArray Java_org_citron_citron_1emu_utils_NativeConfig_getDisabledAddons(JNIEnv* env, jobject obj,
