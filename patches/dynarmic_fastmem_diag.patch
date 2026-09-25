@@ -1,13 +1,41 @@
+diff --git a/src/dynarmic/backend/arm64/a32_interface.cpp b/src/dynarmic/backend/arm64/a32_interface.cpp
+index d16a342..d87a19d 100644
+--- a/src/dynarmic/backend/arm64/a32_interface.cpp
++++ b/src/dynarmic/backend/arm64/a32_interface.cpp
+@@ -126,7 +126,7 @@ private:
+             ClearHalt(HaltReason::CacheInvalidation);
+ 
+             if (invalidate_entire_cache) {
+-                current_address_space.ClearCache();
++                current_address_space.ClearCache("invalidate-entire");
+ 
+                 invalidate_entire_cache = false;
+                 invalid_cache_ranges.clear();
+diff --git a/src/dynarmic/backend/arm64/a64_interface.cpp b/src/dynarmic/backend/arm64/a64_interface.cpp
+index b230f45..de7b3ee 100644
+--- a/src/dynarmic/backend/arm64/a64_interface.cpp
++++ b/src/dynarmic/backend/arm64/a64_interface.cpp
+@@ -150,7 +150,7 @@ private:
+             ClearHalt(HaltReason::CacheInvalidation);
+ 
+             if (invalidate_entire_cache) {
+-                current_address_space.ClearCache();
++                current_address_space.ClearCache("invalidate-entire");
+ 
+                 invalidate_entire_cache = false;
+                 invalid_cache_ranges.clear();
 diff --git a/src/dynarmic/backend/arm64/address_space.cpp b/src/dynarmic/backend/arm64/address_space.cpp
-index aa36119..7bd9b35 100644
+index aa36119..8240ff2 100644
 --- a/src/dynarmic/backend/arm64/address_space.cpp
 +++ b/src/dynarmic/backend/arm64/address_space.cpp
-@@ -7,6 +7,12 @@
+@@ -7,6 +7,14 @@
   */
  
  #include <cstdio>
 +#include <cstdint>
 +#include <string>
++
++#include <chrono>
 +
 +#ifdef __ANDROID__
 +#include <android/log.h>
@@ -15,7 +43,65 @@ index aa36119..7bd9b35 100644
  
  #include <bit>
  
-@@ -344,8 +350,38 @@ FakeCall AddressSpace::FastmemCallback(u64 host_pc) {
+@@ -24,6 +32,21 @@
+ 
+ namespace Dynarmic::Backend::Arm64 {
+ 
++namespace {
++u64 DiagNowMs() {
++    return static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(
++                                std::chrono::steady_clock::now().time_since_epoch())
++                                .count());
++}
++
++void DiagLog(const std::string& text) {
++#ifdef __ANDROID__
++    __android_log_print(ANDROID_LOG_ERROR, "citron-dynarmic", "%s", text.c_str());
++#endif
++    fmt::print(stderr, "%s", text.c_str());
++}
++}  // namespace
++
+ AddressSpace::AddressSpace(std::size_t code_cache_size)
+     : ir_block{IR::LocationDescriptor{0}}
+     , code_cache_size(code_cache_size)
+@@ -94,12 +117,25 @@ void AddressSpace::InvalidateBasicBlocks(const ankerl::unordered_dense::set<IR::
+     ProtectCodeMemory();
+ }
+ 
+-void AddressSpace::ClearCache() {
++void AddressSpace::ClearCache(const char* reason) {
++    // [DIAG] Record what was live before the clear; the fastmem fault path reports these
++    // counters, so a stale-code fault can be tied to a specific clear.
++    const auto offset_before = static_cast<std::size_t>(code.offset());
++    const auto blocks_before = block_entries.size();
++    const auto base = reinterpret_cast<std::uintptr_t>(mem.ptr());
++    diag_clear_count++;
++    diag_last_clear_ms = DiagNowMs();
++
+     block_entries.clear();
+     reverse_block_entries.clear();
+     block_infos.clear();
+     block_references.clear();
+     code.set_offset(prelude_info.end_of_prelude);
++
++    DiagLog(fmt::format("dynarmic-diag: ClearCache #{} reason={} base={:#x} offset_before={:#x} "
++                        "blocks_before={} free_before={}\n",
++                        diag_clear_count, reason, base, offset_before, blocks_before,
++                        code_cache_size - offset_before));
+ }
+ 
+ std::size_t AddressSpace::GetRemainingSize() {
+@@ -108,7 +144,7 @@ std::size_t AddressSpace::GetRemainingSize() {
+ 
+ EmittedBlockInfo AddressSpace::Emit(IR::Block block) {
+     if (GetRemainingSize() < 1024 * 1024) {
+-        ClearCache();
++        ClearCache("emit-near-full");
+     }
+ 
+     UnprotectCodeMemory();
+@@ -344,8 +380,46 @@ FakeCall AddressSpace::FastmemCallback(u64 host_pc) {
      }
  
  fail:
@@ -29,8 +115,10 @@ index aa36119..7bd9b35 100644
 +        const auto diag_entry = ReverseGetEntryPoint(diag_ptr);
 +        std::string diag_detail;
 +        if (!diag_entry) {
-+            diag_detail = fmt::format("no reverse-map entry for this pc ({} live block entries)",
-+                                      reverse_block_entries.size());
++            diag_detail = fmt::format("no reverse-map entry for this pc ({} reverse entries, "
++                                      "{} block entries, {} block infos)",
++                                      reverse_block_entries.size(), block_entries.size(),
++                                      block_infos.size());
 +        } else if (const auto diag_block = block_infos.find(diag_entry);
 +                   diag_block == block_infos.end()) {
 +            diag_detail = fmt::format("entry {:016x} not in block_infos ({} blocks, "
@@ -44,6 +132,12 @@ index aa36119..7bd9b35 100644
 +                            static_cast<std::size_t>(diag_ptr - diag_entry),
 +                            diag_block->second.fastmem_patch_info.size());
 +        }
++        const auto diag_cache_base = reinterpret_cast<std::uintptr_t>(mem.ptr());
++        const auto diag_now_ms = DiagNowMs();
++        diag_detail += fmt::format(
++            ", cache_base={:#x}, pc_offset={:#x}, free={}, clears={}, ms_since_clear={}",
++            diag_cache_base, host_pc - diag_cache_base, GetRemainingSize(), diag_clear_count,
++            diag_last_clear_ms ? (diag_now_ms - diag_last_clear_ms) : 0);
 +        const auto diag_text = fmt::format(
 +            "dynarmic: Segfault happened within JITted code at host_pc = {:016x}\n"
 +            "Segfault wasn't at a fastmem patch location! [{}]\n",
@@ -56,3 +150,20 @@ index aa36119..7bd9b35 100644
      UNREACHABLE();
  }
  
+diff --git a/src/dynarmic/backend/arm64/address_space.h b/src/dynarmic/backend/arm64/address_space.h
+index 91ae830..b30dd4f 100644
+--- a/src/dynarmic/backend/arm64/address_space.h
++++ b/src/dynarmic/backend/arm64/address_space.h
+@@ -43,7 +43,11 @@ public:
+ 
+     void InvalidateBasicBlocks(const ankerl::unordered_dense::set<IR::LocationDescriptor>& descriptors);
+ 
+-    void ClearCache();
++    void ClearCache(const char* reason);
++
++    // [DIAG] Cache-clear bookkeeping for the fastmem fault investigation.
++    u64 diag_clear_count = 0;
++    u64 diag_last_clear_ms = 0;
+ protected:
+     virtual EmitConfig GetEmitConfig() = 0;
+     virtual void RegisterNewBasicBlock(const IR::Block& block, const EmittedBlockInfo& block_info) = 0;
