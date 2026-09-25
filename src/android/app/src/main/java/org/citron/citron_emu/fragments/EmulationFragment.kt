@@ -1027,7 +1027,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
     private fun stopEmulation() {
         lifecycleScope.launch {
-            val result = AmiiboFileSession.remove(requireContext())
+            // File removal and the config reload both touch the emulation session and the file
+            // system; keeping them off the main thread means a slow guest-process teardown can
+            // no longer stall input dispatch into an ANR.
+            val result = withContext(Dispatchers.IO) { AmiiboFileSession.remove(requireContext()) }
             if (result == AmiiboFileSession.Result.UnableToWrite) {
                 Toast.makeText(
                     requireContext(),
@@ -1036,7 +1039,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 ).show()
             }
             emulationState.stop()
-            NativeConfig.reloadGlobalConfig()
+            withContext(Dispatchers.IO) { NativeConfig.reloadGlobalConfig() }
             emulationViewModel.setIsEmulationStopping(true)
         }
     }
