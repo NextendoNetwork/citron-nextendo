@@ -144,6 +144,9 @@ void NPad::ControllerUpdate(Core::HID::ControllerTriggerType type, std::size_t c
         }
 
         auto& controller = controller_data[aruid_index][controller_idx];
+        if (controller.device == nullptr) {
+            continue;
+        }
         const auto is_connected = controller.device->IsConnected();
         const auto npad_type = controller.device->GetNpadStyleIndex();
         const auto npad_id = controller.device->GetNpadIdType();
@@ -160,6 +163,9 @@ void NPad::ControllerUpdate(Core::HID::ControllerTriggerType type, std::size_t c
                 return;
             }
             auto* shared_memory = controller.shared_memory;
+            if (shared_memory == nullptr) {
+                return;
+            }
             const auto& battery_level = controller.device->GetBattery();
             shared_memory->battery_level_dual = battery_level.dual.battery_level;
             shared_memory->battery_level_left = battery_level.left.battery_level;
