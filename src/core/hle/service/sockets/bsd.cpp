@@ -904,20 +904,6 @@ void BSD::Shutdown(HLERequestContext& ctx) {
 
     LOG_DEBUG(Service, "called. fd={} how={}", fd, how);
 
-    // [Nextendo][DIAG] Real guest call stack at the exact moment Shutdown() is called, for the
-    // socket that had its first ClientHello sent (sni_injected) -- to see which guest code
-    // actually makes this decision, directly, instead of inferring it from timing/absence of
-    // other activity.
-    if (IsFileDescriptorValid(fd) && file_descriptors[fd]->sni_injected) {
-        const auto backtrace = Core::GetBacktrace(&ctx.GetThread());
-        std::string trace_str;
-        for (const auto& entry : backtrace) {
-            trace_str += fmt::format("\n    {}+0x{:x} ({})", entry.module, entry.offset, entry.name);
-        }
-        LOG_INFO(Service, "[Nextendo][DIAG] Shutdown fd={} how={} guest backtrace:{}", fd, how,
-                 trace_str);
-    }
-
     BuildErrnoResponse(ctx, ShutdownImpl(fd, how));
 }
 
@@ -1390,19 +1376,6 @@ std::pair<s32, Errno> BSD::PollImpl(std::vector<u8>& write_buffer, std::span<con
             }
         }
         fds[i].revents = Translate(host_pollfds[j].revents);
-    }
-
-    for (size_t i = 0; i < fds.size(); ++i) {
-        if (fds[i].fd < 0 || fds[i].fd > static_cast<s32>(MAX_FD)) {
-            continue;
-        }
-        const auto& d = file_descriptors[fds[i].fd];
-        if (d && d->sni_injected) {
-            LOG_INFO(Service,
-                     "[Nextendo][DIAG] Poll fd={} requested_events={:#x} revents={:#x} timeout={}",
-                     fds[i].fd, static_cast<u16>(fds[i].events), static_cast<u16>(fds[i].revents),
-                     timeout);
-        }
     }
 
     s32 real_count = 0;
