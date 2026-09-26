@@ -113,6 +113,8 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
     static constexpr s64 DEFAULT_EXPECTED_MEMORY = 1_GiB + 125_MiB;
     static constexpr s64 DEFAULT_CRITICAL_MEMORY = 1_GiB + 625_MiB;
     static constexpr size_t LARGE_TEXTURE_THRESHOLD = 16_MiB;
+    static constexpr u32 IMAGE_COUNT_SOFT_LIMIT = 4096;
+    static constexpr size_t GC_MAX_INSPECTED = 4096;
 
     using Runtime = typename P::Runtime;
     using Image = typename P::Image;
@@ -401,7 +403,13 @@ public:
     void UntrackImage(ImageBase& image, ImageId image_id);
 
     /// Delete image from the cache
-    void DeleteImage(ImageId image, bool immediate_delete = false);
+    void DeleteImage(ImageId image, bool immediate_delete = false,
+                     std::vector<ImageViewId>* deferred_view_refs = nullptr);
+
+    /// Completes a batch of DeleteImage calls made with deferred_view_refs
+    void FinishDeferredDeletes(std::span<const ImageViewId> removed_views);
+
+    void InvalidateImageTables();
 
     /// Remove image views references from the cache
     void RemoveImageViewReferences(std::span<const ImageViewId> removed_views);
@@ -516,6 +524,7 @@ public:
 
     u64 modification_tick = 0;
     u64 frame_tick = 0;
+    bool gc_stale_only = false;
 
     Common::ThreadWorker texture_decode_worker{1, "TextureDecoder"};
     std::vector<std::unique_ptr<AsyncDecodeContext>> async_decodes;

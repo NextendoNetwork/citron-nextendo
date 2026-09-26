@@ -7,7 +7,7 @@ namespace Tegra {
 
 namespace Host1x {
 
-SyncpointManager::ActionHandle SyncpointManager::RegisterAction(std::atomic<u32>& syncpoint, std::vector<RegisteredAction>& action_storage, u32 expected_value, std::function<void()>&& action) {
+SyncpointManager::ActionHandle SyncpointManager::RegisterAction(std::atomic<u32>& syncpoint, std::list<RegisteredAction>& action_storage, u32 expected_value, std::function<void()>&& action) {
     if (syncpoint.load(std::memory_order_acquire) >= expected_value) {
         action();
         return {};
@@ -28,7 +28,7 @@ SyncpointManager::ActionHandle SyncpointManager::RegisterAction(std::atomic<u32>
     return action_storage.emplace(it, expected_value, std::move(action));
 }
 
-void SyncpointManager::DeregisterAction(std::vector<RegisteredAction>& action_storage, const ActionHandle& handle) {
+void SyncpointManager::DeregisterAction(std::list<RegisteredAction>& action_storage, const ActionHandle& handle) {
     std::unique_lock lk(guard);
 
     // We want to ensure the iterator still exists prior to erasing it
@@ -72,7 +72,7 @@ bool SyncpointManager::WaitHost(u32 syncpoint_id, u32 expected_value,
     return Wait(syncpoints_host[syncpoint_id], wait_host_cv, expected_value, timeout);
 }
 
-void SyncpointManager::Increment(std::atomic<u32>& syncpoint, std::condition_variable& wait_cv, std::vector<RegisteredAction>& action_storage) {
+void SyncpointManager::Increment(std::atomic<u32>& syncpoint, std::condition_variable& wait_cv, std::list<RegisteredAction>& action_storage) {
     auto new_value{syncpoint.fetch_add(1, std::memory_order_acq_rel) + 1};
 
     std::unique_lock lk(guard);

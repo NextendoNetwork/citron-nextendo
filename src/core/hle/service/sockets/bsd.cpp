@@ -1110,8 +1110,10 @@ void BSD::DuplicateSocket(HLERequestContext& ctx) {
 
 void BSD::EventFd(HLERequestContext& ctx) {
     IPC::RequestParser rp{ctx};
-    const u64 initval = rp.Pop<u64>();
+    // nnSdk packs flags first, then padding, then the u64 initval.
     const u32 flags = rp.Pop<u32>();
+    rp.Skip(1, false);
+    const u64 initval = rp.Pop<u64>();
 
     LOG_DEBUG(Service, "called. initval={} flags={}", initval, flags);
 
@@ -1168,6 +1170,11 @@ void BSD::EventFd(HLERequestContext& ctx) {
     descriptor.is_connection_based = true; // enables Write()/Send() without an explicit dest
     descriptor.connected = true;
     descriptor.is_eventfd = true;
+    // EFD_NONBLOCK: gRPC's wakeup fd relies on an empty read returning EAGAIN.
+    if ((flags & 0x4) != 0) {
+        descriptor.flags |= Network::FLAG_O_NONBLOCK;
+        descriptor.socket->SetNonBlock(true);
+    }
 
     if (initval > 0) {
         const u64 seed = initval;
@@ -1390,19 +1397,6 @@ std::pair<s32, Errno> BSD::PollImpl(std::vector<u8>& write_buffer, std::span<con
             }
         }
         fds[i].revents = Translate(host_pollfds[j].revents);
-    }
-
-    for (size_t i = 0; i < fds.size(); ++i) {
-        if (fds[i].fd < 0 || fds[i].fd > static_cast<s32>(MAX_FD)) {
-            continue;
-        }
-        const auto& d = file_descriptors[fds[i].fd];
-        if (d && d->sni_injected) {
-            LOG_INFO(Service,
-                     "[Nextendo][DIAG] Poll fd={} requested_events={:#x} revents={:#x} timeout={}",
-                     fds[i].fd, static_cast<u16>(fds[i].events), static_cast<u16>(fds[i].revents),
-                     timeout);
-        }
     }
 
     s32 real_count = 0;
@@ -2049,11 +2043,6 @@ std::pair<s32, Errno> BSD::RecvImpl(s32 fd, u32 flags, std::vector<u8>& message)
 
     auto [ret, bsd_errno] = Translate(descriptor.socket->Recv(flags, message));
 
-    if (descriptor.sni_injected) {
-        LOG_INFO(Service, "[Nextendo][DIAG] Recv fd={} requested={} ret={} errno={}", fd,
-                 message.size(), ret, static_cast<int>(bsd_errno));
-    }
-
     // [Nextendo] awaiting_reply is meant as a one-shot grace period for the *next* would-block
     // recv() right after a send -- but it was only ever consumed in the AGAIN branch below. If
     // that next recv() instead succeeds immediately (the common case: a whole TLS flight already
@@ -2265,11 +2254,6 @@ std::pair<s32, Errno> BSD::SendImpl(s32 fd, u32 flags, std::span<const u8> messa
     }
     if (err == Network::Errno::SUCCESS && descriptor.sni_injected) {
         descriptor.awaiting_reply = true;
-    }
-    if (descriptor.sni_injected) {
-        LOG_INFO(Service, "[Nextendo][DIAG] Send fd={} len={} sent={} errno={} first_byte=0x{:02x}",
-                 fd, send_buf.size(), sent_bytes, static_cast<int>(Translate(err)),
-                 send_buf.empty() ? 0 : send_buf[0]);
     }
     if (err == Network::Errno::SUCCESS && descriptor.is_eventfd) {
         // [Nextendo] Wake any Poll() this game deferred waiting on this eventfd. See
@@ -2738,46 +2722,6 @@ struct MMsgEntry {
     u32 length = 0;
 };
 
-// [Nextendo] Diagnostic only -- logs the TLS record type/length (and handshake message type,
-// if applicable) of a SendMMsg/RecvMMsg payload, matching Ryujinx-Nextendo's own
-// "[DIAG] Bsd.SendMMsg TLS hs=0x.. len=.." logging (ManagedSocket.cs), generalized to cover
-// every record type (Ryujinx's only fires for content-type Handshake) so a final small
-// ApplicationData or Alert record right before a connection close is visible too. The TLS
-// record header (type, version, length) is always plaintext even once the session is
-// encrypted -- only the payload itself is opaque -- so this costs nothing and reveals real
-// protocol state without decrypting anything.
-void LogTlsRecordDiag(const char* what, std::span<const u8> data) {
-    if (data.size() < 5) {
-        return;
-    }
-    const u8 content_type = data[0];
-    if (content_type < 0x14 || content_type > 0x17) {
-        return; // not a TLS record (or content_type is genuinely opaque post-handshake noise)
-    }
-    const u16 record_len = static_cast<u16>((data[3] << 8) | data[4]);
-    const char* type_name = [content_type] {
-        switch (content_type) {
-        case 0x14:
-            return "ChangeCipherSpec";
-        case 0x15:
-            return "Alert";
-        case 0x16:
-            return "Handshake";
-        case 0x17:
-            return "ApplicationData";
-        default:
-            return "?";
-        }
-    }();
-    if (content_type == 0x16 && data.size() > 5) {
-        LOG_INFO(Service, "[Nextendo][DIAG] {} TLS type={}(0x{:02x}) hs=0x{:02x} record_len={} buf_len={}",
-                 what, type_name, content_type, data[5], record_len, data.size());
-    } else {
-        LOG_INFO(Service, "[Nextendo][DIAG] {} TLS type={}(0x{:02x}) record_len={} buf_len={}", what,
-                 type_name, content_type, record_len, data.size());
-    }
-}
-
 bool MMsgReadU32(std::span<const u8>& data, u32& out) {
     if (data.size() < sizeof(u32)) {
         return false;
@@ -2949,7 +2893,6 @@ void BSD::SendMMsg(HLERequestContext& ctx) {
             concatenated.insert(concatenated.end(), segment.begin(), segment.end());
         }
 
-        LogTlsRecordDiag("SendMMsg", concatenated);
         if (Kernel::Svc::IsNextendoDeadlineWatchActive()) {
             const auto* cur = Kernel::GetCurrentThreadPointer(system.Kernel());
             LOG_INFO(Service, "[Nextendo][SCHED-WATCH] SendMMsg on thread id={} prio={}",
@@ -3042,14 +2985,11 @@ void BSD::RecvMMsg(HLERequestContext& ctx) {
         }
         auto [ret, recv_errno] = RecvImpl(fd, flags | msg.flags, received);
         if (recv_errno != Errno::SUCCESS) {
-            LOG_INFO(Service, "RecvMMsg fd={} capacity={}: recv_errno={}", fd, capacity,
-                     static_cast<int>(recv_errno));
             last_errno = recv_errno;
             break;
         }
 
         const size_t actual = ret < 0 ? 0 : static_cast<size_t>(ret);
-        LogTlsRecordDiag("RecvMMsg", std::span<const u8>(received).first(actual));
         // Distribute the received bytes back across this message's iovs in the same order
         // they were laid out on the way in.
         size_t offset = 0;

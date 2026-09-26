@@ -146,19 +146,31 @@ Common::UUID UidForPid(u64 pid) {
     return Common::UUID{raw};
 }
 
-// Mirrors FriendImpl's proven-working layout (UUID + pid + 0x21-byte nickname) rather than
-// acc::ProfileBase (UUID + timestamp), which is an unrelated local-account struct this was
-// wrongly modeled on -- GetProfileList resolved real data (confirmed live) but still rendered
-// garbage in-game, meaning the wire layout, not the data, was wrong.
 #pragma pack(push, 1)
+// Offsets as nnSdk's Profile accessors read them.
 struct ProfileImpl {
-    Common::UUID user_uuid;          // 0x00
-    u64 network_user_id;             // 0x10
-    std::array<char, 0x21> nickname; // 0x18
-    std::array<u8, 7> padding;       // 0x39, aligns to 0x40
+    u64 network_user_id;              // 0x00
+    std::array<char, 0x21> nickname;  // 0x08
+    std::array<u8, 7> nickname_pad;   // 0x29
+    std::array<char, 0xA0> image_url; // 0x30
+    u8 is_valid;                      // 0xD0
+    std::array<u8, 0x2F> reserved;    // 0xD1
 };
-static_assert(sizeof(ProfileImpl) == 0x40, "ProfileImpl has the wrong size");
+static_assert(sizeof(ProfileImpl) == 0x100, "ProfileImpl has the wrong size");
+static_assert(offsetof(ProfileImpl, nickname) == 0x08);
+static_assert(offsetof(ProfileImpl, image_url) == 0x30);
+static_assert(offsetof(ProfileImpl, is_valid) == 0xD0);
 #pragma pack(pop)
+
+// Titles may ask by Nextendo pid or by BAAS account id.
+bool FriendMatchesId(const Common::NextendoFriends::Entry& entry, u64 id) {
+    return entry.pid == id || (entry.account_id != 0 && entry.account_id == id);
+}
+
+// List a friend under the id their own client announces: account id on hardware, pid on emulators.
+u64 FriendAdvertisedId(const Common::NextendoFriends::Entry& entry) {
+    return entry.is_console && entry.account_id != 0 ? entry.account_id : entry.pid;
+}
 
 // [Nextendo] Resolves a pid to a display name for GetProfileList/GetProfileExtraList: the local
 // account itself (via NextendoAccount, not covered by the friends cache) or an actual Nextendo
@@ -172,7 +184,7 @@ bool ResolveProfileName(u64 pid, std::string& out_name) {
     }
     const auto entries = Common::NextendoFriends::Get();
     const auto it = std::find_if(entries.begin(), entries.end(),
-                                  [pid](const auto& e) { return e.pid == pid; });
+                                  [pid](const auto& e) { return FriendMatchesId(e, pid); });
     if (it != entries.end()) {
         out_name = it->name;
         return true;
@@ -186,27 +198,46 @@ std::optional<ProfileImpl> MakeProfile(u64 pid) {
         return std::nullopt;
     }
     ProfileImpl out{};
-    out.user_uuid = UidForPid(pid);
     out.network_user_id = pid;
     const auto length = std::min(name.size(), out.nickname.size() - 1);
     std::memcpy(out.nickname.data(), name.data(), length);
+
+    // Same avatar URL a console is given for this friend; a title rendering the profile fetches it.
+    u64 account_id = 0;
+    const auto entries = Common::NextendoFriends::Get();
+    if (const auto it = std::find_if(entries.begin(), entries.end(),
+                                     [pid](const auto& e) { return FriendMatchesId(e, pid); });
+        it != entries.end()) {
+        account_id = it->account_id;
+    }
+    const std::string url =
+        account_id != 0
+            ? fmt::format("https://cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com/1/fr_{:016x}",
+                          account_id)
+            : std::string{"https://cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com/1/default"};
+    std::memcpy(out.image_url.data(), url.data(), std::min(url.size(), out.image_url.size() - 1));
+
+    out.is_valid = 1;
     return out;
 }
 
-FriendImpl MakeFriend(const Common::NextendoFriends::Entry& entry) {
+// Records carry the id the caller asked about, or the title cannot pair them with its query.
+FriendImpl MakeFriend(const Common::NextendoFriends::Entry& entry, u64 requested_id = 0,
+                       const Common::UUID* owner = nullptr) {
     FriendImpl out{};
-    out.user_id = UidForPid(entry.pid);
-    out.network_user_id = entry.pid;
+    const u64 advertised = requested_id != 0 ? requested_id : FriendAdvertisedId(entry);
+    // nnSdk's Friend::GetProfileImage checks this Uid is a local user before it asks the service.
+    out.user_id = owner != nullptr ? *owner : UidForPid(advertised);
+    out.network_user_id = advertised;
 
     const auto length = std::min(entry.name.size(), out.nickname.size() - 1);
     std::memcpy(out.nickname.data(), entry.name.data(), length);
 
-    out.presence.user_id = out.user_id;
+    out.presence.user_id = UidForPid(advertised);
     out.presence.status = static_cast<u32>(entry.status);
     out.presence.last_time_online_timestamp = 0x7FFFFFFFFFFFFFFFLL;
-    // Marks the friend as being in THIS application, without which the game asks for zero friend
-    // PIDs and never queries their session.
-    out.presence.same_presence_group_application = 1;
+    // In this application only while online; an offline in-app friend has no session to find.
+    out.presence.same_presence_group_application = entry.status > 0 ? 1 : 0;
 
     const auto blob = std::min(entry.app_field.size(), out.presence.app_key_value.size());
     std::memcpy(out.presence.app_key_value.data(), entry.app_field.data(), blob);
@@ -383,7 +414,7 @@ public:
                 if (ids.size() >= capacity) {
                     break;
                 }
-                ids.push_back(entry.pid);
+                ids.push_back(FriendAdvertisedId(entry));
             }
             if (!ids.empty()) {
                 ctx.WriteBuffer(ids);
@@ -905,11 +936,17 @@ void IFriendService::UpdateFriendInfo(HLERequestContext& ctx) {
     const auto out_count = std::min(requested_ids.size(), capacity);
 
     std::vector<FriendImpl> info(out_count);
+    std::size_t resolved_count = 0;
     for (std::size_t i = 0; i < out_count; ++i) {
         const auto wanted = requested_ids[i];
         const auto it = std::find_if(entries.begin(), entries.end(),
-                                     [wanted](const auto& e) { return e.pid == wanted; });
-        info[i] = it != entries.end() ? MakeFriend(*it) : FriendImpl{};
+                                     [wanted](const auto& e) { return FriendMatchesId(e, wanted); });
+        info[i] = it != entries.end() ? MakeFriend(*it, wanted, &uuid) : FriendImpl{};
+        if (it != entries.end()) {
+            ++resolved_count;
+        } else {
+            LOG_WARNING(Service_Friend, "UpdateFriendInfo unknown account id={:016X}", wanted);
+        }
     }
 
     if (!info.empty()) {
@@ -917,7 +954,7 @@ void IFriendService::UpdateFriendInfo(HLERequestContext& ctx) {
     }
 
     LOG_INFO(Service_Friend, "[Nextendo] UpdateFriendInfo uuid=0x{} requested={} -> {} resolved",
-             uuid.RawString(), requested_ids.size(), out_count);
+             uuid.RawString(), requested_ids.size(), resolved_count);
     IPC::ResponseBuilder rb{ctx, 2};
     rb.Push(ResultSuccess);
 }
@@ -935,6 +972,51 @@ u64 PidForUid(const Common::UUID& uid) {
 
 } // namespace
 
+// Plain 256x256 grey icon, the size hardware friend icons are served at.
+constexpr std::array<u8, 667> DefaultFriendIcon{
+    0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
+    0x00, 0x01, 0x00, 0x00, 0xFF, 0xDB, 0x00, 0x43, 0x00, 0x05, 0x03, 0x04, 0x04, 0x04, 0x03, 0x05,
+    0x04, 0x04, 0x04, 0x05, 0x05, 0x05, 0x06, 0x07, 0x0C, 0x08, 0x07, 0x07, 0x07, 0x07, 0x0F, 0x0B,
+    0x0B, 0x09, 0x0C, 0x11, 0x0F, 0x12, 0x12, 0x11, 0x0F, 0x11, 0x11, 0x13, 0x16, 0x1C, 0x17, 0x13,
+    0x14, 0x1A, 0x15, 0x11, 0x11, 0x18, 0x21, 0x18, 0x1A, 0x1D, 0x1D, 0x1F, 0x1F, 0x1F, 0x13, 0x17,
+    0x22, 0x24, 0x22, 0x1E, 0x24, 0x1C, 0x1E, 0x1F, 0x1E, 0xFF, 0xDB, 0x00, 0x43, 0x01, 0x05, 0x05,
+    0x05, 0x07, 0x06, 0x07, 0x0E, 0x08, 0x08, 0x0E, 0x1E, 0x14, 0x11, 0x14, 0x1E, 0x1E, 0x1E, 0x1E,
+    0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E,
+    0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E,
+    0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0xFF, 0xC0,
+    0x00, 0x11, 0x08, 0x01, 0x00, 0x01, 0x00, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11,
+    0x01, 0xFF, 0xC4, 0x00, 0x15, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0xFF, 0xC4, 0x00, 0x14, 0x10, 0x01, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xC4,
+    0x00, 0x14, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xFF, 0xC4, 0x00, 0x14, 0x11, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xDA, 0x00, 0x0C, 0x03, 0x01,
+    0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3F, 0x00, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xFF, 0xD9};
+
 void IFriendService::GetFriendProfileImage(HLERequestContext& ctx) {
     // [Nextendo] Was a hardcoded zero-size stub, so every friend tile fell back to the "?"
     // placeholder icon regardless of whether the account server actually had a picture for them.
@@ -942,16 +1024,22 @@ void IFriendService::GetFriendProfileImage(HLERequestContext& ctx) {
     // this just has to find the right entry and hand them back.
     IPC::RequestParser rp{ctx};
     const auto uuid = rp.PopRaw<Common::UUID>();
-    const auto pid = PidForUid(uuid);
+    // nnSdk sends the local owner's Uid, then the friend's account id.
+    const u64 account_id = rp.Pop<u64>();
+    const auto pid = account_id != 0 ? account_id : PidForUid(uuid);
 
     const auto entries = Common::NextendoFriends::Get();
     const auto it = std::find_if(entries.begin(), entries.end(),
-                                 [pid](const auto& e) { return e.pid == pid; });
+                                 [pid](const auto& e) { return FriendMatchesId(e, pid); });
 
+    // Hardware always answers with an icon (the default one if none is set); Classics aborts on 0.
     u32 size = 0;
     if (it != entries.end() && !it->image.empty()) {
         ctx.WriteBuffer(it->image);
         size = static_cast<u32>(it->image.size());
+    } else {
+        ctx.WriteBuffer(DefaultFriendIcon);
+        size = static_cast<u32>(DefaultFriendIcon.size());
     }
 
     LOG_INFO(Service_Friend, "[Nextendo] GetFriendProfileImage uuid=0x{} -> {} bytes",
@@ -967,16 +1055,22 @@ void IFriendService::GetFriendProfileImageWithImageSize(HLERequestContext& ctx) 
     // resolution anyway, so it's not worth threading through a second image variant for.
     IPC::RequestParser rp{ctx};
     const auto uuid = rp.PopRaw<Common::UUID>();
-    const auto pid = PidForUid(uuid);
+    // nnSdk sends the local owner's Uid, then the friend's account id.
+    const u64 account_id = rp.Pop<u64>();
+    const auto pid = account_id != 0 ? account_id : PidForUid(uuid);
 
     const auto entries = Common::NextendoFriends::Get();
     const auto it = std::find_if(entries.begin(), entries.end(),
-                                 [pid](const auto& e) { return e.pid == pid; });
+                                 [pid](const auto& e) { return FriendMatchesId(e, pid); });
 
+    // Hardware always answers with an icon (the default one if none is set); Classics aborts on 0.
     u32 size = 0;
     if (it != entries.end() && !it->image.empty()) {
         ctx.WriteBuffer(it->image);
         size = static_cast<u32>(it->image.size());
+    } else {
+        ctx.WriteBuffer(DefaultFriendIcon);
+        size = static_cast<u32>(DefaultFriendIcon.size());
     }
 
     LOG_INFO(Service_Friend, "[Nextendo] GetFriendProfileImageWithImageSize uuid=0x{} -> {} bytes",
@@ -1028,12 +1122,17 @@ void RespondProfileList(HLERequestContext& ctx, const char* name) {
 
     const auto capacity = std::min(ctx.GetWriteBufferNumElements<ProfileImpl>(), MaxRequestedIds);
     std::vector<ProfileImpl> profiles;
+    std::size_t resolved = 0;
     for (const auto pid : requested_ids) {
         if (profiles.size() >= capacity) {
             break;
         }
         if (const auto profile = MakeProfile(pid)) {
             profiles.push_back(*profile);
+            ++resolved;
+        } else {
+            profiles.push_back(ProfileImpl{});
+            LOG_WARNING(Service_Friend, "{} unknown account id={:016X}", name, pid);
         }
     }
 
@@ -1042,10 +1141,10 @@ void RespondProfileList(HLERequestContext& ctx, const char* name) {
     }
 
     LOG_INFO(Service_Friend, "[Nextendo] {} requested={} -> {} resolved", name,
-             requested_ids.size(), profiles.size());
+             requested_ids.size(), resolved);
     IPC::ResponseBuilder rb{ctx, 3};
     rb.Push(ResultSuccess);
-    rb.Push<u32>(static_cast<u32>(profiles.size()));
+    rb.Push<u32>(static_cast<u32>(resolved));
 }
 } // Anonymous namespace
 
@@ -1086,20 +1185,24 @@ struct UserSettingPayload { unsigned char data[16]; };
 struct FacedFriendRequestRegistrationKeyPayload { unsigned char data[16]; };
 struct FriendCodePayload { char code[15]; }; // Size 15 for 14 chars + null terminator
 
-void IFriendService::GetProfileImageUrl(HLERequestContext& ctx) {
-    LOG_WARNING(Service_Friend, "(STUBBED) GetProfileImageUrl called");
-    IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+namespace {
+// nnSdk sends the base image URL (0xA0 bytes) and an ImageSize; one resolution is served, so echo it.
+void RespondProfileImageUrl(HLERequestContext& ctx) {
+    using Url = std::array<char, 0xA0>;
+    IPC::RequestParser rp{ctx};
+    const auto url = rp.PopRaw<Url>();
+    IPC::ResponseBuilder rb{ctx, 2 + sizeof(Url) / sizeof(u32)};
     rb.Push(ResultSuccess);
-    UrlPayload dummy_url_payload{{0}};
-    rb.PushRaw(dummy_url_payload);
+    rb.PushRaw(url);
+}
+} // Anonymous namespace
+
+void IFriendService::GetProfileImageUrl(HLERequestContext& ctx) {
+    RespondProfileImageUrl(ctx);
 }
 
 void IFriendService::GetProfileImageUrlV2(HLERequestContext& ctx) {
-    LOG_WARNING(Service_Friend, "(STUBBED) GetProfileImageUrlV2 called");
-    IPC::ResponseBuilder rb{ctx, 2, 0, 1};
-    rb.Push(ResultSuccess);
-    UrlPayload dummy_url_payload{{0}};
-    rb.PushRaw(dummy_url_payload);
+    RespondProfileImageUrl(ctx);
 }
 
 void IFriendService::GetFriendDetailedInfo(HLERequestContext& ctx) {
@@ -1124,8 +1227,8 @@ void IFriendService::GetFriendDetailedInfo(HLERequestContext& ctx) {
     for (std::size_t i = 0; i < out_count; ++i) {
         const auto wanted = requested_ids[i];
         const auto it = std::find_if(entries.begin(), entries.end(),
-                                     [wanted](const auto& e) { return e.pid == wanted; });
-        info[i] = it != entries.end() ? MakeFriend(*it) : FriendImpl{};
+                                     [wanted](const auto& e) { return FriendMatchesId(e, wanted); });
+        info[i] = it != entries.end() ? MakeFriend(*it, wanted) : FriendImpl{};
     }
 
     if (!info.empty()) {
@@ -1172,7 +1275,7 @@ void IFriendService::GetFriendListForViewer(HLERequestContext& ctx) {
             if (ids.size() >= capacity) {
                 break;
             }
-            ids.push_back(entry.pid);
+            ids.push_back(FriendAdvertisedId(entry));
         }
         if (!ids.empty()) {
             ctx.WriteBuffer(ids);
@@ -1225,7 +1328,7 @@ void IFriendService::UpdateFriendInfoForViewer(HLERequestContext& ctx) {
     for (std::size_t i = 0; i < out_count; ++i) {
         const auto wanted = requested_ids[i];
         const auto it = std::find_if(entries.begin(), entries.end(),
-                                     [wanted](const auto& e) { return e.pid == wanted; });
+                                     [wanted](const auto& e) { return FriendMatchesId(e, wanted); });
         if (it != entries.end()) {
             info[i] = MakeFriend(*it);
             ++matched_count;
@@ -1283,8 +1386,8 @@ void IFriendService::GetFriendDetailedInfoV2(HLERequestContext& ctx) {
     for (std::size_t i = 0; i < out_count; ++i) {
         const auto wanted = requested_ids[i];
         const auto it = std::find_if(entries.begin(), entries.end(),
-                                     [wanted](const auto& e) { return e.pid == wanted; });
-        info[i] = it != entries.end() ? MakeFriend(*it) : FriendImpl{};
+                                     [wanted](const auto& e) { return FriendMatchesId(e, wanted); });
+        info[i] = it != entries.end() ? MakeFriend(*it, wanted) : FriendImpl{};
     }
 
     if (!info.empty()) {

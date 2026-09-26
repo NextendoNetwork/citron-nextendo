@@ -194,6 +194,11 @@ bool BufferCache<P>::DMACopy(GPUVAddr src_address, GPUVAddr dest_address, u64 am
     if (!cpu_src_address || !cpu_dest_address) {
         return false;
     }
+    // Only the start is translated below; a split range must take the page-table-aware path.
+    if (!gpu_memory->IsContinuousRange(src_address, amount) ||
+        !gpu_memory->IsContinuousRange(dest_address, amount)) {
+        return false;
+    }
     const bool source_dirty = IsRegionRegistered(*cpu_src_address, amount);
     const bool dest_dirty = IsRegionRegistered(*cpu_dest_address, amount);
     if (!source_dirty && !dest_dirty) {
@@ -260,6 +265,9 @@ bool BufferCache<P>::DMAClear(GPUVAddr dst_address, u64 amount, u32 value) {
     }
 
     const size_t size = amount * sizeof(u32);
+    if (!gpu_memory->IsContinuousRange(dst_address, size)) {
+        return false;
+    }
     ClearDownload(*cpu_dst_address, size);
     gpu_modified_ranges.Subtract(*cpu_dst_address, size);
 

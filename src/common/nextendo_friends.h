@@ -18,6 +18,8 @@ struct Entry {
     s32 status = 0;        // 0 offline, 1 online, 2 in a game
     std::string app_field; // opaque per-title presence blob, raw bytes (already base64-decoded)
     std::vector<u8> image; // profile picture, raw JPEG bytes (already base64-decoded); empty if none
+    u64 account_id = 0;       // BAAS account id; 0 if the server omits it
+    bool is_console = false;  // consoles advertise by account id, emulators by pid
 };
 
 void Set(std::vector<Entry> entries);

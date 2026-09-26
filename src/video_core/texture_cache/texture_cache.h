@@ -81,23 +81,37 @@ void TextureCache<P>::RunGarbageCollector() {
     bool aggressive_mode = false;
     u64 ticks_to_destroy = 0;
     size_t num_iterations = 0;
+    size_t num_inspected = 0;
 
     const auto Configure = [&](bool allow_aggressive) {
+        num_inspected = 0;
         high_priority_mode = total_used_memory >= expected_memory;
         aggressive_mode = allow_aggressive && total_used_memory >= critical_memory;
         ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
         num_iterations = aggressive_mode ? 40 : (high_priority_mode ? 20 : 10);
+        // Many small images never reach the memory thresholds, so bound the count too.
+        if (gc_stale_only) {
+            num_iterations = (std::min<size_t>)(texture_count - IMAGE_COUNT_SOFT_LIMIT + 10, 256);
+        }
     };
 
-    const auto Cleanup = [this, &num_iterations, &high_priority_mode,
-                          &aggressive_mode](ImageId image_id) {
-        if (num_iterations == 0) {
+    std::vector<ImageViewId> removed_views;
+    bool deleted_any = false;
+    const auto Cleanup = [this, &num_iterations, &num_inspected, &high_priority_mode,
+                          &aggressive_mode, &removed_views, &deleted_any](ImageId image_id) {
+        // Only deletions spend the budget, so protected old images cannot starve the rest.
+        if (num_iterations == 0 || num_inspected++ >= GC_MAX_INSPECTED) {
             return true;
         }
-        --num_iterations;
         auto& image = slot_images[image_id];
 
         if (True(image.flags & ImageFlagBits::IsDecoding)) {
+            return false;
+        }
+
+        // Without memory pressure, only drop images whose guest memory was rewritten.
+        if (gc_stale_only && (False(image.flags & ImageFlagBits::CpuModified) ||
+                              True(image.flags & ImageFlagBits::GpuModified))) {
             return false;
         }
 
@@ -121,11 +135,13 @@ void TextureCache<P>::RunGarbageCollector() {
                          swizzle_data_buffer);
         }
 
+        --num_iterations;
         if (True(image.flags & ImageFlagBits::Tracked)) {
             UntrackImage(image, image_id);
         }
         UnregisterImage(image_id);
-        DeleteImage(image_id, image.scale_tick > frame_tick + 5);
+        DeleteImage(image_id, image.scale_tick > frame_tick + 5, &removed_views);
+        deleted_any = true;
         if (aggressive_mode && total_used_memory < critical_memory) {
             num_iterations >>= 2;
             aggressive_mode = false;
@@ -142,13 +158,18 @@ void TextureCache<P>::RunGarbageCollector() {
         Configure(true);
         lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
     }
+    if (deleted_any) {
+        FinishDeferredDeletes(removed_views);
+    }
 }
 
 template <class P>
 void TextureCache<P>::TickFrame() {
     const u64 gc_memory_usage =
         runtime.CanReportMemoryUsage() ? runtime.GetDeviceMemoryUsage() : total_used_memory;
-    if (gc_memory_usage > minimum_memory) {
+    const bool memory_pressure = gc_memory_usage > minimum_memory;
+    if (memory_pressure || texture_count > IMAGE_COUNT_SOFT_LIMIT) {
+        gc_stale_only = !memory_pressure;
         RunGarbageCollector();
     }
     sentenced_images.Tick();
@@ -580,8 +601,15 @@ FramebufferId TextureCache<P>::GetFramebufferId(const RenderTargets& key) {
 
 template <class P>
 void TextureCache<P>::WriteMemory(DAddr cpu_addr, size_t size) {
-    ForEachImageInRegion(cpu_addr, size, [this](ImageId image_id, Image& image) {
+    // Release the whole write-tracked page; GPU-written images keep exact bounds.
+    const DAddr page_start = Common::AlignDown(cpu_addr, Core::DEVICE_PAGESIZE);
+    const DAddr page_end = Common::AlignUp(cpu_addr + size, Core::DEVICE_PAGESIZE);
+    ForEachImageInRegion(page_start, page_end - page_start, [this, cpu_addr, size](ImageId image_id,
+                                                                                   Image& image) {
         if (True(image.flags & ImageFlagBits::CpuModified)) {
+            return;
+        }
+        if (True(image.flags & ImageFlagBits::GpuModified) && !image.Overlaps(cpu_addr, size)) {
             return;
         }
         image.flags |= ImageFlagBits::CpuModified;
@@ -648,13 +676,17 @@ template <class P>
 void TextureCache<P>::UnmapMemory(DAddr cpu_addr, size_t size) {
     boost::container::small_vector<ImageId, 16> deleted_images;
     ForEachImageInRegion(cpu_addr, size, [&](ImageId id, Image&) { deleted_images.push_back(id); });
+    std::vector<ImageViewId> removed_views;
     for (const ImageId id : deleted_images) {
         Image& image = slot_images[id];
         if (True(image.flags & ImageFlagBits::Tracked)) {
             UntrackImage(image, id);
         }
         UnregisterImage(id);
-        DeleteImage(id);
+        DeleteImage(id, false, &removed_views);
+    }
+    if (!deleted_images.empty()) {
+        FinishDeferredDeletes(removed_views);
     }
 }
 
@@ -1508,6 +1540,10 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
             join_right_aliased_ids.push_back(overlap_id);
             overlap.flags |= ImageFlagBits::Alias;
             join_copies_to_do.emplace_back(JoinCopy{true, overlap_id});
+        } else if (True(overlap.flags & ImageFlagBits::CpuModified) &&
+                   False(overlap.flags & ImageFlagBits::GpuModified)) {
+            // Its guest memory was rewritten and it holds no GPU data, so it is stale.
+            join_ignore_textures.insert(overlap_id);
         } else {
             join_bad_overlap_ids.push_back(overlap_id);
         }
@@ -2277,7 +2313,8 @@ void TextureCache<P>::UntrackImage(ImageBase& image, ImageId image_id) {
 }
 
 template <class P>
-void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
+void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete,
+                                  std::vector<ImageViewId>* deferred_view_refs) {
     ImageBase& image = slot_images[image_id];
     if (image.HasScaled()) {
         const u64 scaled_size = GetScaledImageSizeBytes(image);
@@ -2335,8 +2372,13 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
             render_targets.depth_buffer_id = ImageViewId{};
         }
     }
-    RemoveImageViewReferences(image_view_ids);
-    RemoveFramebuffers(image_view_ids);
+    if (deferred_view_refs) {
+        deferred_view_refs->insert(deferred_view_refs->end(), image_view_ids.begin(),
+                                   image_view_ids.end());
+    } else {
+        RemoveImageViewReferences(image_view_ids);
+        RemoveFramebuffers(image_view_ids);
+    }
 
     for (const AliasedImage& alias : image.aliased_images) {
         ImageBase& other_image = slot_images[alias.id];
@@ -2372,6 +2414,24 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
     if (alloc_images.empty()) {
         image_allocs_table.erase(alloc_it);
     }
+    has_deleted_images = true;
+    if (deferred_view_refs) {
+        return;
+    }
+    InvalidateImageTables();
+}
+
+template <class P>
+void TextureCache<P>::FinishDeferredDeletes(std::span<const ImageViewId> removed_views) {
+    if (!removed_views.empty()) {
+        RemoveImageViewReferences(removed_views);
+        RemoveFramebuffers(removed_views);
+    }
+    InvalidateImageTables();
+}
+
+template <class P>
+void TextureCache<P>::InvalidateImageTables() {
     for (size_t c : active_channel_ids) {
         auto& channel_info = channel_storage[c];
         if constexpr (ENABLE_VALIDATION) {
@@ -2386,12 +2446,13 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
 
 template <class P>
 void TextureCache<P>::RemoveImageViewReferences(std::span<const ImageViewId> removed_views) {
+    std::vector<ImageViewId> sorted(removed_views.begin(), removed_views.end());
+    std::ranges::sort(sorted);
     for (size_t c : active_channel_ids) {
         auto& channel_info = channel_storage[c];
         auto it = channel_info.image_views.begin();
         while (it != channel_info.image_views.end()) {
-            const auto found = std::ranges::find(removed_views, it->second);
-            if (found != removed_views.end()) {
+            if (std::ranges::binary_search(sorted, it->second)) {
                 it = channel_info.image_views.erase(it);
             } else {
                 ++it;
@@ -2402,9 +2463,13 @@ void TextureCache<P>::RemoveImageViewReferences(std::span<const ImageViewId> rem
 
 template <class P>
 void TextureCache<P>::RemoveFramebuffers(std::span<const ImageViewId> removed_views) {
+    std::vector<ImageViewId> sorted(removed_views.begin(), removed_views.end());
+    std::ranges::sort(sorted);
+    const auto removed = [&sorted](ImageViewId id) { return std::ranges::binary_search(sorted, id); };
     auto it = framebuffers.begin();
     while (it != framebuffers.end()) {
-        if (it->first.Contains(removed_views)) {
+        if (std::ranges::any_of(it->first.color_buffer_ids, removed) ||
+            removed(it->first.depth_buffer_id)) {
             auto framebuffer_id = it->second;
             ASSERT(framebuffer_id);
             sentenced_framebuffers.Push(std::move(slot_framebuffers[framebuffer_id]));

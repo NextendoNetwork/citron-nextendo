@@ -415,9 +415,13 @@ void NextendoController::PollFriends() {
                 for (const auto& entry : list.friends) {
                     const auto decoded_image =
                         QByteArray::fromBase64(QByteArray::fromStdString(entry.image_base64));
-                    cache.push_back(
-                        {entry.pid, entry.name, entry.presence_status, entry.app_field,
-                         std::vector<u8>(decoded_image.begin(), decoded_image.end())});
+                    u64 account_id = 0;
+                    if (!entry.account_hex.empty()) {
+                        account_id = std::strtoull(entry.account_hex.c_str(), nullptr, 16);
+                    }
+                    cache.push_back({entry.pid, entry.name, entry.presence_status, entry.app_field,
+                                     std::vector<u8>(decoded_image.begin(), decoded_image.end()),
+                                     account_id, entry.is_console});
                 }
                 Common::NextendoFriends::Set(std::move(cache));
                 // [Nextendo] The guest's own INotificationService only ever signals once, at

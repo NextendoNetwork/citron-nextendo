@@ -240,8 +240,12 @@ NvResult nvhost_as_gpu::FreeSpace(IoctlFreeSpace& params) {
             return NvResult::BadValue;
         }
 
+        // UnmapBuffer leaves entries here; a stale one must not abort the free half-way.
         for (const auto& mapping : allocation.mappings) {
-            FreeMappingLocked(mapping->offset);
+            const auto live = mapping_map.find(mapping->offset);
+            if (live != mapping_map.end() && live->second == mapping) {
+                FreeMappingLocked(mapping->offset);
+            }
         }
 
         // Unset sparse flag if required

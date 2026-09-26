@@ -94,7 +94,26 @@ public:
             R_THROW(ResultUnknown);
         }
 
+        // The plugin's ic ivau runs in its own context; on hardware it reaches the game's cores too.
+        InvalidateGeneratedCode(*out_range0);
+        InvalidateGeneratedCode(*out_range1);
+
         R_SUCCEED();
+    }
+
+    void InvalidateGeneratedCode(const CodeRange& range) {
+        const u64 base = configuration.user_rx_memory.offset;
+        const u64 size = configuration.user_rx_memory.size;
+        if (range.size == 0 || size == 0) {
+            return;
+        }
+        const u64 start = range.offset >= base && range.offset < base + size ? range.offset
+                                                                             : base + range.offset;
+        if (start < base || start >= base + size) {
+            return;
+        }
+        Core::InvalidateInstructionCacheRange(process.GetPointerUnsafe(), start,
+                                              (std::min)(range.size, base + size - start));
     }
 
     Result Control(Out<s32> out_return_value, InBuffer<BufferAttr_HipcMapAlias> in_data,

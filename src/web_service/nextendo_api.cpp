@@ -814,6 +814,11 @@ Friend ParseFriend(const nlohmann::json& json) {
     }
     out.friend_code = json.value("friend_code", std::string{});
     out.image_base64 = json.value("image", std::string{});
+    out.account_hex = json.value("nsa", std::string{});
+    if (out.account_hex.empty()) {
+        out.account_hex = json.value("account_hex", std::string{});
+    }
+    out.is_console = json.value("plateforme", std::string{}) == "switch" || json.value("pf", 0) == 1;
     if (const auto presence = json.find("presence"); presence != json.end()) {
         out.presence_status = presence->value("status", s32{0});
         // The server hands back what the host published: base64 text wrapping the raw
