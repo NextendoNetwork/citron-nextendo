@@ -904,20 +904,6 @@ void BSD::Shutdown(HLERequestContext& ctx) {
 
     LOG_DEBUG(Service, "called. fd={} how={}", fd, how);
 
-    // [Nextendo][DIAG] Real guest call stack at the exact moment Shutdown() is called, for the
-    // socket that had its first ClientHello sent (sni_injected) -- to see which guest code
-    // actually makes this decision, directly, instead of inferring it from timing/absence of
-    // other activity.
-    if (IsFileDescriptorValid(fd) && file_descriptors[fd]->sni_injected) {
-        const auto backtrace = Core::GetBacktrace(&ctx.GetThread());
-        std::string trace_str;
-        for (const auto& entry : backtrace) {
-            trace_str += fmt::format("\n    {}+0x{:x} ({})", entry.module, entry.offset, entry.name);
-        }
-        LOG_INFO(Service, "[Nextendo][DIAG] Shutdown fd={} how={} guest backtrace:{}", fd, how,
-                 trace_str);
-    }
-
     BuildErrnoResponse(ctx, ShutdownImpl(fd, how));
 }
 

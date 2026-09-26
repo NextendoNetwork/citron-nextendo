@@ -218,10 +218,18 @@ bool UnzipToDirectoryPowerShell(std::span<const u8> zip_data, const std::filesys
 
 } // namespace
 
-void Pull(Core::System& system, u64 title_id, bool force) {
+#ifdef CITRON_ENABLE_LIBARCHIVE
+bool ExtractZipToDirectory(std::span<const u8> zip_data, const std::filesystem::path& dest) {
+    return UnzipToDirectory(zip_data, dest);
+}
+#endif
+
+Result Pull(Core::System& system, u64 title_id, bool force) {
 #if defined(ENABLE_WEB_SERVICE) && (defined(CITRON_ENABLE_LIBARCHIVE) || defined(_WIN32))
     if (!IsEligible(title_id)) {
-        return;
+        LOG_WARNING(Frontend, "Nextendo save pull {:016X}: ineligible (title or account)",
+                    title_id);
+        return Result::Failed;
     }
 
     auto save_dir = system.GetFileSystemController().GetSaveDataFactory().GetTitleSaveDirectory(
@@ -229,15 +237,26 @@ void Pull(Core::System& system, u64 title_id, bool force) {
     if (!force && HasLocalContent(save_dir)) {
         LOG_INFO(Frontend, "Nextendo save pull {:016X}: local save present -> kept (no overwrite)",
                  title_id);
-        return;
-    }
-    if (!save_dir) {
-        return;
+        return Result::LocalKept;
     }
 
     const auto zip = WebService::NextendoApi::PullSave(fmt::format("{:016x}", title_id));
     if (!zip || zip->empty()) {
-        return;
+        LOG_INFO(Frontend, "Nextendo save pull {:016X}: no cloud save on the server", title_id);
+        return Result::NoData;
+    }
+
+    if (!save_dir) {
+        // The title has never saved on this device: create its save directory (the layout the
+        // guest itself would) instead of dropping the restore. Without this a fresh device can
+        // never download, and its first local save then overwrites the cloud copy.
+        const auto& save_factory = system.GetFileSystemController().GetSaveDataFactory();
+        save_dir = save_factory.GetOrCreateTitleSaveDirectory(title_id);
+    }
+    if (!save_dir) {
+        LOG_WARNING(Frontend, "Nextendo save pull {:016X}: no save directory to restore into",
+                    title_id);
+        return Result::NoSaveDir;
     }
 
 #ifdef CITRON_ENABLE_LIBARCHIVE
@@ -245,12 +264,16 @@ void Pull(Core::System& system, u64 title_id, bool force) {
 #else
     const bool applied = UnzipToDirectoryPowerShell(*zip, save_dir->GetFullPath(), title_id);
 #endif
-    if (applied) {
-        LOG_INFO(Frontend, "Nextendo save pull {:016X}: applied ({} B)", title_id, zip->size());
+    if (!applied) {
+        return Result::Failed;
     }
+    LOG_INFO(Frontend, "Nextendo save pull {:016X}: applied ({} B)", title_id, zip->size());
+    return Result::Ok;
 #else
     (void)system;
     (void)title_id;
+    (void)force;
+    return Result::Failed;
 #endif
 }
 
@@ -276,22 +299,36 @@ std::vector<u8> CaptureForPush(Core::System& system, u64 title_id) {
 #endif
 }
 
-void UploadCaptured(u64 title_id, std::vector<u8> zip_bytes) {
+Result UploadCaptured(u64 title_id, std::vector<u8> zip_bytes) {
 #ifdef ENABLE_WEB_SERVICE
     if (zip_bytes.empty()) {
-        return;
+        return Result::NoData;
     }
-    const std::string error =
+    const auto outcome =
         WebService::NextendoApi::PushSave(fmt::format("{:016x}", title_id), zip_bytes);
-    if (!error.empty()) {
-        LOG_WARNING(Frontend, "Nextendo save push {:016X} failed: {}", title_id, error);
-    } else {
-        LOG_INFO(Frontend, "Nextendo save push {:016X}: {} B", title_id, zip_bytes.size());
+    if (!outcome.ok) {
+        LOG_WARNING(Frontend, "Nextendo save push {:016X} failed: {}", title_id, outcome.error);
+        return outcome.too_large ? Result::TooLarge : Result::Failed;
     }
+    if (outcome.kept) {
+        LOG_INFO(Frontend, "Nextendo save push {:016X}: server kept the larger save", title_id);
+        return Result::Kept;
+    }
+    LOG_INFO(Frontend, "Nextendo save push {:016X}: {} B", title_id, zip_bytes.size());
+    return Result::Ok;
 #else
     (void)title_id;
     (void)zip_bytes;
+    return Result::Failed;
 #endif
+}
+
+Result Push(Core::System& system, u64 title_id) {
+    const auto zip = CaptureForPush(system, title_id);
+    if (zip.empty()) {
+        return Result::NoData;
+    }
+    return UploadCaptured(title_id, std::move(zip));
 }
 
 } // namespace Nextendo::SaveSync

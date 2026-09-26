@@ -3,6 +3,7 @@
 
 #include <cstdlib>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include <fmt/format.h>
@@ -62,9 +63,15 @@ void EnsureLoaded() {
     if (g_loaded) {
         return;
     }
-    g_loaded = true;
 
-    const std::string contents = FS::ReadStringFromFile(FilePath(), FS::FileType::TextFile);
+    const auto path = FilePath();
+    const std::string contents = FS::ReadStringFromFile(path, FS::FileType::TextFile);
+    // Only cache the result when the file actually exists. If it is absent (e.g. the app
+    // directory was not initialized yet and the path was relative), retry on the next call
+    // instead of poisoning the account state for the whole process.
+    if (!contents.empty()) {
+        g_loaded = true;
+    }
     std::vector<std::string> lines;
     Common::SplitString(contents, '\n', lines);
 
@@ -160,6 +167,22 @@ void Clear() {
     g_token.clear();
     ++g_generation;
     void(FS::RemoveFile(FilePath()));
+}
+
+void UpdateUsername(std::string_view username) {
+    u64 pid = 0;
+    std::string friend_code;
+    std::string token;
+    {
+        std::lock_guard lock{g_mutex};
+        EnsureLoaded();
+        pid = g_pid;
+        friend_code = g_friend_code;
+        token = g_token;
+    }
+    if (pid != 0) {
+        Save(pid, username, friend_code, token);
+    }
 }
 
 void WriteGuestBridge(const std::filesystem::path& sdmc_root) {

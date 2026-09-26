@@ -29,6 +29,10 @@ void Save(u64 pid, std::string_view username, std::string_view friend_code,
           std::string_view token);
 void Clear();
 
+// After a successful rename: keeps the rest of the stored account and bumps the generation so
+// derived state (the signed id_token) is rebuilt with the new name.
+void UpdateUsername(std::string_view username);
+
 // Mirrors the link state onto the guest SD card (sdmc_root/config/nextendo/session.txt) so
 // homebrew can read its signed-in identity with a plain fopen(), no BAAS id_token needed.
 void WriteGuestBridge(const std::filesystem::path& sdmc_root);

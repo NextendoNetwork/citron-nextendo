@@ -14,11 +14,19 @@
 
 #include "common/logging.h"
 
+#include "web_service/nextendo_api.h"
+
 namespace WebService::SkylineMods {
 
 namespace {
 
 void ApplyCaCertPath(httplib::Client& client) {
+    // Android has no CA path OpenSSL can read; the app exports one at startup.
+    const std::string override_path = NextendoApi::GetCaCertPathOverride();
+    if (!override_path.empty()) {
+        client.set_ca_cert_path(override_path);
+        return;
+    }
 #ifdef __linux__
     static constexpr std::array<const char*, 4> candidates{
         "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu/Arch
@@ -32,8 +40,6 @@ void ApplyCaCertPath(httplib::Client& client) {
             return;
         }
     }
-#else
-    (void)client;
 #endif
 }
 

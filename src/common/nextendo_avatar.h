@@ -19,4 +19,7 @@ void SetSelfJPEGBase64(std::string_view base64_jpeg);
 // Decoded JPEG bytes, or empty if nothing has been fetched yet.
 std::vector<u8> GetSelfJPEG();
 
+// Standard base64, used for every avatar the account server hands out.
+std::vector<u8> DecodeBase64(std::string_view text);
+
 } // namespace Common::NextendoAvatar

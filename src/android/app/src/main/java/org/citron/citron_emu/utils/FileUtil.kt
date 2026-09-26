@@ -508,7 +508,10 @@ object FileUtil {
             val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(uri, docId)
             resolver.query(childrenUri, columns, null, null, null)
             true
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.warning(
+                "[FileUtil] Tree URI not available: $uri (${e.javaClass.simpleName}: ${e.message})"
+            )
             false
         }
     }

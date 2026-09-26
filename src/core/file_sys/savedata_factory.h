@@ -63,6 +63,11 @@ public:
     // Locates a title's save directory (same traversal as PerformStartupMirrorSync).
     VirtualDir GetTitleSaveDirectory(u64 title_id) const;
 
+    // Same as GetTitleSaveDirectory, but creates the title's directory when it doesn't exist
+    // yet -- under the console's existing profile layout, or the last opened profile. Lets
+    // cloud saves restore onto a device that has never run the title.
+    VirtualDir GetOrCreateTitleSaveDirectory(u64 title_id) const;
+
 private:
     Core::System& system;
     ProgramId program_id;

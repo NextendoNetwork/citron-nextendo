@@ -57,6 +57,27 @@ class SettingsViewModel : ViewModel() {
     private val _shouldShowDirectConnectDialog = MutableStateFlow(false)
     val shouldShowDirectConnectDialog = _shouldShowDirectConnectDialog.asStateFlow()
 
+    private val _shouldShowNextendoCloudSaves = MutableStateFlow(false)
+    val shouldShowNextendoCloudSaves = _shouldShowNextendoCloudSaves.asStateFlow()
+
+    private val _shouldShowNextendoFriends = MutableStateFlow(false)
+    val shouldShowNextendoFriends = _shouldShowNextendoFriends.asStateFlow()
+
+    private val _shouldShowNextendoProfile = MutableStateFlow(false)
+    val shouldShowNextendoProfile = _shouldShowNextendoProfile.asStateFlow()
+
+    fun setShouldShowNextendoCloudSaves(value: Boolean) {
+        _shouldShowNextendoCloudSaves.value = value
+    }
+
+    fun setShouldShowNextendoFriends(value: Boolean) {
+        _shouldShowNextendoFriends.value = value
+    }
+
+    fun setShouldShowNextendoProfile(value: Boolean) {
+        _shouldShowNextendoProfile.value = value
+    }
+
     fun setShouldRecreate(value: Boolean) {
         _shouldRecreate.value = value
     }
