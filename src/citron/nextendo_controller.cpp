@@ -426,7 +426,8 @@ void NextendoController::PollFriends() {
                     }
                     cache.push_back({entry.pid, entry.name, entry.presence_status, entry.app_field,
                                      std::vector<u8>(decoded_image.begin(), decoded_image.end()),
-                                     account_id, entry.is_console});
+                                     account_id, entry.is_console,
+                                     std::strtoull(entry.app_id.c_str(), nullptr, 16)});
                 }
                 Common::NextendoFriends::Set(std::move(cache));
                 // [Nextendo] The guest's own INotificationService only ever signals once, at

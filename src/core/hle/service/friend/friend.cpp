@@ -234,7 +234,10 @@ FriendImpl MakeFriend(const Common::NextendoFriends::Entry& entry, u64 requested
     const auto length = std::min(entry.name.size(), out.nickname.size() - 1);
     std::memcpy(out.nickname.data(), entry.name.data(), length);
 
-    out.presence.user_id = UidForPid(advertised);
+    // A friend's presence starts with its last played application (application id, presence
+    // group id); a user's own UserPresence has its Uid there instead.
+    const std::array<u64, 2> application{entry.app_id, entry.app_id};
+    std::memcpy(&out.presence.user_id, application.data(), sizeof(application));
     out.presence.status = static_cast<u32>(entry.status);
     out.presence.last_time_online_timestamp = 0x7FFFFFFFFFFFFFFFLL;
     // In this application only while online; an offline in-app friend has no session to find.
@@ -829,7 +832,8 @@ void IFriendService::CheckBlockedUserListAvailability(HLERequestContext& ctx) {
 }
 
 void IFriendService::DeclareCloseOnlinePlaySession(HLERequestContext& ctx) {
-    LOG_WARNING(Service_Friend, "(STUBBED) DeclareCloseOnlinePlaySession called");
+    LOG_INFO(Service_Friend, "DeclareCloseOnlinePlaySession called");
+    Common::NextendoFriends::SetLocalStatus(Common::NextendoFriends::PresenceOnline);
     IPC::ResponseBuilder rb{ctx, 2};
     rb.Push(ResultSuccess);
 }
@@ -838,12 +842,16 @@ void IFriendService::UpdateUserPresence(HLERequestContext& ctx) {
     if (ctx.CanReadBuffer() && ctx.GetReadBufferSize() >= sizeof(UserPresenceImpl)) {
         UserPresenceImpl presence{};
         std::memcpy(&presence, ctx.ReadBuffer().data(), sizeof(presence));
-        // A title can publish Offline while it is still running -- MK8D does, on leaving the
-        // online menu. Relaying that verbatim reports us offline mid-session, so floor it at
-        // Online: this handler only runs while a game is up. The app_field is taken as-is,
-        // since that is the title's own joinable-session data.
-        auto status = std::max<s32>(static_cast<s32>(presence.status),
-                                    Common::NextendoFriends::PresenceOnline);
+        // Byte 0x18 of a UserPresence is the title's online-play declaration, not a status:
+        // UserPresence::DeclareOpen/CloseOnlinePlaySession write 1/2 and 0 leaves it unchanged.
+        // Floored at Online, since this handler only runs while a game is up.
+        s32 status = Common::NextendoFriends::GetLocalStatus();
+        if ((presence.status & 0xFF) == 1) {
+            status = Common::NextendoFriends::PresenceOnlinePlay;
+        } else if ((presence.status & 0xFF) == 2) {
+            status = Common::NextendoFriends::PresenceOnline;
+        }
+        status = std::max<s32>(status, Common::NextendoFriends::PresenceOnline);
         auto app_field =
             std::string{reinterpret_cast<const char*>(presence.app_key_value.data()),
                         presence.app_key_value.size()};
@@ -1171,7 +1179,8 @@ void IFriendService::GetProfileListV2(HLERequestContext& ctx) {
 }
 
 void IFriendService::DeclareOpenOnlinePlaySession(HLERequestContext& ctx) {
-    LOG_WARNING(Service_Friend, "(STUBBED) DeclareOpenOnlinePlaySession called");
+    LOG_INFO(Service_Friend, "DeclareOpenOnlinePlaySession called");
+    Common::NextendoFriends::SetLocalStatus(Common::NextendoFriends::PresenceOnlinePlay);
     IPC::ResponseBuilder rb{ctx, 2};
     rb.Push(ResultSuccess);
 }

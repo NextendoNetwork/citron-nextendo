@@ -119,7 +119,7 @@ std::optional<Network::IPv4Address> GetNextendoServerAddress() {
     return ip;
 }
 
-static std::optional<std::string> GetNextendoRedirectIp(const std::string& host) {
+static std::optional<std::string> GetNextendoRedirectIp(const std::string& host, u64 program_id) {
     if (!RedirectionNextendoActive()) {
         return std::nullopt;
     }
@@ -139,6 +139,22 @@ static std::optional<std::string> GetNextendoRedirectIp(const std::string& host)
         host == "nintendowifi.net" || host.ends_with(".nintendowifi.net") ||
         host == "nintendo.co.jp" || host.ends_with(".nintendo.co.jp")) {
         LOG_INFO(Service, "[Nextendo] Redirecting Nintendo host '{}' -> '{}'", host, server_ip);
+        return server_ip;
+    }
+
+    // Minecraft Dungeons II uses this PlayFab title for its online bootstrap.
+    // Keep the redirect title-specific; other PlayFab games use different services.
+    if (host == "83156.playfabapi.com" || host == "vex.minecraftservices.com" ||
+        host == "s2s-vex.minecraftservices.com") {
+        LOG_INFO(Service, "[Nextendo] Redirecting Dungeons II host '{}' -> '{}'", host, server_ip);
+        return server_ip;
+    }
+    // Its Xbox Live sign-in (XAL) too, but only while Dungeons II runs: other titles may use
+    // real Xbox Live accounts.
+    constexpr u64 DungeonsII = 0x0100A7C01B792000ULL;
+    if (program_id == DungeonsII &&
+        (host == "xboxlive.com" || host.ends_with(".xboxlive.com") || host == "login.live.com")) {
+        LOG_INFO(Service, "[Nextendo] Redirecting Dungeons II host '{}' -> '{}'", host, server_ip);
         return server_ip;
     }
 
@@ -337,7 +353,8 @@ std::set<std::string> blocked_domains{
     "minecraftservices.com",
 };
 
-static std::pair<u32, GetAddrInfoError> GetHostByNameRequestImpl(HLERequestContext& ctx) {
+static std::pair<u32, GetAddrInfoError> GetHostByNameRequestImpl(HLERequestContext& ctx,
+                                                                 u64 program_id) {
     struct InputParameters {
         u8 use_nsd_resolve;
         u32 cancel_handle;
@@ -373,7 +390,7 @@ static std::pair<u32, GetAddrInfoError> GetHostByNameRequestImpl(HLERequestConte
     }
 
     std::string query_host = host;
-    auto redirect = GetNextendoRedirectIp(host);
+    auto redirect = GetNextendoRedirectIp(host, program_id);
     if (redirect.has_value()) {
         query_host = *redirect;
     } else if (blocked_domains.find(host) != blocked_domains.end()) {
@@ -400,7 +417,8 @@ static std::pair<u32, GetAddrInfoError> GetHostByNameRequestImpl(HLERequestConte
 }
 
 void SFDNSRES::GetHostByNameRequest(HLERequestContext& ctx) {
-    auto [data_size, emu_gai_err] = GetHostByNameRequestImpl(ctx);
+    auto [data_size, emu_gai_err] =
+        GetHostByNameRequestImpl(ctx, system.GetApplicationProcessProgramID());
 
     struct OutputParameters {
         NetDbError netdb_error;
@@ -419,7 +437,8 @@ void SFDNSRES::GetHostByNameRequest(HLERequestContext& ctx) {
 }
 
 void SFDNSRES::GetHostByNameRequestWithOptions(HLERequestContext& ctx) {
-    auto [data_size, emu_gai_err] = GetHostByNameRequestImpl(ctx);
+    auto [data_size, emu_gai_err] =
+        GetHostByNameRequestImpl(ctx, system.GetApplicationProcessProgramID());
 
     struct OutputParameters {
         u32 data_size;
@@ -486,7 +505,8 @@ static std::vector<u8> SerializeAddrInfo(const std::vector<Network::AddrInfo>& v
     return data;
 }
 
-static std::pair<u32, GetAddrInfoError> GetAddrInfoRequestImpl(HLERequestContext& ctx) {
+static std::pair<u32, GetAddrInfoError> GetAddrInfoRequestImpl(HLERequestContext& ctx,
+                                                               u64 program_id) {
     struct InputParameters {
         u8 use_nsd_resolve;
         u32 cancel_handle;
@@ -588,7 +608,7 @@ static std::pair<u32, GetAddrInfoError> GetAddrInfoRequestImpl(HLERequestContext
     std::string query_host = host;
     auto redirect = GetNplnDebugProxyIp(host);
     if (!redirect.has_value()) {
-        redirect = GetNextendoRedirectIp(host);
+        redirect = GetNextendoRedirectIp(host, program_id);
     }
     if (redirect.has_value()) {
         query_host = *redirect;
@@ -648,7 +668,8 @@ static std::pair<u32, GetAddrInfoError> GetAddrInfoRequestImpl(HLERequestContext
 }
 
 void SFDNSRES::GetAddrInfoRequest(HLERequestContext& ctx) {
-    auto [data_size, emu_gai_err] = GetAddrInfoRequestImpl(ctx);
+    auto [data_size, emu_gai_err] =
+        GetAddrInfoRequestImpl(ctx, system.GetApplicationProcessProgramID());
 
     struct OutputParameters {
         Errno bsd_errno;
@@ -682,7 +703,8 @@ void SFDNSRES::GetGaiStringErrorRequest(HLERequestContext& ctx) {
 
 void SFDNSRES::GetAddrInfoRequestWithOptions(HLERequestContext& ctx) {
     // Additional options are ignored
-    auto [data_size, emu_gai_err] = GetAddrInfoRequestImpl(ctx);
+    auto [data_size, emu_gai_err] =
+        GetAddrInfoRequestImpl(ctx, system.GetApplicationProcessProgramID());
 
     struct OutputParameters {
         u32 data_size;

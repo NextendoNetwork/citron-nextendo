@@ -41,6 +41,10 @@ public:
     virtual Result Read(size_t* out_size, std::span<u8> data) = 0;
     virtual Result Write(size_t* out_size, std::span<const u8> data) = 0;
     virtual Result Pending(s32* out_pending) = 0;
+    // Backends without a peek primitive report no data yet.
+    virtual Result Peek(size_t* out_size, std::span<u8> data) {
+        return ResultWouldBlock;
+    }
     virtual Result GetServerCerts(std::vector<std::vector<u8>>* out_certs) = 0;
 };
 

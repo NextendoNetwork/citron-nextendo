@@ -21,6 +21,7 @@ struct Entry {
     std::vector<u8> image; // profile picture, raw JPEG bytes (already base64-decoded); empty if none
     u64 account_id = 0;       // BAAS account id; 0 if the server omits it
     bool is_console = false;  // consoles advertise by account id, emulators by pid
+    u64 app_id = 0;           // application the friend is running; 0 if none
 };
 
 void Set(std::vector<Entry> entries);

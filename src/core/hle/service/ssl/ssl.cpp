@@ -478,21 +478,65 @@ private:
     }
 
     void Peek(HLERequestContext& ctx) {
-        // [Nextendo] Nintendo's libcurl checks connection liveness via Peek.
-        // Returning ResultWouldBlock tells libcurl the connection is open and active.
-        IPC::ResponseBuilder rb{ctx, 2};
-        rb.Push(ResultWouldBlock);
+        // nn::websocket peeks the HTTP upgrade response; libcurl peeks 1 byte for liveness.
+        std::vector<u8> output_bytes(ctx.GetWriteBufferSize());
+        size_t actual_size{};
+        Result res = ResultInternalError;
+        if (did_handshake) {
+            res = backend->Peek(&actual_size, output_bytes);
+        }
+        IPC::ResponseBuilder rb{ctx, 3};
+        rb.Push(res);
+        if (res == ResultSuccess) {
+            output_bytes.resize(actual_size);
+            rb.Push(static_cast<u32>(actual_size));
+            ctx.WriteBuffer(output_bytes);
+        } else {
+            rb.Push(static_cast<u32>(0));
+        }
     }
 
     void Poll(HLERequestContext& ctx) {
+        static constexpr u32 PollRead = 1, PollWrite = 2, PollExcept = 4;
         IPC::RequestParser rp{ctx};
-        const u32 poll_event = rp.Pop<u32>();
+        const u32 in_events = rp.Pop<u32>();
+        const u32 timeout_ms = rp.Pop<u32>();
 
-        LOG_WARNING(Service_SSL, "(STUBBED) called, poll_event={}", poll_event);
+        u32 out_events = 0;
+        if (socket) {
+            s32 pending = 0;
+            backend->Pending(&pending);
+            if ((in_events & PollRead) && pending > 0) {
+                out_events |= PollRead;
+            }
+            Network::PollEvents wanted{};
+            if (in_events & PollRead) {
+                wanted |= Network::PollEvents::In;
+            }
+            if (in_events & PollWrite) {
+                wanted |= Network::PollEvents::Out;
+            }
+            std::vector<Network::PollFD> fds{{socket.get(), wanted, Network::PollEvents{}}};
+            // Bounded so an idle connection can't hold the ssl service thread; callers re-poll.
+            const s32 wait = out_events ? 0 : static_cast<s32>(std::min<u32>(timeout_ms, 50));
+            if (Network::Poll(fds, wait).first > 0) {
+                const Network::PollEvents revents = fds[0].revents;
+                if ((in_events & PollRead) &&
+                    True(revents & (Network::PollEvents::In | Network::PollEvents::Hup))) {
+                    out_events |= PollRead;
+                }
+                if ((in_events & PollWrite) && True(revents & Network::PollEvents::Out)) {
+                    out_events |= PollWrite;
+                }
+                if (True(revents & (Network::PollEvents::Err | Network::PollEvents::Nval))) {
+                    out_events |= PollExcept;
+                }
+            }
+        }
 
         IPC::ResponseBuilder rb{ctx, 3};
         rb.Push(ResultSuccess);
-        rb.Push<s32>(0); // Stub: no events ready
+        rb.Push<u32>(out_events);
     }
 
     void GetVerifyCertError(HLERequestContext& ctx) {

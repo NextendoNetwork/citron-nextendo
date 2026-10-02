@@ -1203,6 +1203,8 @@ add_library(core STATIC
     loader/nax.h
     loader/nca.cpp
     loader/nca.h
+    loader/nextendo_dungeons2_patch.cpp
+    loader/nextendo_dungeons2_patch.h
     loader/nextendo_s3_patches.cpp
     loader/nextendo_s3_patches.h
     loader/nro.cpp

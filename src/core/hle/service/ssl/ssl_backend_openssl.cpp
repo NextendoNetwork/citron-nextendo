@@ -199,6 +199,11 @@ public:
         return HandleReturn("SSL_read_ex", out_size, ret);
     }
 
+    Result Peek(size_t* out_size, std::span<u8> data) override {
+        const int ret = SSL_peek_ex(ssl, data.data(), data.size(), out_size);
+        return HandleReturn("SSL_peek_ex", out_size, ret);
+    }
+
     Result Write(size_t* out_size, std::span<const u8> data) override {
         const int ret = SSL_write_ex(ssl, data.data(), data.size(), out_size);
         return HandleReturn("SSL_write_ex", out_size, ret);
