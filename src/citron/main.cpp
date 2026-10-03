@@ -181,6 +181,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "citron/startup_checks.h"
 #include "citron/uisettings.h"
 #include "citron/theme.h"
+#include "citron/nextendo_splatoon3_bcat.h"
 #include "citron/util/rainbow_style.h"
 #include "common/settings.h"
 #ifdef ENABLE_WEB_SERVICE
@@ -7588,6 +7589,7 @@ bool GMainWindow::NextendoByamlRequired(u64 title_id) const {
     case 0x0100f8f0000a2000ULL: // Splatoon 2
     case 0x01003bc0000a0000ULL: // Splatoon 2
     case 0x01003c700009c800ULL: // Splatoon 2
+    case Nextendo::Splatoon3Bcat::TitleId:
     case kPokemonViolet:
     case kPokemonScarlet:
     case kPokemonLegendsZa:
@@ -7604,6 +7606,9 @@ bool GMainWindow::NextendoByamlDownloadEnabled() const {
 bool GMainWindow::NextendoByamlInstalled(u64 title_id) const {
     const auto bcat_dir = Common::FS::GetCitronPath(Common::FS::CitronPath::NANDDir) /
                           fmt::format("system/save/bcat/{:016X}", title_id);
+    if (title_id == Nextendo::Splatoon3Bcat::TitleId) {
+        return Nextendo::Splatoon3Bcat::IsInstalled(bcat_dir);
+    }
     if (IsNextendoPokemonBcatTitle(title_id)) {
         std::error_code ec;
         for (auto it = std::filesystem::recursive_directory_iterator(bcat_dir, ec);
@@ -7736,8 +7741,9 @@ bool GMainWindow::NextendoByamlDownload(u64 title_id) {
     // Only this title ID's server-side BCAT content is kept current; fetch it for all variants.
     constexpr u64 kCanonicalByamlTitleId = 0x0100f8f0000a2000ULL;
     const bool pokemon = IsNextendoPokemonBcatTitle(title_id);
-    const auto fetch_title_id_hex =
-        fmt::format("{:016X}", pokemon ? title_id : kCanonicalByamlTitleId);
+    const auto fetch_title_id_hex = fmt::format(
+        "{:016X}", (pokemon || title_id == Nextendo::Splatoon3Bcat::TitleId)
+                       ? title_id : kCanonicalByamlTitleId);
 
     // Always fetch the full seed and compare its hash locally, rather than trusting the
     // server's Last-Modified/304 response as the sole freshness signal — that path could get
@@ -7753,6 +7759,20 @@ bool GMainWindow::NextendoByamlDownload(u64 title_id) {
     if (zip_bytes.empty()) {
         // An event is optional for Scarlet/Violet; keep whatever is installed.
         return false;
+    }
+
+    if (title_id == Nextendo::Splatoon3Bcat::TitleId) {
+        const auto target = Common::FS::GetCitronPath(Common::FS::CitronPath::NANDDir) /
+                            "system/save/bcat/0100C2500FC20000";
+        try {
+            const bool changed = Nextendo::Splatoon3Bcat::Install(zip_bytes, target);
+            LOG_INFO(Frontend, "Nextendo BCAT: Splatoon 3 package {}",
+                     changed ? "installed" : "already current");
+            return true;
+        } catch (const std::exception& ex) {
+            LOG_ERROR(Frontend, "Nextendo BCAT: Splatoon 3 update failed; keeping cache: {}", ex.what());
+            return false;
+        }
     }
 
     const auto server_hash = WebService::NextendoApi::HashBcatSeedHex(zip_bytes);
@@ -7823,6 +7843,11 @@ void GMainWindow::RunNextendoByamlDownloadWithProgress(u64 title_id) {
 
 void GMainWindow::NextendoByamlDownloadFromMenu(u64 title_id) {
 #ifdef ENABLE_WEB_SERVICE
+    if (title_id == Nextendo::Splatoon3Bcat::TitleId && system->IsPoweredOn()) {
+        QMessageBox::information(this, tr("Nextendo BCAT"),
+                                 tr("Close the running game before updating Splatoon 3 BCAT."));
+        return;
+    }
     RunNextendoByamlDownloadWithProgress(title_id);
 #endif
 }
@@ -8177,6 +8202,11 @@ void GMainWindow::InstallMk8dCountryFlag(u64 program_id) {
 
 void GMainWindow::SilentlyDownloadNextendoByaml(u64 title_id) {
 #ifdef ENABLE_WEB_SERVICE
+    // S3 is refreshed synchronously before boot; a detached startup install could
+    // otherwise replace its cache after the game has already opened it.
+    if (title_id == Nextendo::Splatoon3Bcat::TitleId) {
+        return;
+    }
     std::thread{[this, title_id] {
         const bool ok = NextendoByamlDownload(title_id);
         if (ok) {
@@ -8190,8 +8220,13 @@ void GMainWindow::SilentlyDownloadNextendoByaml(u64 title_id) {
 
 void GMainWindow::OfferNextendoByamlDownload(u64 title_id) {
 #ifdef ENABLE_WEB_SERVICE
-    // Scarlet/Violet's event is optional: refresh it before boot without asking.
-    if (IsNextendoPokemonBcatTitle(title_id)) {
+    if (title_id == Nextendo::Splatoon3Bcat::TitleId && system->IsPoweredOn()) {
+        LOG_WARNING(Frontend, "Nextendo BCAT: close the running game to refresh Splatoon 3 safely");
+        return;
+    }
+    // Refresh Splatoon 3 even with festival events disabled or an existing cache.
+    // Finish before boot so the game cannot open files during replacement.
+    if (IsNextendoPokemonBcatTitle(title_id) || title_id == Nextendo::Splatoon3Bcat::TitleId) {
         auto future = QtConcurrent::run([this, title_id] { return NextendoByamlDownload(title_id); });
         while (!future.isFinished()) {
             QCoreApplication::processEvents();
