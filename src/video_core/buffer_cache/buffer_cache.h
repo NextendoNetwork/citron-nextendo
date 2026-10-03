@@ -1707,9 +1707,11 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
             buffer.MarkUsage(copy.src_offset, copy.size);
         }
         runtime.CopyBuffer(download_staging.buffer, buffer, copies_span, true);
+        // Finish() can re-enter the cache and grow slot_buffers; `buffer` may dangle after it.
+        const DAddr buffer_cpu_addr = buffer.CpuAddr();
         runtime.Finish();
         for (const BufferCopy& copy : copies) {
-            const DAddr copy_device_addr = buffer.CpuAddr() + copy.src_offset;
+            const DAddr copy_device_addr = buffer_cpu_addr + copy.src_offset;
             // Undo the modified offset
             const u64 dst_offset = copy.dst_offset - download_staging.offset;
             const u8* copy_mapped_memory = mapped_memory + dst_offset;

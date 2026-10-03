@@ -331,10 +331,11 @@ private:
                 ++page;
                 continue;
             }
+            // func can grow slot_buffers (moving every Buffer), so read the range before calling it.
             Buffer& buffer = slot_buffers[buffer_id];
+            const DAddr end_addr = buffer.CpuAddr() + buffer.SizeBytes();
             func(buffer_id, buffer);
 
-            const DAddr end_addr = buffer.CpuAddr() + buffer.SizeBytes();
             page = Common::DivCeil(end_addr, CACHING_PAGESIZE);
         }
     }
