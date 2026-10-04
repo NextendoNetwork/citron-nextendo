@@ -46,6 +46,8 @@ inline const std::unordered_map<u64, std::string>& Table() {
         {0x0100f9f00c696000, "1.0.15"},      // Crash Team Racing Nitro-Fueled
         {0x01001b300b9be000, "2.7.7.92380"}, // Diablo III: Eternal Collection
         {0x0100a7c01b792000, "1.1.1.0"},     // Minecraft Dungeons II
+        {0x0100b3f000be2000, "1.3.3"},       // Pokken Tournament DX
+        {0x0100de600beee000, "1.6.1"},       // Saints Row: The Third - The Full Package
     };
     return table;
 }

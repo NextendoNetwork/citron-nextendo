@@ -1118,7 +1118,9 @@ PatchManager::ActiveUpdate PatchManager::GetActiveUpdate() const {
         if (std::find(disabled.cbegin(), disabled.cend(), "Update") != disabled.cend()) {
             return true;
         }
-        if (std::find(disabled.cbegin(), disabled.cend(), "NAND Files/Update") != disabled.cend()) {
+        // The packed/NAND toggle must not disable external updates (the Add-Ons UI shows them separately).
+        if (name.starts_with("NAND Files/") &&
+            std::find(disabled.cbegin(), disabled.cend(), "NAND Files/Update") != disabled.cend()) {
             return true;
         }
         return false;
