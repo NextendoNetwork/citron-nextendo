@@ -42,6 +42,7 @@ inline const std::unordered_map<u64, std::string>& Table() {
         {0x0100a3d008c5c000, "4.0.0"}, // Pokémon Scarlet
         {0x0100f43008c44000, "2.0.2"}, // Pokémon Legends: Z-A
         {0x0100c9a00ece6000, "4.2.0"}, // Nintendo 64 - Nintendo Classics
+        {0x010019401051c000, "1.3.2"}, // Mario Strikers: Battle League
         {0x0100f9f00c696000, "1.0.15"},      // Crash Team Racing Nitro-Fueled
         {0x01001b300b9be000, "2.7.7.92380"}, // Diablo III: Eternal Collection
         {0x0100a7c01b792000, "1.1.1.0"},     // Minecraft Dungeons II
