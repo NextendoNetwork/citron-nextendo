@@ -172,6 +172,30 @@ std::optional<VideoCore::RasterizerDownloadArea> BufferCache<P>::GetFlushArea(DA
 }
 
 template <class P>
+bool BufferCache<P>::IsRegionLazyDownload(DAddr device_addr, u64 size) {
+    bool is_lazy = false;
+    lazy_download_ranges.ForEachInRange(device_addr, size, [&](DAddr start, DAddr end) {
+        gpu_modified_ranges.ForEachInRange(start, end - start, [&](DAddr, DAddr) {
+            is_lazy = true;
+        });
+    });
+    if (is_lazy) {
+        cpu_read_ranges.Add(device_addr, size);
+    }
+    return is_lazy;
+}
+
+template <class P>
+bool BufferCache<P>::IsLazyInterval(DAddr device_addr, u64 size) const {
+    if (size < LAZY_DOWNLOAD_THRESHOLD || !Settings::values.use_reactive_flushing.GetValue()) {
+        return false;
+    }
+    bool read_by_cpu = false;
+    cpu_read_ranges.ForEachInRange(device_addr, size, [&](DAddr, DAddr) { read_by_cpu = true; });
+    return !read_by_cpu;
+}
+
+template <class P>
 void BufferCache<P>::DownloadMemory(DAddr device_addr, u64 size) {
     ForEachBufferInRange(device_addr, size, [&](BufferId, Buffer& buffer) {
         DownloadBufferMemory(buffer, device_addr, size);
@@ -180,7 +204,10 @@ void BufferCache<P>::DownloadMemory(DAddr device_addr, u64 size) {
 
 template <class P>
 void BufferCache<P>::ClearDownload(DAddr device_addr, u64 size) {
+    // The caller writes newer data here next; let an in-flight write-back finish first.
+    std::scoped_lock writeback_lock{writeback_mutex};
     async_downloads.DeleteAll(device_addr, size);
+    lazy_download_ranges.Subtract(device_addr, size);
     uncommitted_gpu_modified_ranges.Subtract(device_addr, size);
     for (auto& interval_set : committed_gpu_modified_ranges) {
         interval_set.Subtract(device_addr, size);
@@ -509,7 +536,16 @@ void BufferCache<P>::FlushCachedWrites() {
 
 template <class P>
 bool BufferCache<P>::HasUncommittedFlushes() const noexcept {
-    return !uncommitted_gpu_modified_ranges.Empty() || !committed_gpu_modified_ranges.empty();
+    // Deferred (lazy) intervals download nothing at the fence, so they need no host GPU wait.
+    bool needs_download = false;
+    const auto check = [&](DAddr start, DAddr end) {
+        needs_download = needs_download || !IsLazyInterval(start, end - start);
+    };
+    uncommitted_gpu_modified_ranges.ForEach(check);
+    for (const Common::RangeSet<DAddr>& range_set : committed_gpu_modified_ranges) {
+        range_set.ForEach(check);
+    }
+    return needs_download;
 }
 
 template <class P>
@@ -550,10 +586,15 @@ void BufferCache<P>::CommitAsyncFlushesHigh() {
     boost::container::small_vector<std::pair<BufferCopy, BufferId>, 16> downloads;
     u64 total_size_bytes = 0;
     u64 largest_copy = 0;
+    // Large GPU working buffers are flushed on CPU access instead of copied back every fence.
     for (const Common::RangeSet<DAddr>& range_set : committed_gpu_modified_ranges) {
         range_set.ForEach([&](DAddr interval_lower, DAddr interval_upper) {
             const std::size_t size = interval_upper - interval_lower;
             const DAddr device_addr = interval_lower;
+            if (IsLazyInterval(device_addr, size)) {
+                lazy_download_ranges.Add(device_addr, size);
+                return;
+            }
             ForEachBufferInRange(device_addr, size, [&](BufferId buffer_id, Buffer& buffer) {
                 const DAddr buffer_start = buffer.CpuAddr();
                 const DAddr buffer_end = buffer_start + buffer.SizeBytes();
@@ -624,6 +665,7 @@ void BufferCache<P>::PopAsyncFlushes() {
 
 template <class P>
 void BufferCache<P>::PopAsyncBuffers() {
+    std::unique_lock lock{mutex};
     if (async_buffers.empty()) {
         return;
     }
@@ -631,23 +673,41 @@ void BufferCache<P>::PopAsyncBuffers() {
         async_buffers.pop_front();
         return;
     }
-    auto& downloads = pending_downloads.front();
-    auto& async_buffer = async_buffers.front();
-    u8* base = async_buffer->mapped_span.data();
-    const size_t base_offset = async_buffer->offset;
+    // Only the fence thread pops, so the front entries stay put while the lock is dropped.
+    const auto& downloads = pending_downloads.front();
+    const Async_Buffer& async_buffer = *async_buffers.front();
+    const u8* const base = async_buffer.mapped_span.data();
+    const size_t base_offset = async_buffer.offset;
+    struct WriteBack {
+        DAddr start;
+        u64 size;
+        const u8* data;
+    };
+    boost::container::small_vector<WriteBack, 32> write_backs;
     for (const auto& copy : downloads) {
         const DAddr device_addr = static_cast<DAddr>(copy.src_offset);
-        const u64 dst_offset = copy.dst_offset - base_offset;
-        const u8* read_mapped_memory = base + dst_offset;
+        const u8* const read_mapped_memory = base + (copy.dst_offset - base_offset);
         async_downloads.ForEachInRange(device_addr, copy.size, [&](DAddr start, DAddr end, s32) {
-            device_memory.WriteBlockUnsafe(start, &read_mapped_memory[start - device_addr],
-                                           end - start);
-        });
-        async_downloads.Subtract(device_addr, copy.size, [&](DAddr start, DAddr end) {
-            gpu_modified_ranges.Subtract(start, end - start);
+            write_backs.push_back({start, end - start, &read_mapped_memory[start - device_addr]});
         });
     }
-    async_buffers_death_ring.emplace_back(*async_buffer);
+    // Copy without the cache lock; ClearDownload waits on writeback_mutex so newer data lands after.
+    {
+        std::unique_lock writeback_lock{writeback_mutex};
+        lock.unlock();
+        for (const WriteBack& write_back : write_backs) {
+            device_memory.WriteBlockUnsafe(write_back.start, write_back.data, write_back.size);
+        }
+        writeback_lock.unlock();
+        lock.lock();
+    }
+    for (const auto& copy : pending_downloads.front()) {
+        async_downloads.Subtract(static_cast<DAddr>(copy.src_offset), copy.size,
+                                 [&](DAddr start, DAddr end) {
+                                     gpu_modified_ranges.Subtract(start, end - start);
+                                 });
+    }
+    async_buffers_death_ring.emplace_back(*async_buffers.front());
     async_buffers.pop_front();
     pending_downloads.pop_front();
 }

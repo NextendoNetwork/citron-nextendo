@@ -700,6 +700,17 @@ VideoCore::RasterizerDownloadArea RasterizerVulkan::GetFlushArea(DAddr addr, u64
             return *area;
         }
     }
+    {
+        // Deferred large buffer write-backs are downloaded when the CPU actually reads them.
+        std::scoped_lock lock{buffer_cache.mutex};
+        if (buffer_cache.IsRegionLazyDownload(addr, size)) {
+            return VideoCore::RasterizerDownloadArea{
+                .start_address = Common::AlignDown(addr, Core::DEVICE_PAGESIZE),
+                .end_address = Common::AlignUp(addr + size, Core::DEVICE_PAGESIZE),
+                .preemtive = false,
+            };
+        }
+    }
     VideoCore::RasterizerDownloadArea new_area{
         .start_address = Common::AlignDown(addr, Core::DEVICE_PAGESIZE),
         .end_address = Common::AlignUp(addr + size, Core::DEVICE_PAGESIZE),
@@ -831,6 +842,10 @@ void RasterizerVulkan::SignalReference() {
 
 void RasterizerVulkan::ReleaseFences(bool force) {
     fence_manager.WaitPendingFences(force);
+}
+
+std::optional<u32> RasterizerVulkan::PendingSemaphoreValue(GPUVAddr addr) {
+    return query_cache.PendingPayload(addr);
 }
 
 void RasterizerVulkan::FlushAndInvalidateRegion(DAddr addr, u64 size,
@@ -1067,11 +1082,15 @@ bool AccelerateDMA::DmaBufferImageCopy(const Tegra::DMA::ImageCopy& copy_info,
                                        const Tegra::DMA::BufferOperand& buffer_operand,
                                        const Tegra::DMA::ImageOperand& image_operand) {
     std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
+    const u32 buffer_size = static_cast<u32>(buffer_operand.pitch * buffer_operand.height);
+    // The buffer is bound by its start address only; a split range must take the software path.
+    if (!buffer_cache.IsGpuRangeContinuous(buffer_operand.address, buffer_size)) {
+        return false;
+    }
     const auto image_id = texture_cache.DmaImageId(image_operand, IS_IMAGE_UPLOAD);
     if (image_id == VideoCommon::NULL_IMAGE_ID) {
         return false;
     }
-    const u32 buffer_size = static_cast<u32>(buffer_operand.pitch * buffer_operand.height);
     static constexpr auto sync_info = VideoCommon::ObtainBufferSynchronize::FullSynchronize;
     const auto post_op = IS_IMAGE_UPLOAD ? VideoCommon::ObtainBufferOperation::DoNothing
                                          : VideoCommon::ObtainBufferOperation::MarkAsWritten;

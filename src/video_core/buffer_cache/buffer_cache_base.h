@@ -212,6 +212,12 @@ public:
 
     std::optional<VideoCore::RasterizerDownloadArea> GetFlushArea(DAddr device_addr, u64 size);
 
+    /// True if the region holds deferred GPU data; marks it CPU-read so it is written back again.
+    [[nodiscard]] bool IsRegionLazyDownload(DAddr device_addr, u64 size);
+
+    /// Whether a committed GPU-written interval skips the per-fence write-back.
+    [[nodiscard]] bool IsLazyInterval(DAddr device_addr, u64 size) const;
+
     bool InlineMemory(DAddr dest_address, size_t copy_size, std::span<const u8> inlined_buffer);
 
     void BindGraphicsUniformBuffer(size_t stage, u32 index, GPUVAddr gpu_addr, u32 size);
@@ -281,6 +287,10 @@ public:
     bool DMACopy(GPUVAddr src_address, GPUVAddr dest_address, u64 amount);
 
     bool DMAClear(GPUVAddr src_address, u64 amount, u32 value);
+
+    [[nodiscard]] bool IsGpuRangeContinuous(GPUVAddr gpu_addr, u64 size) const {
+        return gpu_memory->IsContinuousRange(gpu_addr, size);
+    }
 
     /// Return true when a CPU region is modified from the GPU
     [[nodiscard]] bool IsRegionGpuModified(DAddr addr, size_t size);
@@ -486,11 +496,18 @@ public:
 
     // Async Buffers
     Common::OverlapRangeSet<DAddr> async_downloads;
+    /// Large GPU-written ranges left out of per-fence write-backs; CPU reads flush them on demand.
+    Common::RangeSet<DAddr> lazy_download_ranges;
+    /// Lazy ranges the CPU has read; they go back to per-fence write-backs.
+    Common::RangeSet<DAddr> cpu_read_ranges;
+    static constexpr u64 LAZY_DOWNLOAD_THRESHOLD = 1ULL << 20;
     std::deque<std::optional<Async_Buffer>> async_buffers;
     std::deque<boost::container::small_vector<BufferCopy, 4>> pending_downloads;
     std::optional<Async_Buffer> current_buffer;
 
     std::deque<Async_Buffer> async_buffers_death_ring;
+    /// Held while async write-backs copy to guest memory outside `mutex`; ClearDownload waits on it.
+    std::mutex writeback_mutex;
 
     size_t immediate_buffer_capacity = 0;
     Common::ScratchBuffer<u8> immediate_buffer_alloc;

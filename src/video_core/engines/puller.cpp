@@ -12,6 +12,8 @@
 #include "video_core/engines/kepler_memory.h"
 #include "video_core/engines/maxwell_3d.h"
 #include "video_core/engines/maxwell_dma.h"
+#include "video_core/host1x/host1x.h"
+#include "video_core/host1x/syncpoint_manager.h"
 #include "video_core/engines/puller.h"
 #include "video_core/gpu.h"
 #include "video_core/memory_manager.h"
@@ -61,11 +63,14 @@ void Puller::ProcessBindMethod(const MethodCall& method_call) {
 
 void Puller::ProcessFenceActionMethod() {
     switch (regs.fence_action.op) {
-    case Puller::FenceOperation::Acquire:
-        // UNIMPLEMENTED_MSG("Channel Scheduling pending.");
-        // WaitFence(regs.fence_action.syncpoint_id, regs.fence_value);
-        rasterizer->ReleaseFences();
+    case Puller::FenceOperation::Acquire: {
+        // Increments issued earlier in GPU order already count; drain only for outside ones.
+        const auto& syncpoints = gpu.Host1x().GetSyncpointManager();
+        if (!syncpoints.IsReadyGuest(regs.fence_action.syncpoint_id, regs.fence_value)) {
+            rasterizer->ReleaseFences();
+        }
         break;
+    }
     case Puller::FenceOperation::Increment:
         rasterizer->SignalSyncPoint(regs.fence_action.syncpoint_id);
         break;
@@ -86,7 +91,7 @@ void Puller::ProcessSemaphoreTriggerMethod() {
                           VideoCommon::QueryPropertiesFlags::HasTimeout, payload, 0);
     } else {
         do {
-            const u32 word{memory_manager.Read<u32>(regs.semaphore_address.SemaphoreAddress())};
+            const u32 word{ReadSemaphore(regs.semaphore_address.SemaphoreAddress())};
             regs.acquire_source = true;
             regs.acquire_value = regs.semaphore_sequence;
             if (op == GpuSemaphoreOperation::AcquireEqual) {
@@ -122,14 +127,22 @@ void Puller::ProcessSemaphoreRelease() {
                       VideoCommon::QueryPropertiesFlags::IsAFence, payload, 0);
 }
 
+u32 Puller::ReadSemaphore(GPUVAddr address) const {
+    // A release queued earlier in the stream satisfies GPU waits without draining every fence.
+    if (const std::optional<u32> pending = rasterizer->PendingSemaphoreValue(address)) {
+        return *pending;
+    }
+    return memory_manager.Read<u32>(address);
+}
+
 void Puller::ProcessSemaphoreAcquire() {
-    u32 word = memory_manager.Read<u32>(regs.semaphore_address.SemaphoreAddress());
+    u32 word = ReadSemaphore(regs.semaphore_address.SemaphoreAddress());
     const auto value = regs.semaphore_acquire;
     while (word != value) {
         regs.acquire_active = true;
         regs.acquire_value = value;
         rasterizer->ReleaseFences();
-        word = memory_manager.Read<u32>(regs.semaphore_address.SemaphoreAddress());
+        word = ReadSemaphore(regs.semaphore_address.SemaphoreAddress());
         // TODO(kemathe73) figure out how to do the acquire_timeout
         regs.acquire_mode = false;
         regs.acquire_source = false;
