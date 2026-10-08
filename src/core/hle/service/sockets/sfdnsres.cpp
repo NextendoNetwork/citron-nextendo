@@ -129,6 +129,16 @@ static std::optional<std::string> GetNextendoRedirectIp(const std::string& host,
     const std::string nat_ip =
         GetConfiguredIp(Settings::values.nextendo_nat_ip.GetValue(), "NEXTENDO_NAT_IP");
 
+    // Only PvZ BfN's Blaze hosts; other EA traffic and titles keep their normal DNS.
+    constexpr u64 PvZBattleForNeighborville = 0x0100C56010FD8000ULL;
+    if (program_id == PvZBattleForNeighborville &&
+        (host == "spring18.gosredirector.ea.com" ||
+         (host.starts_with("pvzgw3prodapp-") && host.ends_with(".ea.com")))) {
+        LOG_INFO(Service, "[Nextendo] Redirecting PVZ BFN Blaze host '{}' -> '{}'", host,
+                 server_ip);
+        return server_ip;
+    }
+
     if (host.starts_with("nncs2-") && host.ends_with(".n.n.srv.nintendo.net")) {
         LOG_INFO(Service, "[Nextendo] Redirecting NAT check host '{}' -> '{}'", host, nat_ip);
         return nat_ip;

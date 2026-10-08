@@ -21,6 +21,7 @@
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/k_thread.h"
 #include "core/loader/nextendo_dungeons2_patch.h"
+#include "core/loader/nextendo_pvzbfn_patch.h"
 #include "core/loader/nextendo_s3_patches.h"
 #include "core/loader/nso.h"
 #include "core/memory.h"
@@ -151,7 +152,7 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
         codeset.segments[i].size = PageAlignSizeNSO(codeset.segments[i].size);
     }
 
-    // [Nextendo] Built-in Dungeons II listen-host patch, before mods so a test mod layers on top.
+    // Built-in Nextendo title patches, before mods so a test mod layers on top.
     if (pm) {
         std::span<u8> section(program_image.data() + module_start,
                               program_image.size() - module_start);
@@ -160,6 +161,8 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
         std::memcpy(image.data() + sizeof(NSOHeader), section.data(), section.size());
         image = Loader::NextendoDungeons2Patch::ApplyIfMatch(pm->GetTitleID(),
                                                              nso_header.build_id, std::move(image));
+        image = Loader::NextendoPvZBfNPatch::ApplyIfMatch(pm->GetTitleID(), nso_header.build_id,
+                                                          std::move(image));
         if (image.size() == sizeof(NSOHeader) + section.size()) {
             std::copy(image.begin() + sizeof(NSOHeader), image.end(), section.data());
         }
