@@ -7,6 +7,7 @@
 #include <array>
 #include <bitset>
 #include <map>
+#include <vector>
 
 #include "common/common_types.h"
 #include "shader_recompiler/frontend/ir/type.h"
@@ -180,6 +181,20 @@ struct StorageBufferDescriptor {
     auto operator<=>(const StorageBufferDescriptor&) const = default;
 };
 
+/// Constant store of value to (pointer + store_offset), with the pointer read from the storage
+/// buffer at cbuf_index/cbuf_offset, at byte (pointer_stride * VertexId + pointer_offset).
+/// Removed from vertex shaders and performed by the rasterizer.
+struct PointerStoreDescriptor {
+    u32 cbuf_index;
+    u32 cbuf_offset;
+    u32 pointer_stride;
+    u32 pointer_offset;
+    s32 store_offset;
+    u32 value;
+
+    auto operator<=>(const PointerStoreDescriptor&) const = default;
+};
+
 struct TextureBufferDescriptor {
     bool has_secondary;
     u32 cbuf_index;
@@ -342,6 +357,7 @@ struct Info {
     ImageBufferDescriptors image_buffer_descriptors;
     TextureDescriptors texture_descriptors;
     ImageDescriptors image_descriptors;
+    std::vector<PointerStoreDescriptor> pointer_store_descriptors;
 };
 
 template <typename Descriptors>

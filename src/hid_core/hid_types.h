@@ -588,6 +588,20 @@ static_assert(sizeof(SixAxisSensorIcInformation) == 0xC8,
 static_assert(std::is_trivial_v<SixAxisSensorIcInformation>,
               "SixAxisSensorIcInformation must be trivial.");
 
+// Sensor ranges and sensitivities of Joy-Con and Pro Controller IMUs
+constexpr SixAxisSensorIcInformation DEFAULT_SIX_AXIS_SENSOR_IC_INFORMATION{
+    .angular_rate = 2000.0f,
+    .unknown_gyro_data1 = {-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f},
+    .unknown_gyro_data2 = {0.95f, -0.003f, -0.003f, -0.003f, 0.95f, -0.003f, -0.003f, -0.003f,
+                           0.95f},
+    .unknown_gyro_data3 = {1.05f, 0.003f, 0.003f, 0.003f, 1.05f, 0.003f, 0.003f, 0.003f, 1.05f},
+    .acceleration_range = 8.0f,
+    .unknown_accel_data1 = {-0.0612f, -0.0612f, -0.0612f, 0.0612f, 0.0612f, 0.0612f},
+    .unknown_accel_data2 = {0.95f, -0.016f, -0.016f, -0.016f, 0.95f, -0.016f, -0.016f, -0.016f,
+                            0.95f},
+    .unknown_accel_data3 = {1.05f, 0.016f, 0.016f, 0.016f, 1.05f, 0.016f, 0.016f, 0.016f, 1.05f},
+};
+
 // This is nn::hid::SixAxisSensorAttribute
 struct SixAxisSensorAttribute {
     union {

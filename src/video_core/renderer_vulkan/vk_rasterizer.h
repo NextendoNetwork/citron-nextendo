@@ -5,6 +5,7 @@
 
 #include <array>
 #include <atomic>
+#include <optional>
 #include <shared_mutex>
 
 #include <boost/container/static_vector.hpp>
@@ -158,8 +159,13 @@ private:
 
     static constexpr VkDeviceSize DEFAULT_BUFFER_SIZE = 4 * sizeof(float);
 
+    /// Returns the pipeline the draw was recorded with, or nullptr when it was skipped
     template <typename Func>
-    void PrepareDraw(bool is_indexed, Func&&);
+    GraphicsPipeline* PrepareDraw(bool is_indexed, Func&&);
+
+    /// Performs the pipeline's vertex pointer stores, instance_count is empty for indirect draws
+    void PerformVertexPointerStores(const GraphicsPipeline& pipeline, bool is_indexed,
+                                    std::optional<u32> instance_count);
 
     void FlushWork();
 

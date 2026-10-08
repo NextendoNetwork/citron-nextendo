@@ -39,6 +39,9 @@ public:
         const Core::HID::SixAxisSensorHandle& sixaxis_handle, bool is_enabled);
     Result IsSixAxisSensorUnalteredPassthroughEnabled(
         const Core::HID::SixAxisSensorHandle& sixaxis_handle, bool& is_enabled) const;
+    Result StoreSixAxisSensorCalibrationParameter(
+        const Core::HID::SixAxisSensorHandle& sixaxis_handle,
+        const Core::HID::SixAxisSensorCalibrationParameter& calibration);
     Result LoadSixAxisSensorCalibrationParameter(
         const Core::HID::SixAxisSensorHandle& sixaxis_handle,
         Core::HID::SixAxisSensorCalibrationParameter& calibration) const;
@@ -64,8 +67,8 @@ private:
         bool is_fusion_enabled{true};
         bool unaltered_passthrough{false};
         Core::HID::SixAxisSensorFusionParameters fusion{};
-        Core::HID::SixAxisSensorCalibrationParameter calibration{};
-        Core::HID::SixAxisSensorIcInformation ic_information{};
+        Core::HID::SixAxisSensorIcInformation ic_information{
+            Core::HID::DEFAULT_SIX_AXIS_SENSOR_IC_INFORMATION};
         Core::HID::GyroscopeZeroDriftMode gyroscope_zero_drift_mode{
             Core::HID::GyroscopeZeroDriftMode::Standard};
     };
@@ -83,6 +86,11 @@ private:
         SixaxisParameters sixaxis_left{};
         SixaxisParameters sixaxis_right{};
         SixaxisParameters sixaxis_unknown{};
+
+        // User calibration per sensor (DeviceIndex), shared by every npad style
+        std::array<Core::HID::SixAxisSensorCalibrationParameter,
+                   static_cast<std::size_t>(Core::HID::DeviceIndex::MaxDeviceIndex)>
+            calibrations{};
 
         // Current pad state
         Core::HID::SixAxisSensorState sixaxis_fullkey_state{};

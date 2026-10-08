@@ -1744,8 +1744,8 @@ Result IHidServer::StoreSixAxisSensorCalibrationParameter(
                 "(STUBBED) called, npad_type={}, npad_id={}, device_index={}, applet_resource_user_id={}",
                 sixaxis_handle.npad_type, sixaxis_handle.npad_id, sixaxis_handle.device_index, aruid.pid);
 
-    // This function would store calibration data to system storage
-    R_SUCCEED();
+    R_RETURN(GetResourceManager()->GetSixAxis()->StoreSixAxisSensorCalibrationParameter(
+        sixaxis_handle, *calibration_data));
 }
 
 // Seven six-axis sensor fusion strength functions

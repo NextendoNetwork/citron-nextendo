@@ -2714,6 +2714,13 @@ void GMainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletP
             Settings::values.extended_dynamic_state.SetValue(Settings::ExtendedDynamicState::EDS1);
         }
 
+        // Nintendo Switch Sports requires Fast GPU Time.
+        if (title_id == 0x0100D2F00D5C0000ULL) {
+            LOG_INFO(Frontend, "Forcing Fast GPU Time for Nintendo Switch Sports");
+            Settings::values.use_fast_gpu_time.SetGlobal(false);
+            Settings::values.use_fast_gpu_time.SetValue(true);
+        }
+
         // TEMPORARY: resolution scale above 1x doubles Nextendo online points. Clamp to 1x
         // until the actual scaling bug is fixed. Remove this block once that's resolved.
         switch (title_id) {
