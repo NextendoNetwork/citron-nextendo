@@ -7582,12 +7582,12 @@ namespace {
 constexpr u64 kPokemonViolet = 0x01008F6008C5E000ULL;
 constexpr u64 kPokemonScarlet = 0x0100A3D008C5C000ULL;
 constexpr u64 kPokemonLegendsZa = 0x0100F43008C44000ULL;
+constexpr u64 kNintendoSwitchSports = 0x0100D2F00D5C0000ULL;
 
-// Scarlet/Violet events and Legends: Z-A Mystery Gifts are optional BCAT rather than Splatoon 2's
-// schedule byaml.
-bool IsNextendoPokemonBcatTitle(u64 title_id) {
+// Titles whose BCAT delivery is a plain package from /api/bcat/<title>, installed as-is.
+bool IsNextendoPackageBcatTitle(u64 title_id) {
     return title_id == kPokemonViolet || title_id == kPokemonScarlet ||
-           title_id == kPokemonLegendsZa;
+           title_id == kPokemonLegendsZa || title_id == kNintendoSwitchSports;
 }
 } // Anonymous namespace
 
@@ -7600,6 +7600,7 @@ bool GMainWindow::NextendoByamlRequired(u64 title_id) const {
     case kPokemonViolet:
     case kPokemonScarlet:
     case kPokemonLegendsZa:
+    case kNintendoSwitchSports:
         return true;
     default:
         return false;
@@ -7616,7 +7617,7 @@ bool GMainWindow::NextendoByamlInstalled(u64 title_id) const {
     if (title_id == Nextendo::Splatoon3Bcat::TitleId) {
         return Nextendo::Splatoon3Bcat::IsInstalled(bcat_dir);
     }
-    if (IsNextendoPokemonBcatTitle(title_id)) {
+    if (IsNextendoPackageBcatTitle(title_id)) {
         std::error_code ec;
         for (auto it = std::filesystem::recursive_directory_iterator(bcat_dir, ec);
              !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
@@ -7747,9 +7748,9 @@ bool GMainWindow::NextendoByamlDownload(u64 title_id) {
 
     // Only this title ID's server-side BCAT content is kept current; fetch it for all variants.
     constexpr u64 kCanonicalByamlTitleId = 0x0100f8f0000a2000ULL;
-    const bool pokemon = IsNextendoPokemonBcatTitle(title_id);
+    const bool package = IsNextendoPackageBcatTitle(title_id);
     const auto fetch_title_id_hex = fmt::format(
-        "{:016X}", (pokemon || title_id == Nextendo::Splatoon3Bcat::TitleId)
+        "{:016X}", (package || title_id == Nextendo::Splatoon3Bcat::TitleId)
                        ? title_id : kCanonicalByamlTitleId);
 
     // Always fetch the full seed and compare its hash locally, rather than trusting the
@@ -8233,7 +8234,7 @@ void GMainWindow::OfferNextendoByamlDownload(u64 title_id) {
     }
     // Refresh Splatoon 3 even with festival events disabled or an existing cache.
     // Finish before boot so the game cannot open files during replacement.
-    if (IsNextendoPokemonBcatTitle(title_id) || title_id == Nextendo::Splatoon3Bcat::TitleId) {
+    if (IsNextendoPackageBcatTitle(title_id) || title_id == Nextendo::Splatoon3Bcat::TitleId) {
         auto future = QtConcurrent::run([this, title_id] { return NextendoByamlDownload(title_id); });
         while (!future.isFinished()) {
             QCoreApplication::processEvents();
