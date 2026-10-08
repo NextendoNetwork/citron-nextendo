@@ -23,8 +23,9 @@ namespace AudioCore::Sink {
 
 void SinkStream::AppendBuffer(SinkBuffer& buffer, std::span<s16> samples) {
     SCOPE_EXIT {
-        queue.EmplaceWait(buffer);
+        // Count before publishing: the callback may dequeue immediately.
         ++queued_buffers;
+        queue.EmplaceWait(buffer);
     };
 
     if (type == StreamType::In) {
@@ -209,6 +210,9 @@ void SinkStream::ProcessAudioOutAndRender(std::span<s16> output_buffer, std::siz
     const std::size_t frame_size_bytes = frame_size * sizeof(s16);
     size_t frames_written{0};
     size_t actual_frames_written{0};
+    if (num_frames == 0) {
+        return;
+    }
 
     // If we're paused or going to shut down, we don't want to consume buffers as coretiming is
     // paused and we'll desync, so just play silence.
@@ -253,11 +257,16 @@ void SinkStream::ProcessAudioOutAndRender(std::span<s16> output_buffer, std::siz
         size_t frames_available{std::min<u64>(playing_buffer.frames - playing_buffer.frames_played,
                                               num_frames - frames_written)};
 
-        samples_buffer.Pop(&output_buffer[frames_written * frame_size],
-                           frames_available * frame_size);
+        const auto wanted = frames_available * frame_size;
+        const auto copied = samples_buffer.Pop(&output_buffer[frames_written * frame_size], wanted);
+        if (copied < wanted) {
+            // Ring overflow or a queue reset must never replay stale device-buffer contents.
+            std::fill_n(output_buffer.data() + frames_written * frame_size + copied,
+                        wanted - copied, s16{});
+        }
 
         frames_written += frames_available;
-        actual_frames_written += frames_available;
+        actual_frames_written += copied / frame_size;
         playing_buffer.frames_played += frames_available;
 
         // If that's all the frames in the current buffer, add its samples and mark it as
