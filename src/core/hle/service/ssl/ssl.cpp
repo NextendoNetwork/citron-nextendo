@@ -366,7 +366,10 @@ private:
             res = backend->GetServerCerts(&certs);
             if (res == ResultSuccess) {
                 const std::vector<u8> certs_buf = SerializeServerCerts(certs);
-                ctx.WriteBuffer(certs_buf);
+                // A caller may pass no buffer just to size the chain.
+                if (ctx.CanWriteBuffer() && ctx.GetWriteBufferSize() >= certs_buf.size()) {
+                    ctx.WriteBuffer(certs_buf);
+                }
                 out.certs_count = static_cast<u32>(certs.size());
                 out.certs_size = static_cast<u32>(certs_buf.size());
             }
