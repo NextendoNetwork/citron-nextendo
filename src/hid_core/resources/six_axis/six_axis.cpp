@@ -216,6 +216,21 @@ Result SixAxis::IsSixAxisSensorAtRest(const Core::HID::SixAxisSensorHandle& sixa
     return ResultSuccess;
 }
 
+Result SixAxis::StoreSixAxisSensorCalibrationParameter(
+    const Core::HID::SixAxisSensorHandle& sixaxis_handle,
+    const Core::HID::SixAxisSensorCalibrationParameter& calibration) {
+    const auto is_valid = IsSixaxisHandleValid(sixaxis_handle);
+    if (is_valid.IsError()) {
+        LOG_ERROR(Service_HID, "Invalid handle, error_code={}", is_valid.raw);
+        return is_valid;
+    }
+
+    // TODO: Write this data to the controller
+    auto& controller = GetControllerFromHandle(sixaxis_handle);
+    controller.calibrations[static_cast<std::size_t>(sixaxis_handle.device_index)] = calibration;
+    return ResultSuccess;
+}
+
 Result SixAxis::LoadSixAxisSensorCalibrationParameter(
     const Core::HID::SixAxisSensorHandle& sixaxis_handle,
     Core::HID::SixAxisSensorCalibrationParameter& calibration) const {
@@ -226,8 +241,8 @@ Result SixAxis::LoadSixAxisSensorCalibrationParameter(
     }
 
     // TODO: Request this data to the controller. On error return 0xd8ca
-    const auto& sixaxis = GetSixaxisState(sixaxis_handle);
-    calibration = sixaxis.calibration;
+    const auto& controller = GetControllerFromHandle(sixaxis_handle);
+    calibration = controller.calibrations[static_cast<std::size_t>(sixaxis_handle.device_index)];
     return ResultSuccess;
 }
 
