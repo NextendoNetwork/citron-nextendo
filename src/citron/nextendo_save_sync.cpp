@@ -12,6 +12,15 @@
 #include <iterator>
 #endif
 
+#if !defined(CITRON_ENABLE_LIBARCHIVE) && defined(_WIN32)
+#include <QProcess>
+#include <QProcessEnvironment>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include <fmt/format.h>
 
 #include "common/nextendo_compatible_titles.h"
@@ -133,8 +142,16 @@ bool UnzipToDirectory(std::span<const u8> zip_data, const std::filesystem::path&
 
     struct archive_entry* entry;
     while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
+#ifdef _WIN32
+        const wchar_t* entry_name = archive_entry_pathname_w(entry);
+        const std::filesystem::path entry_path =
+            entry_name != nullptr ? dest / entry_name
+                                  : dest / std::filesystem::path{archive_entry_pathname(entry)};
+        archive_entry_copy_pathname_w(entry, entry_path.c_str());
+#else
         const std::filesystem::path entry_path = dest / archive_entry_pathname(entry);
         archive_entry_set_pathname(entry, entry_path.string().c_str());
+#endif
 
         if (archive_write_header(ext, entry) != ARCHIVE_OK) {
             continue;
@@ -173,10 +190,24 @@ std::vector<u8> ZipDirectoryPowerShell(const FileSys::VirtualDir& dir, u64 title
     std::error_code ec;
     std::filesystem::remove(tmp_zip, ec);
 
-    const std::string cmd = "powershell -NoProfile -NonInteractive -Command \"Compress-Archive -Path \\\"" +
-                             real_dir.string() + "\\*\\\" -DestinationPath \\\"" + tmp_zip.string() +
-                             "\\\" -Force\"";
-    if (std::system(cmd.c_str()) != 0) {
+    // std::system() uses the console code page, so a save folder outside that page fails
+    // even when the process ACP is UTF-8. Pass the paths as UTF-16 environment values.
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("NEXTENDO_SAVE_SRC"), QString::fromStdWString(real_dir.wstring()));
+    env.insert(QStringLiteral("NEXTENDO_SAVE_ZIP"), QString::fromStdWString(tmp_zip.wstring()));
+
+    QProcess process;
+    process.setProcessEnvironment(env);
+    process.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
+        args->flags |= CREATE_NO_WINDOW;
+    });
+    process.start(QStringLiteral("powershell"),
+                  {QStringLiteral("-NoProfile"), QStringLiteral("-NonInteractive"),
+                   QStringLiteral("-WindowStyle"), QStringLiteral("Hidden"),
+                   QStringLiteral("-Command"),
+                   QStringLiteral("Compress-Archive -Path (Join-Path $env:NEXTENDO_SAVE_SRC '*') "
+                                  "-DestinationPath $env:NEXTENDO_SAVE_ZIP -Force")});
+    if (!process.waitForStarted(15000) || !process.waitForFinished(-1) || process.exitCode() != 0) {
         std::filesystem::remove(tmp_zip, ec);
         return {};
     }
@@ -205,10 +236,23 @@ bool UnzipToDirectoryPowerShell(std::span<const u8> zip_data, const std::filesys
                   static_cast<std::streamsize>(zip_data.size()));
     }
 
-    const std::string cmd = "powershell -NoProfile -NonInteractive -Command \"Expand-Archive -Path \\\"" +
-                             tmp_zip.string() + "\\\" -DestinationPath \\\"" + dest.string() +
-                             "\\\" -Force\"";
-    const bool ok = std::system(cmd.c_str()) == 0;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("NEXTENDO_SAVE_ZIP"), QString::fromStdWString(tmp_zip.wstring()));
+    env.insert(QStringLiteral("NEXTENDO_SAVE_DEST"), QString::fromStdWString(dest.wstring()));
+
+    QProcess process;
+    process.setProcessEnvironment(env);
+    process.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
+        args->flags |= CREATE_NO_WINDOW;
+    });
+    process.start(QStringLiteral("powershell"),
+                  {QStringLiteral("-NoProfile"), QStringLiteral("-NonInteractive"),
+                   QStringLiteral("-WindowStyle"), QStringLiteral("Hidden"),
+                   QStringLiteral("-Command"),
+                   QStringLiteral("Expand-Archive -LiteralPath $env:NEXTENDO_SAVE_ZIP "
+                                  "-DestinationPath $env:NEXTENDO_SAVE_DEST -Force")});
+    const bool ok = process.waitForStarted(15000) && process.waitForFinished(-1) &&
+                    process.exitCode() == 0;
     std::error_code ec;
     std::filesystem::remove(tmp_zip, ec);
     return ok;
