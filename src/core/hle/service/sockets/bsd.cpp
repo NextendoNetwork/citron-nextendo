@@ -2067,6 +2067,7 @@ Errno BSD::ShutdownImpl(s32 fd, s32 how) {
     }
 
     const Network::ShutdownHow host_how = Translate(static_cast<ShutdownHow>(how));
+    file_descriptors[fd]->shut_down = true;
     return Translate(file_descriptors[fd]->socket->Shutdown(host_how));
 }
 
@@ -2374,6 +2375,7 @@ Errno BSD::CloseImpl(s32 fd) {
     u16 bound_port = 0;
     bool is_udp = false;
     bool was_connected = false;
+    bool was_shut_down = false;
 
     {
         std::lock_guard lock(fd_table_mutex);
@@ -2383,11 +2385,12 @@ Errno BSD::CloseImpl(s32 fd) {
         bound_port = file_descriptors[fd]->bound_port;
         is_udp = (file_descriptors[fd]->type == Network::Type::DGRAM);
         was_connected = file_descriptors[fd]->connected;
+        was_shut_down = file_descriptors[fd]->shut_down;
         file_descriptors[fd].reset();
     }
 
     // Connected means one peer, so closing it is a real teardown, not the probe/play port swap.
-    if (is_udp && bound_port > 0 && !was_connected) {
+    if (is_udp && bound_port > 0 && !was_connected && !was_shut_down) {
         if (ParkUdpSocket(socket_to_close, bound_port)) {
             LOG_INFO(Service, "[Nextendo] Parking UDP socket fd={} bound to port {}", fd,
                      bound_port);

@@ -56,6 +56,8 @@ private:
         Network::Type type = Network::Type::DGRAM;
         Network::Protocol protocol = Network::Protocol::UDP;
         u16 bound_port = 0;
+        // Set once the guest shuts the socket down; a shut-down socket must never be parked.
+        bool shut_down = false;
         bool sni_injected = false;
         // [Nextendo] RecvImpl's post-handshake grace-wait (see bsd.cpp) should only cover a
         // reply that might genuinely still be in flight -- set true by SendImpl right after the
