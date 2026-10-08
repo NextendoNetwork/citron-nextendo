@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2022 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <span>
@@ -136,6 +137,51 @@ constexpr std::array<f32, 256> RGB_TO_SRGB_LUT = {
     9.736842e-01f, 9.754679e-01f, 9.772474e-01f, 9.790225e-01f, 9.807934e-01f, 9.825601e-01f,
     9.843225e-01f, 9.860808e-01f, 9.878350e-01f, 9.895850e-01f, 9.913309e-01f, 9.930727e-01f,
     9.948106e-01f, 9.965444e-01f, 9.982741e-01f, 1.000000e+00f};
+
+// IEEE float with a 5-bit exponent (fp16, and unsigned fp11/fp10) to binary32.
+f32 SmallFloatToFloat(u32 value, u32 mantissa_bits, bool has_sign) {
+    const u32 sign = has_sign ? ((value >> (mantissa_bits + 5)) & 1U) << 31 : 0U;
+    const u32 exponent = (value >> mantissa_bits) & 0x1fU;
+    const u32 mantissa = value & ((1U << mantissa_bits) - 1U);
+    if (exponent == 0x1f) {
+        return Common::BitCast<f32>(sign | 0x7f800000U | (mantissa << (23 - mantissa_bits)));
+    }
+    if (exponent == 0) {
+        const f32 denormal = std::ldexp(static_cast<f32>(mantissa), -14 - static_cast<int>(mantissa_bits));
+        return sign != 0 ? -denormal : denormal;
+    }
+    return Common::BitCast<f32>(sign | ((exponent + 112U) << 23) | (mantissa << (23 - mantissa_bits)));
+}
+
+// Binary32 to an IEEE float with a 5-bit exponent, rounding to nearest even like the hardware.
+u32 FloatToSmallFloat(f32 value, u32 mantissa_bits, bool has_sign) {
+    const u32 bits = Common::BitCast<u32>(value);
+    const u32 abs = bits & 0x7fffffffU;
+    const u32 infinity = 0x1fU << mantissa_bits;
+    const u32 sign = has_sign ? (bits >> 31) << (mantissa_bits + 5) : 0U;
+    if (abs > 0x7f800000U) {
+        return sign | infinity | (1U << (mantissa_bits - 1));
+    }
+    if ((bits >> 31) != 0 && !has_sign) {
+        return 0;
+    }
+    const u32 shift = 23 - mantissa_bits;
+    const auto round = [](u32 truncated, u32 remainder, u32 half) {
+        return truncated + (remainder > half || (remainder == half && (truncated & 1U)) ? 1U : 0U);
+    };
+    if (abs < 0x38800000U) {
+        const u32 denormal_shift = 136 - mantissa_bits - (abs >> 23);
+        if (denormal_shift > 24) {
+            return sign;
+        }
+        const u32 mantissa = (abs & 0x7fffffU) | 0x800000U;
+        return sign | round(mantissa >> denormal_shift, mantissa & ((1U << denormal_shift) - 1U),
+                            1U << (denormal_shift - 1));
+    }
+    const u32 result = round((abs >> shift) - (112U << mantissa_bits), abs & ((1U << shift) - 1U),
+                             1U << (shift - 1));
+    return sign | std::min(result, infinity);
+}
 
 } // namespace
 
@@ -702,13 +748,6 @@ private:
             // TODO: force the exponent within the range of half float. Not needed in UNORM / SNORM
             return Common::BitCast<f32>(tmp);
         };
-        const auto from_fp_n = [&sign_extend](u32 base_value, size_t bits, size_t mantissa) {
-            constexpr size_t fp32_mantissa_bits = 23;
-            size_t shift_towards = fp32_mantissa_bits - mantissa;
-            const u32 new_value =
-                static_cast<u32>(sign_extend(base_value, bits) << shift_towards) & (~(1U << 31));
-            return Common::BitCast<f32>(new_value);
-        };
         const auto calculate_snorm = [&]() {
             return static_cast<f32>(
                 static_cast<f32>(sign_extend(value, component_sizes[which_component])) /
@@ -739,14 +778,10 @@ private:
             if constexpr (component_sizes[which_component] == 32) {
                 out_component = Common::BitCast<f32>(value);
             } else if constexpr (component_sizes[which_component] == 16) {
-                static constexpr u32 sign_mask = 0x8000;
-                static constexpr u32 mantissa_mask = 0x8000;
-                out_component = Common::BitCast<f32>(((value & sign_mask) << 16) |
-                                                     (((value & 0x7c00) + 0x1C000) << 13) |
-                                                     ((value & mantissa_mask) << 13));
+                out_component = SmallFloatToFloat(value, 10, true);
             } else {
-                out_component = from_fp_n(value, component_sizes[which_component],
-                                          component_sizes[which_component] - 5);
+                out_component =
+                    SmallFloatToFloat(value, component_sizes[which_component] - 5, false);
             }
         } else if constexpr (component_types[which_component] == ComponentType::SRGB) {
             if constexpr (component_swizzle[which_component] == Swizzle::A) {
@@ -768,12 +803,6 @@ private:
         const auto insert_to_word = [&]<typename T>(T new_word) {
             which_word |= (static_cast<u32>(new_word) << bound_offsets[which_component]) &
                           component_mask[which_component];
-        };
-        const auto to_fp_n = [](f32 base_value, size_t bits, size_t mantissa) {
-            constexpr size_t fp32_mantissa_bits = 23;
-            u32 tmp_value = Common::BitCast<u32>(std::max(base_value, 0.0f));
-            size_t shift_towards = fp32_mantissa_bits - mantissa;
-            return tmp_value >> shift_towards;
         };
         const auto calculate_unorm = [&]() {
             return static_cast<u32>(
@@ -802,17 +831,10 @@ private:
                 u32 tmp_word = Common::BitCast<u32>(in_component);
                 insert_to_word(tmp_word);
             } else if constexpr (component_sizes[which_component] == 16) {
-                static constexpr u32 sign_mask = 0x8000;
-                static constexpr u32 mantissa_mask = 0x03ff;
-                static constexpr u32 exponent_mask = 0x7c00;
-                const u32 tmp_word = Common::BitCast<u32>(in_component);
-                const u32 half = ((tmp_word >> 16) & sign_mask) |
-                                 ((((tmp_word & 0x7f800000) - 0x38000000) >> 13) & exponent_mask) |
-                                 ((tmp_word >> 13) & mantissa_mask);
-                insert_to_word(half);
+                insert_to_word(FloatToSmallFloat(in_component, 10, true));
             } else {
-                insert_to_word(to_fp_n(in_component, component_sizes[which_component],
-                                       component_sizes[which_component] - 5));
+                insert_to_word(
+                    FloatToSmallFloat(in_component, component_sizes[which_component] - 5, false));
             }
         } else if constexpr (component_types[which_component] == ComponentType::SRGB) {
             if constexpr (component_swizzle[which_component] != Swizzle::A) {
