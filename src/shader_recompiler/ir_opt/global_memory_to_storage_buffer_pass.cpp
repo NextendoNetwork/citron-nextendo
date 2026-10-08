@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <array>
 #include <optional>
 
 #include <boost/container/flat_set.hpp>
 #include <boost/container/small_vector.hpp>
+#include <boost/container/static_vector.hpp>
 
 #include "common/alignment.h"
 #include "shader_recompiler/frontend/ir/basic_block.h"
@@ -366,8 +368,8 @@ std::optional<StorageBufferAddr> Track(const IR::Value& value, const Bias* bias)
     return BreadthFirstSearch(value, pred);
 }
 
-/// Collects the storage buffer used by a global memory instruction and the instruction itself
-void CollectStorageBuffers(IR::Block& block, IR::Inst& inst, StorageInfo& info) {
+/// Tracks the storage buffer a global memory low address is based on
+std::optional<StorageBufferAddr> TrackStorageBuffer(const IR::U32& low_addr) {
     // NVN puts storage buffers in a specific range, we have to bias towards these addresses to
     // avoid getting false positives. Additional biases cover games (e.g. Zelda TOTK) that use
     // storage buffers at index 6 or extended offset ranges.
@@ -383,12 +385,6 @@ void CollectStorageBuffers(IR::Block& block, IR::Inst& inst, StorageInfo& info) 
         .offset_end = 0x800,
         .alignment = 16,
     };
-    // Track the low address of the instruction
-    const std::optional<LowAddrInfo> low_addr_info{TrackLowAddress(&inst)};
-    if (!low_addr_info) {
-        return;
-    }
-    const IR::U32 low_addr{low_addr_info->value};
     std::optional<StorageBufferAddr> storage_buffer{Track(low_addr, &nvn_bias)};
     if (!storage_buffer) {
         storage_buffer = Track(low_addr, &extended_index_bias);
@@ -397,10 +393,24 @@ void CollectStorageBuffers(IR::Block& block, IR::Inst& inst, StorageInfo& info) 
         storage_buffer = Track(low_addr, nullptr);
         if (!storage_buffer) {
             LOG_DEBUG(Shader, "Storage buffer failed to track, using global memory fallbacks");
-            return;
+            return std::nullopt;
         }
         LOG_DEBUG(Shader, "Storage buffer tracked without bias, index {} offset {}",
                   storage_buffer->index, storage_buffer->offset);
+    }
+    return storage_buffer;
+}
+
+/// Collects the storage buffer used by a global memory instruction and the instruction itself
+void CollectStorageBuffers(IR::Block& block, IR::Inst& inst, StorageInfo& info) {
+    // Track the low address of the instruction
+    const std::optional<LowAddrInfo> low_addr_info{TrackLowAddress(&inst)};
+    if (!low_addr_info) {
+        return;
+    }
+    const std::optional<StorageBufferAddr> storage_buffer{TrackStorageBuffer(low_addr_info->value)};
+    if (!storage_buffer) {
+        return;
     }
     // Collect storage buffer and the instruction
     if (IsGlobalMemoryWrite(inst)) {
@@ -524,9 +534,382 @@ void Replace(IR::Block& block, IR::Inst& inst, const IR::U32& storage_index,
         throw InvalidArgument("Invalid global memory opcode {}", inst.GetOpcode());
     }
 }
+
+/// Evaluates value for a VertexId, reading the storage buffer address low word as cbuf_value.
+/// Fails on any other input or after visiting budget instructions.
+std::optional<u32> EvaluateForVertex(const IR::Value& value,
+                                     const StorageBufferAddr& storage_buffer, u32 vertex_id,
+                                     u32 cbuf_value, u32& budget) {
+    if (value.IsImmediate()) {
+        if (value.Type() != IR::Type::U32) {
+            return std::nullopt;
+        }
+        return value.U32();
+    }
+    if (budget == 0) {
+        return std::nullopt;
+    }
+    --budget;
+    const IR::Inst* const inst{value.InstRecursive()};
+    const auto arg{[&](size_t index) {
+        return EvaluateForVertex(inst->Arg(index), storage_buffer, vertex_id, cbuf_value, budget);
+    }};
+    const auto is_vertex_id{[](const IR::Value& attribute) {
+        const IR::Value resolved{attribute.Resolve()};
+        return resolved.Type() == IR::Type::Attribute &&
+               resolved.Attribute() == IR::Attribute::VertexId;
+    }};
+    switch (inst->GetOpcode()) {
+    case IR::Opcode::GetAttributeU32:
+        return is_vertex_id(inst->Arg(0)) ? std::optional<u32>{vertex_id} : std::nullopt;
+    case IR::Opcode::BitCastU32F32: {
+        const IR::Inst* const source{inst->Arg(0).TryInstRecursive()};
+        if (source && source->GetOpcode() == IR::Opcode::GetAttribute &&
+            is_vertex_id(source->Arg(0))) {
+            return vertex_id;
+        }
+        return std::nullopt;
+    }
+    case IR::Opcode::GetCbufU32: {
+        const IR::Value index{inst->Arg(0)};
+        const IR::Value offset{inst->Arg(1)};
+        if (index.IsImmediate() && offset.IsImmediate() && index.U32() == storage_buffer.index &&
+            offset.U32() == storage_buffer.offset) {
+            return cbuf_value;
+        }
+        return std::nullopt;
+    }
+    // What address math (XMAD, ISCADD, LEA, IMUL32I) lowers to
+    case IR::Opcode::IAdd32:
+    case IR::Opcode::ISub32:
+    case IR::Opcode::IMul32:
+    case IR::Opcode::BitwiseAnd32:
+    case IR::Opcode::BitwiseOr32:
+    case IR::Opcode::ShiftLeftLogical32:
+    case IR::Opcode::ShiftRightLogical32: {
+        const std::optional<u32> lhs{arg(0)};
+        const std::optional<u32> rhs{arg(1)};
+        if (!lhs || !rhs) {
+            return std::nullopt;
+        }
+        switch (inst->GetOpcode()) {
+        case IR::Opcode::IAdd32:
+            return *lhs + *rhs;
+        case IR::Opcode::ISub32:
+            return *lhs - *rhs;
+        case IR::Opcode::IMul32:
+            return *lhs * *rhs;
+        case IR::Opcode::BitwiseAnd32:
+            return *lhs & *rhs;
+        case IR::Opcode::BitwiseOr32:
+            return *lhs | *rhs;
+        default:
+            // Shifting by 32 or more is undefined
+            if (*rhs >= 32) {
+                return std::nullopt;
+            }
+            return inst->GetOpcode() == IR::Opcode::ShiftLeftLogical32 ? *lhs << *rhs
+                                                                       : *lhs >> *rhs;
+        }
+    }
+    case IR::Opcode::BitFieldUExtract: {
+        const std::optional<u32> base{arg(0)};
+        const std::optional<u32> offset{arg(1)};
+        const std::optional<u32> count{arg(2)};
+        if (!base || !offset || !count || *offset >= 32 || *count > 32 - *offset) {
+            return std::nullopt;
+        }
+        return static_cast<u32>((u64{*base} >> *offset) & ((u64{1} << *count) - 1));
+    }
+    case IR::Opcode::BitFieldInsert: {
+        const std::optional<u32> base{arg(0)};
+        const std::optional<u32> insert{arg(1)};
+        const std::optional<u32> offset{arg(2)};
+        const std::optional<u32> count{arg(3)};
+        if (!base || !insert || !offset || !count || *offset >= 32 || *count > 32 - *offset) {
+            return std::nullopt;
+        }
+        const u32 mask{static_cast<u32>(((u64{1} << *count) - 1) << *offset)};
+        return (*base & ~mask) | ((*insert << *offset) & mask);
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+/// 32-bit word a vertex shader loads from a storage buffer at (stride * VertexId + offset)
+struct VertexIndexedWord {
+    StorageBufferAddr storage_buffer;
+    u32 stride;
+    u32 offset;
+};
+
+/// Tracks a component of a global load from a VertexId-indexed storage buffer offset
+std::optional<VertexIndexedWord> TrackVertexIndexedWord(IR::Inst& load, u32 component) {
+    // Sample the offset to check it is linear in VertexId and independent of the buffer address
+    static constexpr std::array<u32, 8> vertex_ids{0, 1, 2, 3, 7, 255, 65537, 1048573};
+    static constexpr std::array<u32, 2> cbuf_values{0x00010000, 0x7ff31230};
+    static constexpr u32 max_evaluated_insts{64};
+
+    const std::optional<LowAddrInfo> low_addr{TrackLowAddress(&load)};
+    if (!low_addr) {
+        return std::nullopt;
+    }
+    const std::optional<StorageBufferAddr> storage_buffer{TrackStorageBuffer(low_addr->value)};
+    if (!storage_buffer) {
+        return std::nullopt;
+    }
+    std::optional<VertexIndexedWord> word;
+    for (const u32 cbuf_value : cbuf_values) {
+        std::array<u32, vertex_ids.size()> offsets{};
+        for (size_t index = 0; index < vertex_ids.size(); ++index) {
+            u32 budget{max_evaluated_insts};
+            const std::optional<u32> low{EvaluateForVertex(low_addr->value, *storage_buffer,
+                                                           vertex_ids[index], cbuf_value, budget)};
+            if (!low) {
+                return std::nullopt;
+            }
+            offsets[index] = *low + static_cast<u32>(low_addr->imm_offset) - cbuf_value +
+                             component * static_cast<u32>(sizeof(u32));
+        }
+        // vertex_ids starts with 0 and 1
+        const u32 stride{offsets[1] - offsets[0]};
+        for (size_t index = 0; index < vertex_ids.size(); ++index) {
+            if (offsets[index] != offsets[0] + stride * vertex_ids[index]) {
+                return std::nullopt;
+            }
+        }
+        if (word && (word->stride != stride || word->offset != offsets[0])) {
+            return std::nullopt;
+        }
+        word = VertexIndexedWord{
+            .storage_buffer = *storage_buffer,
+            .stride = stride,
+            .offset = offsets[0],
+        };
+    }
+    return word;
+}
+
+/// Tracks the storage buffer location a 32-bit word was loaded from
+std::optional<VertexIndexedWord> TrackLoadedWord(const IR::Value& value) {
+    IR::Inst* const inst{value.TryInstRecursive()};
+    if (!inst) {
+        return std::nullopt;
+    }
+    switch (inst->GetOpcode()) {
+    case IR::Opcode::LoadGlobal32:
+        return TrackVertexIndexedWord(*inst, 0);
+    case IR::Opcode::CompositeExtractU32x2:
+    case IR::Opcode::CompositeExtractU32x4: {
+        IR::Inst* const load{inst->Arg(0).TryInstRecursive()};
+        const IR::Value component{inst->Arg(1)};
+        const IR::Opcode load_opcode{inst->GetOpcode() == IR::Opcode::CompositeExtractU32x2
+                                         ? IR::Opcode::LoadGlobal64
+                                         : IR::Opcode::LoadGlobal128};
+        if (!load || load->GetOpcode() != load_opcode || !component.IsImmediate()) {
+            return std::nullopt;
+        }
+        return TrackVertexIndexedWord(*load, component.U32());
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+/// Returns the words a global store writes when all of them are immediates
+std::optional<boost::container::static_vector<u32, 4>> ImmediateStoreWords(const IR::Inst& inst) {
+    boost::container::static_vector<u32, 4> words;
+    const auto add_word{[&words](const IR::Value& word) {
+        if (!word.IsImmediate() || word.Type() != IR::Type::U32) {
+            return false;
+        }
+        words.push_back(word.U32());
+        return true;
+    }};
+    switch (inst.GetOpcode()) {
+    case IR::Opcode::WriteGlobal32:
+        return add_word(inst.Arg(1)) ? std::optional{words} : std::nullopt;
+    case IR::Opcode::WriteGlobal64:
+    case IR::Opcode::WriteGlobal128: {
+        // U32x2 or U32x4, matching the store size
+        const IR::Inst* const vector{inst.Arg(1).TryInstRecursive()};
+        if (!vector || (vector->GetOpcode() != IR::Opcode::CompositeConstructU32x2 &&
+                        vector->GetOpcode() != IR::Opcode::CompositeConstructU32x4)) {
+            return std::nullopt;
+        }
+        for (size_t index = 0; index < vector->NumArgs(); ++index) {
+            if (!add_word(vector->Arg(index))) {
+                return std::nullopt;
+            }
+        }
+        return words;
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+/// Global memory address made of a 64-bit pointer and an immediate offset
+struct PointerAddress {
+    IR::Value pointer_low;
+    IR::Value pointer_high;
+    s32 offset;
+};
+
+/// Returns true when value is Select(carry of add, 1, 0)
+bool IsCarryOf(const IR::Value& value, const IR::Inst* add) {
+    const IR::Inst* const select{value.TryInstRecursive()};
+    if (!select || select->GetOpcode() != IR::Opcode::SelectU32 || !select->Arg(1).IsImmediate() ||
+        !select->Arg(2).IsImmediate() || select->Arg(1).U32() != 1 || select->Arg(2).U32() != 0) {
+        return false;
+    }
+    const IR::Inst* const carry{select->Arg(0).TryInstRecursive()};
+    return carry && carry->GetOpcode() == IR::Opcode::GetCarryFromOp &&
+           carry->Arg(0).TryInstRecursive() == add;
+}
+
+/// Splits the address of a global memory instruction into its pointer words and offset
+std::optional<PointerAddress> SplitPointerAddress(const IR::Inst& inst) {
+    const IR::Inst* addr_inst{inst.Arg(0).TryInstRecursive()};
+    if (!addr_inst) {
+        return std::nullopt;
+    }
+    if (addr_inst->GetOpcode() == IR::Opcode::IAdd64 ||
+        addr_inst->GetOpcode() == IR::Opcode::PackUint2x32) {
+        s64 offset{};
+        if (addr_inst->GetOpcode() == IR::Opcode::IAdd64) {
+            // Immediates are canonicalized to the second argument
+            const IR::Value imm{addr_inst->Arg(1)};
+            if (!imm.IsImmediate()) {
+                return std::nullopt;
+            }
+            offset = static_cast<s64>(imm.U64());
+            addr_inst = addr_inst->Arg(0).TryInstRecursive();
+        }
+        if (!addr_inst || addr_inst->GetOpcode() != IR::Opcode::PackUint2x32 ||
+            offset != static_cast<s32>(offset)) {
+            return std::nullopt;
+        }
+        const IR::Inst* const vector{addr_inst->Arg(0).TryInstRecursive()};
+        if (!vector || vector->GetOpcode() != IR::Opcode::CompositeConstructU32x2) {
+            return std::nullopt;
+        }
+        return PointerAddress{
+            .pointer_low = vector->Arg(0),
+            .pointer_high = vector->Arg(1),
+            .offset = static_cast<s32>(offset),
+        };
+    }
+    if (addr_inst->GetOpcode() != IR::Opcode::CompositeConstructU32x2) {
+        return std::nullopt;
+    }
+    // Lowered 64-bit math: low + offset, high + carry (+ all ones for negative offsets)
+    PointerAddress address{
+        .pointer_low = addr_inst->Arg(0),
+        .pointer_high = addr_inst->Arg(1),
+        .offset = 0,
+    };
+    const IR::Inst* const low_add{address.pointer_low.TryInstRecursive()};
+    if (!low_add || low_add->GetOpcode() != IR::Opcode::IAdd32 || !low_add->Arg(1).IsImmediate()) {
+        return address;
+    }
+    const IR::Inst* high_add{address.pointer_high.TryInstRecursive()};
+    if (!high_add || high_add->GetOpcode() != IR::Opcode::IAdd32 ||
+        !IsCarryOf(high_add->Arg(1), low_add)) {
+        return std::nullopt;
+    }
+    address.offset = static_cast<s32>(low_add->Arg(1).U32());
+    address.pointer_low = low_add->Arg(0);
+    address.pointer_high = high_add->Arg(0);
+    if (address.offset < 0) {
+        high_add = address.pointer_high.TryInstRecursive();
+        if (!high_add || high_add->GetOpcode() != IR::Opcode::IAdd32 ||
+            !high_add->Arg(1).IsImmediate() || high_add->Arg(1).U32() != 0xffffffff) {
+            return std::nullopt;
+        }
+        address.pointer_high = high_add->Arg(0);
+    }
+    return address;
+}
+
+/// Moves constant stores through VertexId-indexed pointers to info, returning whether any moved
+bool ExtractPointerStores(IR::Block& block, Info& info) {
+    bool extracted{};
+    for (IR::Inst& inst : block.Instructions()) {
+        const auto words{ImmediateStoreWords(inst)};
+        if (!words) {
+            continue;
+        }
+        // Misaligned 32-bit stores fault on hardware
+        const std::optional<PointerAddress> address{SplitPointerAddress(inst)};
+        if (!address || address->offset % 4 != 0) {
+            continue;
+        }
+        const std::optional<VertexIndexedWord> low{TrackLoadedWord(address->pointer_low)};
+        const std::optional<VertexIndexedWord> high{TrackLoadedWord(address->pointer_high)};
+        if (!low || !high || low->storage_buffer != high->storage_buffer ||
+            low->stride != high->stride || high->offset != low->offset + 4) {
+            continue;
+        }
+        for (size_t index = 0; index < words->size(); ++index) {
+            info.pointer_store_descriptors.push_back({
+                .cbuf_index = low->storage_buffer.index,
+                .cbuf_offset = low->storage_buffer.offset,
+                .pointer_stride = low->stride,
+                .pointer_offset = low->offset,
+                .store_offset = address->offset + static_cast<s32>(index * sizeof(u32)),
+                .value = (*words)[index],
+            });
+        }
+        inst.Invalidate();
+        extracted = true;
+    }
+    return extracted;
+}
+
+/// Vertex shaders may store constants through pointers read per vertex from a storage buffer,
+/// e.g. to reset indirect draw arguments. No bound storage buffer covers that memory, so the
+/// rasterizer performs these stores instead. Only blocks every invocation runs qualify, which
+/// keeps performing them once per vertex equivalent.
+void ExtractVertexPointerStores(IR::Program& program) {
+    bool extracted{};
+    u32 depth{};
+    for (const IR::AbstractSyntaxNode& node : program.syntax_list) {
+        if (node.type == IR::AbstractSyntaxNode::Type::Return ||
+            node.type == IR::AbstractSyntaxNode::Type::Unreachable) {
+            // Later blocks may not run on every invocation
+            break;
+        }
+        switch (node.type) {
+        case IR::AbstractSyntaxNode::Type::Block:
+            if (depth == 0) {
+                extracted |= ExtractPointerStores(*node.data.block, program.info);
+            }
+            break;
+        case IR::AbstractSyntaxNode::Type::If:
+        case IR::AbstractSyntaxNode::Type::Loop:
+            ++depth;
+            break;
+        case IR::AbstractSyntaxNode::Type::EndIf:
+        case IR::AbstractSyntaxNode::Type::Repeat:
+            --depth;
+            break;
+        default:
+            break;
+        }
+    }
+    if (extracted) {
+        // Drop the now unused pointer loads so their storage buffer is not bound
+        DeadCodeEliminationPass(program);
+    }
+}
 } // Anonymous namespace
 
 void GlobalMemoryToStorageBufferPass(IR::Program& program, const HostTranslateInfo& host_info) {
+    if (program.stage == Stage::VertexB) {
+        ExtractVertexPointerStores(program);
+    }
     StorageInfo info;
     for (IR::Block* const block : program.post_order_blocks) {
         for (IR::Inst& inst : block->Instructions()) {
@@ -580,6 +963,9 @@ void JoinStorageInfo(Info& base, Info& source) {
         }
         descriptors.push_back(desc);
     }
+    base.pointer_store_descriptors.insert(base.pointer_store_descriptors.end(),
+                                          source.pointer_store_descriptors.begin(),
+                                          source.pointer_store_descriptors.end());
 }
 
 } // namespace Shader::Optimization
