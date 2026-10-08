@@ -1633,7 +1633,18 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
             // For ignored textures that are GPU modified, try to preserve the data
             // by copying it to the new image if possible, otherwise mark as modified
             const auto base_opt = new_image.TryFindBase(overlap.gpu_addr);
-            if (base_opt.has_value() && overlap.info.format == new_info.format &&
+            // The overlap was not joined, so its levels and layers may not exist in the new image.
+            const auto fits = [&](const SubresourceBase& base) {
+                const auto& src = overlap.info.resources;
+                if (base.level + src.levels > new_info.resources.levels) {
+                    return false;
+                }
+                if (new_info.type == ImageType::e3D) {
+                    return overlap.info.type == ImageType::e3D && src.levels == 1;
+                }
+                return base.layer + src.layers <= new_info.resources.layers;
+            };
+            if (base_opt.has_value() && fits(*base_opt) && overlap.info.format == new_info.format &&
                 overlap.info.num_samples == new_info.num_samples) {
                 // Formats match, copy the data
                 new_image.flags |= ImageFlagBits::GpuModified;
