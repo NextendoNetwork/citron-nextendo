@@ -4,9 +4,13 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <cstring>
 #include <exception>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <vector>
 
 #include "video_core/renderer_vulkan/renderer_vulkan.h"
 
@@ -264,10 +268,10 @@ RasterizerVulkan::~RasterizerVulkan() {
 }
 
 template <typename Func>
-void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
+GraphicsPipeline* RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
     std::shared_lock shared_guard{shutdown_mutex};
     if (is_shutting_down) {
-        return;
+        return nullptr;
     }
 
     SCOPE_EXIT {
@@ -280,7 +284,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
 
     GraphicsPipeline* const pipeline{pipeline_cache.CurrentGraphicsPipeline()};
     if (!pipeline) {
-        return;
+        return nullptr;
     }
     std::exception_ptr configure_exception;
     {
@@ -321,10 +325,124 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
     if (configure_exception) {
         std::rethrow_exception(configure_exception);
     }
+    return pipeline;
+}
+
+void RasterizerVulkan::PerformVertexPointerStores(const GraphicsPipeline& pipeline, bool is_indexed,
+                                                  std::optional<u32> instance_count) {
+    // Sanity limit for the pointer table read per draw
+    static constexpr u64 MAX_POINTER_TABLE_SIZE{64ULL << 20};
+
+    const std::span<const Shader::PointerStoreDescriptor> stores{pipeline.VertexPointerStores()};
+    if (stores.empty()) {
+        return;
+    }
+    if (is_indexed || !instance_count) {
+        // The vertex ids of these draws are only known to the GPU
+        static std::once_flag warn_unsupported;
+        std::call_once(warn_unsupported, [] {
+            LOG_WARNING(Render_Vulkan,
+                        "Vertex shader pointer stores are only performed for direct non-indexed "
+                        "draws");
+        });
+        return;
+    }
+    const auto& draw_state{maxwell3d->draw_manager->GetDrawState()};
+    const u32 first_vertex{draw_state.vertex_buffer.first};
+    const u32 num_vertices{draw_state.vertex_buffer.count};
+    if (*instance_count == 0 || num_vertices == 0) {
+        return;
+    }
+    const auto& cbufs{maxwell3d->state.shader_stages[0].const_buffers};
+    std::vector<u8> pointer_table;
+    // Adjacent writes are merged
+    GPUVAddr pending_address{};
+    std::vector<u8> pending;
+    const auto flush_pending{[&] {
+        if (!pending.empty()) {
+            AccelerateInlineToMemory(pending_address, pending.size(), pending);
+            pending.clear();
+        }
+    }};
+    for (auto it{stores.begin()}; it != stores.end();) {
+        // Consecutive stores through the same pointer are performed together
+        const Shader::PointerStoreDescriptor& pointer{*it};
+        const auto group_end{std::find_if(it, stores.end(), [&pointer](const auto& store) {
+            return store.cbuf_index != pointer.cbuf_index ||
+                   store.cbuf_offset != pointer.cbuf_offset ||
+                   store.pointer_stride != pointer.pointer_stride ||
+                   store.pointer_offset != pointer.pointer_offset;
+        })};
+        const std::span group{it, group_end};
+        it = group_end;
+
+        if (pointer.cbuf_index >= cbufs.size()) {
+            continue;
+        }
+        const auto& cbuf{cbufs[pointer.cbuf_index]};
+        const GPUVAddr descriptor_address{cbuf.address + pointer.cbuf_offset};
+        if (!cbuf.enabled || pointer.cbuf_offset + sizeof(u64) > cbuf.size ||
+            !gpu_memory->IsContinuousRange(descriptor_address, sizeof(u64))) {
+            continue;
+        }
+        const GPUVAddr ssbo_address{gpu_memory->Read<u64>(descriptor_address)};
+
+        // The shader computes the pointer offset with 32-bit math
+        const u32 num_pointers{pointer.pointer_stride == 0 ? 1U : num_vertices};
+        const u64 table_offset{u64{pointer.pointer_stride} * first_vertex + pointer.pointer_offset};
+        const u64 table_size{u64{pointer.pointer_stride} * (num_pointers - 1) + sizeof(u64)};
+        if (table_offset + table_size > (u64{1} << 32) || table_size > MAX_POINTER_TABLE_SIZE ||
+            !gpu_memory->IsFullyMappedRange(ssbo_address + table_offset, table_size)) {
+            continue;
+        }
+        pointer_table.resize(table_size);
+        gpu_memory->ReadBlock(ssbo_address + table_offset, pointer_table.data(), table_size);
+
+        // Lay out the stored words relative to the pointer, later stores win as in the shader
+        std::map<s32, u32> words;
+        for (const Shader::PointerStoreDescriptor& store : group) {
+            words[store.store_offset] = store.value;
+        }
+        std::vector<std::pair<s32, std::vector<u8>>> runs;
+        for (const auto& [offset, value] : words) {
+            if (runs.empty() ||
+                offset != runs.back().first + static_cast<s32>(runs.back().second.size())) {
+                runs.emplace_back(offset, std::vector<u8>{});
+            }
+            const auto bytes{std::bit_cast<std::array<u8, sizeof(u32)>>(value)};
+            runs.back().second.insert(runs.back().second.end(), bytes.begin(), bytes.end());
+        }
+
+        for (u32 index = 0; index < num_pointers; ++index) {
+            u64 target;
+            std::memcpy(&target, pointer_table.data() + u64{pointer.pointer_stride} * index,
+                        sizeof(target));
+            // The GPU faults on null and misaligned pointers
+            if (target == 0 || target % sizeof(u32) != 0) {
+                continue;
+            }
+            for (const auto& [offset, data] : runs) {
+                const GPUVAddr address{target + static_cast<u64>(static_cast<s64>(offset))};
+                if (!gpu_memory->IsContinuousRange(address, data.size())) {
+                    continue;
+                }
+                const GPUVAddr pending_end{pending_address + pending.size()};
+                if (!pending.empty() && address == pending_end &&
+                    gpu_memory->IsContinuousRange(pending_end - 1, data.size() + 1)) {
+                    pending.insert(pending.end(), data.begin(), data.end());
+                    continue;
+                }
+                flush_pending();
+                pending_address = address;
+                pending.assign(data.begin(), data.end());
+            }
+        }
+    }
+    flush_pending();
 }
 
 void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
-    PrepareDraw(is_indexed, [this, is_indexed, instance_count] {
+    const auto* const pipeline = PrepareDraw(is_indexed, [this, is_indexed, instance_count] {
         const auto& draw_state = maxwell3d->draw_manager->GetDrawState();
         const u32 num_instances{instance_count};
         const DrawParams draw_params{MakeDrawParams(draw_state, num_instances, is_indexed)};
@@ -339,12 +457,15 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
             }
         });
     });
+    if (pipeline) {
+        PerformVertexPointerStores(*pipeline, is_indexed, instance_count);
+    }
 }
 
 void RasterizerVulkan::DrawIndirect() {
     const auto& params = maxwell3d->draw_manager->GetIndirectParams();
     buffer_cache.SetDrawIndirect(&params);
-    PrepareDraw(params.is_indexed, [this, &params] {
+    const auto* const pipeline = PrepareDraw(params.is_indexed, [this, &params] {
         const auto indirect_buffer = buffer_cache.GetDrawIndirectBuffer();
         const auto& buffer = indirect_buffer.first;
         const auto& offset = indirect_buffer.second;
@@ -387,6 +508,9 @@ void RasterizerVulkan::DrawIndirect() {
         });
     });
     buffer_cache.SetDrawIndirect(nullptr);
+    if (pipeline) {
+        PerformVertexPointerStores(*pipeline, params.is_indexed, std::nullopt);
+    }
 }
 
 void RasterizerVulkan::DrawTexture() {

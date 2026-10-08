@@ -8,6 +8,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
+#include <span>
 #include <type_traits>
 
 #include "common/thread_worker.h"
@@ -105,6 +106,12 @@ public:
 
     [[nodiscard]] bool IsFailed() const noexcept {
         return build_failed.load(std::memory_order::acquire);
+    }
+
+    /// Vertex shader stores the rasterizer performs, see Shader::PointerStoreDescriptor
+    [[nodiscard]] std::span<const Shader::PointerStoreDescriptor> VertexPointerStores()
+        const noexcept {
+        return stage_infos[0].pointer_store_descriptors;
     }
 
     template <typename Spec>
