@@ -75,6 +75,8 @@ struct Binding {
     DAddr device_addr{};
     u32 size{};
     BufferId buffer_id;
+    /// Non-zero when the GPU range spans device memory that is not contiguous.
+    GPUVAddr scattered_gpu_addr{};
 };
 
 struct TextureBufferBinding : Binding {
@@ -466,6 +468,15 @@ public:
     [[nodiscard]] Binding StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
                                                bool is_written) const;
 
+    /// Resolves the buffers behind each contiguous piece of a scattered storage buffer.
+    void FindScatteredStorageBuffers(GPUVAddr gpu_addr, u32 size);
+
+    /// Gathers a scattered storage buffer into contiguous scratch memory for binding.
+    [[nodiscard]] Buffer& GatherScatteredStorage(const Binding& binding, bool is_written);
+
+    /// Copies written scattered storage buffers back to the memory they were gathered from.
+    void FlushScatteredStorageWrites();
+
     [[nodiscard]] TextureBufferBinding GetTextureBufferBinding(GPUVAddr gpu_addr, u32 size,
                                                                PixelFormat format);
 
@@ -484,6 +495,23 @@ public:
 
     Common::SlotVector<Buffer> slot_buffers;
     DelayedDestructionRing<Buffer, 8> delayed_destruction_ring;
+
+    /// Contiguous copy of a scattered storage buffer; only ranges written since are re-copied.
+    struct ScatteredStorage {
+        GPUVAddr gpu_addr{};
+        u32 size{};
+        boost::container::small_vector<std::pair<GPUVAddr, DAddr>, 8> piece_addrs;
+        boost::container::small_vector<size_t, 8> piece_sizes;
+        std::unique_ptr<Buffer> buffer;
+        Common::RangeSet<DAddr> stale;
+        u64 last_use{};
+    };
+    std::vector<ScatteredStorage> scattered_storage;
+    std::vector<size_t> scattered_writes;
+    u64 scattered_use_tick = 0;
+
+    /// Marks cached scattered copies overlapping a write as needing a re-copy.
+    void MarkScatteredStale(DAddr device_addr, u64 size, const ScatteredStorage* except = nullptr);
 
     const Tegra::Engines::DrawManager::IndirectParams* current_draw_indirect{};
 
