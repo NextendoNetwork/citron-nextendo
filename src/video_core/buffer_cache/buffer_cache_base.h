@@ -29,6 +29,7 @@
 #include "video_core/engines/draw_manager.h"
 #include "video_core/engines/kepler_compute.h"
 #include "video_core/engines/maxwell_3d.h"
+#include "video_core/gpu_written_ranges.h"
 #include "video_core/memory_manager.h"
 #include "video_core/surface.h"
 #include "video_core/texture_cache/types.h"
@@ -216,6 +217,11 @@ public:
 
     /// True if the region holds deferred GPU data; marks it CPU-read so it is written back again.
     [[nodiscard]] bool IsRegionLazyDownload(DAddr device_addr, u64 size);
+
+    /// Lock-free: false means the region never held a deferred write-back.
+    [[nodiscard]] bool MayHaveLazyDownload(DAddr device_addr, u64 size) const noexcept {
+        return lazy_written.MayContain(device_addr, size);
+    }
 
     /// Whether a committed GPU-written interval skips the per-fence write-back.
     [[nodiscard]] bool IsLazyInterval(DAddr device_addr, u64 size) const;
@@ -526,6 +532,7 @@ public:
     Common::OverlapRangeSet<DAddr> async_downloads;
     /// Large GPU-written ranges left out of per-fence write-backs; CPU reads flush them on demand.
     Common::RangeSet<DAddr> lazy_download_ranges;
+    GpuWrittenRanges lazy_written;
     /// Lazy ranges the CPU has read; they go back to per-fence write-backs.
     Common::RangeSet<DAddr> cpu_read_ranges;
     static constexpr u64 LAZY_DOWNLOAD_THRESHOLD = 1ULL << 20;

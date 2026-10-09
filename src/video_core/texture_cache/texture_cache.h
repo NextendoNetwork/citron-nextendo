@@ -2166,6 +2166,9 @@ void TextureCache<P>::RegisterImage(ImageId image_id) {
     ASSERT_MSG(False(image.flags & ImageFlagBits::Registered),
                "Trying to register an already registered image");
     image.flags |= ImageFlagBits::Registered;
+    if (True(image.flags & ImageFlagBits::GpuModified)) {
+        MarkGpuWritten(image);
+    }
     const auto storage_id = getStorageID(channel_state->gpu_memory.GetID());
     if (storage_id) {
         image.registration_storage_id = *storage_id;
@@ -2534,6 +2537,17 @@ template <class P>
 void TextureCache<P>::MarkModification(ImageBase& image) noexcept {
     image.flags |= ImageFlagBits::GpuModified;
     image.modification_tick = ++modification_tick;
+    MarkGpuWritten(image);
+}
+
+template <class P>
+void TextureCache<P>::MarkGpuWritten(const ImageBase& image) noexcept {
+    // Sparse images sit at their map views, not cpu_addr.
+    if (True(image.flags & ImageFlagBits::Sparse)) {
+        gpu_written.MarkAll();
+        return;
+    }
+    gpu_written.Mark(image.cpu_addr, image.cpu_addr_end - image.cpu_addr);
 }
 
 template <class P>
@@ -2566,6 +2580,7 @@ void TextureCache<P>::SynchronizeAliases(ImageId image_id) {
     image.modification_tick = most_recent_tick;
     if (any_modified) {
         image.flags |= ImageFlagBits::GpuModified;
+        MarkGpuWritten(image);
     }
     std::ranges::sort(aliased_images, [this](const AliasedImage* lhs, const AliasedImage* rhs) {
         const ImageBase& lhs_image = slot_images[lhs->id];

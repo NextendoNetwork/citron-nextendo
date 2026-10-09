@@ -604,6 +604,7 @@ void BufferCache<P>::CommitAsyncFlushesHigh() {
             const DAddr device_addr = interval_lower;
             if (IsLazyInterval(device_addr, size)) {
                 lazy_download_ranges.Add(device_addr, size);
+                lazy_written.Mark(device_addr, size);
                 return;
             }
             ForEachBufferInRange(device_addr, size, [&](BufferId buffer_id, Buffer& buffer) {

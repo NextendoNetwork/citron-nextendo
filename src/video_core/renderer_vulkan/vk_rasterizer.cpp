@@ -817,6 +817,14 @@ VideoCore::RasterizerDownloadArea RasterizerVulkan::GetFlushArea(DAddr addr, u64
         };
     }
 
+    // Nothing GPU-written here: skip the cache locks the GPU thread holds while drawing.
+    if (!texture_cache.MayHaveGpuWrites(addr, size) && !buffer_cache.MayHaveLazyDownload(addr, size)) {
+        return VideoCore::RasterizerDownloadArea{
+            .start_address = Common::AlignDown(addr, Core::DEVICE_PAGESIZE),
+            .end_address = Common::AlignUp(addr + size, Core::DEVICE_PAGESIZE),
+            .preemtive = true,
+        };
+    }
     {
         std::scoped_lock lock{texture_cache.mutex};
         auto area = texture_cache.GetFlushArea(addr, size);
