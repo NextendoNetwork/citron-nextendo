@@ -203,13 +203,14 @@ void CpuManager::RunThread(std::stop_token token, std::size_t core) {
 
     // Optional host-side pinning for ultra-low mode. This keeps emulation worker threads
     // on stable cores to reduce migration overhead and cache thrash.
+    bool pinned = false;
     if (Settings::values.cpu_accuracy.GetValue() == Settings::CpuAccuracy::UltraLow && core < 64
 #ifdef ARCHITECTURE_x86_64
         && Common::GetCPUCaps().manufacturer == Common::CPUCaps::Manufacturer::AMD
 #endif
     ) {
         const u64 affinity_mask = 1ULL << static_cast<u32>(core);
-        Common::SetCurrentThreadAffinityMask(affinity_mask);
+        pinned = Common::SetCurrentThreadAffinityMask(affinity_mask);
     }
 
     auto& data = core_data[core];
@@ -224,6 +225,11 @@ void CpuManager::RunThread(std::stop_token token, std::size_t core) {
     // Running
     if (!gpu_barrier->Sync(token)) {
         return;
+    }
+
+    // Guest cores 0-2 carry the game's busy threads; sharing a physical core costs them ~15%.
+    if (is_multicore && core < 3 && !pinned) {
+        Common::SetCurrentThreadDedicatedCore(core, 3);
     }
 
     if (!is_async_gpu && !is_multicore) {

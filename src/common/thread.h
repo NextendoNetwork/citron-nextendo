@@ -109,4 +109,7 @@ void SetCurrentThreadName(const char* name);
 /// Pin current thread to a CPU bitmask. Returns false if unsupported or failed.
 bool SetCurrentThreadAffinityMask(u64 affinity_mask);
 
+/// Gives slot `index` of `count` its own performance core, keeping other threads off it.
+bool SetCurrentThreadDedicatedCore(std::size_t index, std::size_t count);
+
 } // namespace Common
