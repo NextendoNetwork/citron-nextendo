@@ -15,6 +15,8 @@ class IFactorySettingsServer final : public ServiceFramework<IFactorySettingsSer
 public:
     explicit IFactorySettingsServer(Core::System& system_);
     ~IFactorySettingsServer() override;
+private:
+    void GetWirelessLanMacAddress(HLERequestContext& ctx);
 };
 
 } // namespace Service::Set

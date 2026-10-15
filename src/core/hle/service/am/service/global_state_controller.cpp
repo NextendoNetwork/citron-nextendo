@@ -109,7 +109,7 @@ Result IGlobalStateController::StartShutdownSequence() {
 
 Result IGlobalStateController::StartRebootSequence() {
     LOG_INFO(Service_AM, "called");
-    system.Exit();
+    R_UNLESS(system.Reboot(), ResultUnknown);
     R_SUCCEED();
 }
 

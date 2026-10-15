@@ -198,6 +198,7 @@ private:
     EventInterface& events_interface;
     NvCore::Container& core;
     NvCore::SyncpointManager& syncpoint_manager;
+    u32 homebrew_diag_waits{};
 };
 
 } // namespace Service::Nvidia::Devices

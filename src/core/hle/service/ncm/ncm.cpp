@@ -2,6 +2,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <memory>
+#include <array>
+#include <algorithm>
+#include "core/core.h"
+#include "core/file_sys/errors.h"
+#include "core/file_sys/nca_metadata.h"
+#include "core/file_sys/registered_cache.h"
+#include "core/hle/service/filesystem/filesystem.h"
 
 #include "core/file_sys/romfs_factory.h"
 #include "core/hle/service/ipc_helpers.h"
@@ -17,7 +24,7 @@ public:
         : ServiceFramework{system_, "ILocationResolver"}, storage{id} {
         // clang-format off
         static const FunctionInfo functions[] = {
-            {0, nullptr, "ResolveProgramPath"},
+            {0, &ILocationResolver::ResolveProgramPath, "ResolveProgramPath"},
             {1, nullptr, "RedirectProgramPath"},
             {2, nullptr, "ResolveApplicationControlPath"},
             {3, nullptr, "ResolveApplicationHtmlDocumentPath"},
@@ -44,7 +51,47 @@ public:
     }
 
 private:
-    [[maybe_unused]] FileSys::StorageId storage;
+    void ResolveProgramPath(HLERequestContext& ctx) {
+        IPC::RequestParser rp{ctx};
+        const auto title_id = rp.Pop<u64>();
+        auto& fsc = system.GetFileSystemController();
+        auto* cache = storage == FileSys::StorageId::NandSystem ? fsc.GetSystemNANDContents()
+                      : storage == FileSys::StorageId::NandUser ? fsc.GetUserNANDContents()
+                                                               : nullptr;
+        const auto root = storage == FileSys::StorageId::NandSystem
+                              ? fsc.GetSystemNANDContentDirectory()
+                              : fsc.GetUserNANDContentDirectory();
+        const auto file = cache ? cache->GetEntryUnparsed(title_id, FileSys::ContentRecordType::Program)
+                                : nullptr;
+        if (!file || !root) {
+            IPC::ResponseBuilder rb{ctx, 2};
+            rb.Push(FileSys::ResultTargetNotFound);
+            return;
+        }
+        const auto prefix = root->GetFullPath() + '/';
+        const auto full_path = file->GetFullPath();
+        if (!full_path.starts_with(prefix)) {
+            IPC::ResponseBuilder rb{ctx, 2};
+            rb.Push(FileSys::ResultTargetNotFound);
+            return;
+        }
+        const std::string path =
+            (storage == FileSys::StorageId::NandSystem ? "@SystemContent://" : "@UserContent://") +
+            full_path.substr(prefix.size());
+        std::array<char, 0x301> output{};
+        if (path.size() >= output.size() || ctx.GetWriteBufferSize() < output.size()) {
+            IPC::ResponseBuilder rb{ctx, 2};
+            rb.Push(FileSys::ResultInvalidArgument);
+            return;
+        }
+        std::copy(path.begin(), path.end(), output.begin());
+        ctx.WriteBuffer(output);
+        LOG_INFO(Service_FS, "Resolved program path: title_id={:016X} storage={}", title_id,
+                 static_cast<u32>(storage));
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(ResultSuccess);
+    }
+    FileSys::StorageId storage;
 };
 
 class IRegisteredLocationResolver final : public ServiceFramework<IRegisteredLocationResolver> {
@@ -93,7 +140,7 @@ public:
     explicit LR(Core::System& system_) : ServiceFramework{system_, "lr"} {
         // clang-format off
         static const FunctionInfo functions[] = {
-            {0, nullptr, "OpenLocationResolver"},
+            {0, &LR::OpenLocationResolver, "OpenLocationResolver"},
             {1, nullptr, "OpenRegisteredLocationResolver"},
             {2, nullptr, "RefreshLocationResolver"},
             {3, nullptr, "OpenAddOnContentLocationResolver"},
@@ -101,6 +148,19 @@ public:
         // clang-format on
 
         RegisterHandlers(functions);
+    }
+private:
+    void OpenLocationResolver(HLERequestContext& ctx) {
+        IPC::RequestParser rp{ctx};
+        const auto storage = rp.PopEnum<FileSys::StorageId>();
+        if (storage != FileSys::StorageId::NandSystem && storage != FileSys::StorageId::NandUser) {
+            IPC::ResponseBuilder rb{ctx, 2};
+            rb.Push(FileSys::ResultInvalidArgument);
+            return;
+        }
+        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+        rb.Push(ResultSuccess);
+        rb.PushIpcInterface<ILocationResolver>(system, storage);
     }
 };
 

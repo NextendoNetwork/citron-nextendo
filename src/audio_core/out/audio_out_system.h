@@ -252,6 +252,11 @@ private:
     std::string name{};
     /// Volume of this system
     f32 volume{1.0f};
+    // Temporary Genesis diagnostics, accessed under the AudioOut manager lock.
+    u64 diagnostic_last_played{};
+    u32 diagnostic_last_pending{};
+    s64 diagnostic_last_progress_ns{};
+    s64 diagnostic_last_report_ns{};
 };
 
 } // namespace AudioCore::AudioOut

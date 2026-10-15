@@ -4,6 +4,13 @@
 
 add_subdirectory(host_shaders)
 
+# The Windows driver-fault guard uses Microsoft structured exception handling.
+if(MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    set_source_files_properties(vulkan_common/vulkan_device.cpp
+        PROPERTIES COMPILE_OPTIONS "-fms-extensions"
+                   SKIP_PRECOMPILE_HEADERS ON)
+endif()
+
 if(LIBVA_FOUND)
     set_source_files_properties(host1x/ffmpeg/ffmpeg.cpp
         PROPERTIES COMPILE_DEFINITIONS LIBVA_FOUND=1)

@@ -10,6 +10,8 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
+#include <cstdlib>
 
 #include "common/fs/file.h"
 #include "common/hex_util.h"
@@ -145,6 +147,11 @@ public:
         return ResultSuccess;
     }
 
+    Result SetUchAccountVerification(bool enabled) override {
+        uch_account_verification = enabled;
+        return ResultSuccess;
+    }
+
     Result DoHandshake(std::span<const std::string> requested_alpn_protos) override {
         // If SNI host is not set, try recovering host from peer IP
         if (socket && !SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name)) {
@@ -182,6 +189,24 @@ public:
         SSL_set_verify(ssl, SSL_VERIFY_NONE, nullptr);
         SSL_set_verify_result(ssl, X509_V_OK);
         const int ret = SSL_do_handshake(ssl);
+
+        if (ret == 1 && uch_account_verification) {
+            const char* pin = std::getenv("NEXTENDO_UCH_CERT_SHA256");
+            X509* cert = SSL_get1_peer_certificate(ssl);
+            std::array<u8, 32> digest{};
+            unsigned int length{};
+            const bool valid = pin && std::string_view{pin}.size() == 64 && cert && servername &&
+                X509_cmp_current_time(X509_get0_notBefore(cert)) < 0 &&
+                X509_cmp_current_time(X509_get0_notAfter(cert)) > 0 &&
+                X509_check_host(cert, servername, 0, 0, nullptr) == 1 &&
+                X509_digest(cert, EVP_sha256(), digest.data(), &length) == 1 && length == digest.size() &&
+                Common::ToLower(Common::HexToString(digest)) == Common::ToLower(pin);
+            X509_free(cert);
+            if (!valid) {
+                LOG_ERROR(Service_SSL, "UCH isolated TLS certificate rejected");
+                return ResultInternalError;
+            }
+        }
 
         if (ret <= 0) {
             const int ssl_err = SSL_get_error(ssl, ret);
@@ -344,6 +369,7 @@ public:
     BIO* bio = nullptr;
     bool got_read_eof = false;
     bool skip_cert_verification = false;
+    bool uch_account_verification = false;
 
     std::shared_ptr<Network::SocketBase> socket;
 };

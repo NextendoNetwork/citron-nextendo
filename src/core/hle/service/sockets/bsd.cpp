@@ -24,6 +24,7 @@
 #include "common/nextendo_nat.h"
 #include "common/settings.h"
 #include "common/socket_types.h"
+#include "common/uch_account_transport.h"
 #include "core/arm/debug.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_event.h"
@@ -48,6 +49,22 @@ using Common::Unexpected;
 namespace Service::Sockets {
 
 namespace {
+
+void TraceUnoDatagram(u64 program_id, const char* operation, s32 fd, size_t requested,
+                      const Network::SockAddrIn* peer, s32 transferred, int error) {
+    const char* enabled = std::getenv("NEXTENDO_UNO_PROBE");
+    if (program_id != 0x0100B6E012EBE000ULL || !enabled || std::string_view{enabled} != "1") {
+        return;
+    }
+    static std::atomic<unsigned> events{0};
+    if (events.fetch_add(1, std::memory_order_relaxed) >= 128) {
+        return;
+    }
+    LOG_INFO(Service, "[UNO diagnostic] UDP operation={} fd={} requested={} transferred={} "
+                      "peer={}:{} error={}", operation, fd, requested, transferred,
+             peer ? Network::IPv4AddressToRedactedString(peer->ip) : std::string{"none"},
+             peer ? peer->portno : 0, error);
+}
 
 // A parked socket's peer can keep sending real P2P data (island/session traffic, not just NAT
 // probes) while nothing is reading it. The original parking scheme only survived being
@@ -78,9 +95,9 @@ static void StopDrain(ParkedUdpDrain& drain) {
     }
 }
 
-static void StartDrain(ParkedUdpDrain& drain, std::shared_ptr<Network::SocketBase> socket) {
-    socket->SetRcvTimeo(PARKED_DRAIN_POLL_TIMEOUT_MS);
-    drain.thread = std::thread([&drain, socket = std::move(socket)] {
+static void StartDrain(ParkedUdpDrain& drain, std::shared_ptr<Network::SocketBase> socket_) {
+    socket_->SetRcvTimeo(PARKED_DRAIN_POLL_TIMEOUT_MS);
+    drain.thread = std::thread([&drain, socket = std::move(socket_)] {
         while (!drain.stop.load(std::memory_order_relaxed)) {
             std::vector<u8> buffer(2048);
             Network::SockAddrIn addr{};
@@ -206,8 +223,8 @@ void ClearParkedUdpSockets() {
 // the guest can observe -- it only delays when the real host resource is released.
 constexpr auto TCP_CLOSE_GRACE = std::chrono::milliseconds{500};
 
-void DeferredCloseTcpSocket(std::shared_ptr<Network::SocketBase> socket) {
-    std::thread([socket = std::move(socket)]() mutable {
+void DeferredCloseTcpSocket(std::shared_ptr<Network::SocketBase> socket_) {
+    std::thread([socket = std::move(socket_)]() mutable {
         std::this_thread::sleep_for(TCP_CLOSE_GRACE);
         socket->Close();
     }).detach();
@@ -1208,6 +1225,16 @@ void BSD::ExecuteWork(HLERequestContext& ctx, Work work) {
 }
 
 std::pair<s32, Errno> BSD::SocketImpl(Domain domain, Type type, Protocol protocol) {
+    const char* uch_lab = std::getenv("NEXTENDO_UCH_LAB_TOKEN_FILE");
+    if (uch_lab && *uch_lab &&
+        system.GetApplicationProcessProgramID() == 0x0100FCF002A58000ULL &&
+        domain == Domain::INET && static_cast<u32>(type) == 0x10000000 &&
+        protocol == static_cast<Protocol>(0)) {
+        // UCH's UNET runtime uses this Nintendo datagram socket selector.
+        // Keep its normalization confined to the explicit local experiment.
+        type = Type::DGRAM;
+        LOG_INFO(Service, "[UCH lab] Normalized UNET socket selector to UDP");
+    }
     if (type == Type::SEQPACKET) {
         UNIMPLEMENTED_MSG("SOCK_SEQPACKET errno management");
     } else if (type == Type::RAW && (domain != Domain::INET || protocol != Protocol::ICMP)) {
@@ -1600,6 +1627,22 @@ Errno BSD::BindImpl(s32 fd, std::span<const u8> addr) {
              addr_in.portno);
 
     FileDescriptor& descriptor = *file_descriptors[fd];
+    const char* uch_lab = std::getenv("NEXTENDO_UCH_LAB_TOKEN_FILE");
+    const u16 uch_host_port = Translate(addr_in).portno;
+    if (uch_lab && *uch_lab &&
+        system.GetApplicationProcessProgramID() == 0x0100FCF002A58000ULL &&
+        descriptor.type == Network::Type::DGRAM &&
+        (uch_host_port == 17778 || uch_host_port == 0 || uch_host_port >= 49152)) {
+        // Account-bound rooms resolve the observed socket by verified owner,
+        // allowing multiple local clients to host without a fixed-port collision.
+        // Preserve the historical fixed port only for the older lab mode.
+        addr_in.ip = {};
+        if (uch_host_port != 17778 || Common::UchAccountTransport::Enabled(system.GetApplicationProcessProgramID())) {
+            addr_in.portno = 0;
+        }
+        LOG_INFO(Service, "[UCH lab] UNET UDP bind requestedPort={} effectivePort={} uses a loopback-capable socket",
+                 uch_host_port, Translate(addr_in).portno);
+    }
     if (descriptor.type == Network::Type::DGRAM && addr_in.portno > 0) {
         auto [parked, queued] = TakeParkedUdpSocket(addr_in.portno);
         if (parked) {
@@ -1674,6 +1717,16 @@ Errno BSD::ConnectImpl(s32 fd, std::span<const u8> addr) {
     }
     auto addr_in = GetValue<SockAddrIn>(addr);
     auto translated_addr = Translate(addr_in);
+
+    const char* uno_probe = std::getenv("NEXTENDO_UNO_PROBE");
+    static constexpr std::array<u8, 4> uno_loopback{127, 0, 0, 3};
+    if (uno_probe && std::string_view{uno_probe} == "1" &&
+        system.GetApplicationProcessProgramID() == 0x0100B6E012EBE000ULL &&
+        file_descriptors[fd]->type == Network::Type::STREAM &&
+        translated_addr.ip == uno_loopback && translated_addr.portno == 443) {
+        translated_addr.portno = 8443;
+        LOG_INFO(Service, "[UNO diagnostic] Local TLS service port selected");
+    }
 
     // [Nextendo] Splatoon 3's gRPC stack loses the resolved address in its own connection
     // plumbing and calls connect() with a zeroed IP, keeping only the port it originally
@@ -1890,6 +1943,25 @@ Errno BSD::GetSockOptImpl(s32 fd, u32 level, OptName optname, std::vector<u8>& o
     }
 
     switch (optname) {
+    case OptName::SNDBUF:
+    case OptName::RCVBUF: {
+        if (optval.size() < sizeof(u32)) {
+            return Errno::INVAL;
+        }
+        const auto [size, error] = optname == OptName::SNDBUF ? socket->GetSndBuf()
+                                                            : socket->GetRcvBuf();
+        if (error == Network::Errno::SUCCESS) {
+            optval.resize(sizeof(u32));
+            PutValue(optval, size);
+        }
+        const char* uno_probe = std::getenv("NEXTENDO_UNO_PROBE");
+        if (uno_probe && std::string_view(uno_probe) == "1" &&
+            system.GetApplicationProcessProgramID() == 0x0100B6E012EBE000ULL) {
+            LOG_INFO(Service, "[UNO diagnostic] Socket buffer option={} bytes={} result={}",
+                     static_cast<u32>(optname), size, static_cast<u32>(error));
+        }
+        return Translate(error);
+    }
     case OptName::ERROR_: {
         auto [pending_err, getsockopt_err] = socket->GetPendingError();
         if (getsockopt_err == Network::Errno::SUCCESS) {
@@ -2071,6 +2143,20 @@ Errno BSD::ShutdownImpl(s32 fd, s32 how) {
     return Translate(file_descriptors[fd]->socket->Shutdown(host_how));
 }
 
+void BSD::RecordSpeedTestRead(s32 fd, s32 received, Errno error) {
+    auto& descriptor = *file_descriptors[fd];
+    if (!descriptor.connection_speed_test) return;
+    if (received > 0) descriptor.speed_received_bytes += static_cast<u64>(received);
+    const bool first_read = descriptor.speed_logged_bytes == 0 && received > 0;
+    if (first_read || descriptor.speed_received_bytes - descriptor.speed_logged_bytes >= 4 * 1024 * 1024 ||
+        received == 0 || static_cast<s32>(error) != descriptor.speed_last_error) {
+        LOG_INFO(Service, "Connection speed test: receive fd={} bytes={} total={} errno={}; payload omitted",
+                 fd, received, descriptor.speed_received_bytes, static_cast<s32>(error));
+        descriptor.speed_logged_bytes = descriptor.speed_received_bytes;
+        descriptor.speed_last_error = static_cast<s32>(error);
+    }
+}
+
 std::pair<s32, Errno> BSD::RecvImpl(s32 fd, u32 flags, std::vector<u8>& message) {
     if (!IsFileDescriptorValid(fd)) {
         return {-1, Errno::BADF};
@@ -2164,6 +2250,7 @@ std::pair<s32, Errno> BSD::RecvImpl(s32 fd, u32 flags, std::vector<u8>& message)
         descriptor.socket->SetNonBlock(false);
     }
 
+    RecordSpeedTestRead(fd, ret, bsd_errno);
     return {ret, bsd_errno};
 }
 
@@ -2223,6 +2310,7 @@ std::pair<s32, Errno> BSD::RecvFromImpl(s32 fd, u32 flags, std::vector<u8>& mess
     }
 
     auto [ret, bsd_errno] = Translate(descriptor.socket->RecvFrom(flags, message, p_addr_in));
+    RecordSpeedTestRead(fd, ret, bsd_errno);
 
     // P2P shares one socket across every peer, so one unreachable peer must not read as the
     // network dropping. The failed call consumed the queued error; take the next datagram.
@@ -2266,6 +2354,11 @@ std::pair<s32, Errno> BSD::RecvFromImpl(s32 fd, u32 flags, std::vector<u8>& mess
         }
     }
 
+    if (descriptor.type == Network::Type::DGRAM && bsd_errno != Errno::AGAIN) {
+        TraceUnoDatagram(system.GetApplicationProcessProgramID(), "receive-from", fd,
+                         message.size(), ret >= 0 ? p_addr_in : nullptr, ret,
+                         static_cast<int>(bsd_errno));
+    }
     return {ret, bsd_errno};
 }
 
@@ -2287,6 +2380,13 @@ std::pair<s32, Errno> BSD::SendImpl(s32 fd, u32 flags, std::span<const u8> messa
     }
 
     std::span<const u8> send_buf = message;
+    if (descriptor.type == Network::Type::STREAM) {
+        const std::string_view request(reinterpret_cast<const char*>(message.data()), message.size());
+        if (request.starts_with("GET /30m ") &&
+            request.find("ctest-dl-lp1.cdn.nintendo.net") != std::string_view::npos) {
+            descriptor.connection_speed_test = true;
+        }
+    }
     std::vector<u8> injected_buf;
     // First ClientHello only; a later handshake record must not be rewritten mid-stream.
     if (!descriptor.sni_injected && message.size() > 5 && message[0] == 0x16 &&
@@ -2304,6 +2404,10 @@ std::pair<s32, Errno> BSD::SendImpl(s32 fd, u32 flags, std::span<const u8> messa
     }
 
     auto [sent_bytes, err] = descriptor.socket->Send(send_buf, flags);
+    if (descriptor.connection_speed_test) {
+        LOG_INFO(Service, "Connection speed test: send fd={} requested={} sent={} errno={}; payload omitted",
+                 fd, send_buf.size(), sent_bytes, static_cast<s32>(err));
+    }
     if (err == Network::Errno::SUCCESS && !injected_buf.empty()) {
         sent_bytes = static_cast<s32>(message.size());
     }
@@ -2316,6 +2420,10 @@ std::pair<s32, Errno> BSD::SendImpl(s32 fd, u32 flags, std::span<const u8> messa
         if (Kernel::KEvent* deferral_event = GetBsdDeferralEvent()) {
             deferral_event->Signal();
         }
+    }
+    if (descriptor.type == Network::Type::DGRAM) {
+        TraceUnoDatagram(system.GetApplicationProcessProgramID(), "send", fd, message.size(),
+                         nullptr, sent_bytes, static_cast<int>(err));
     }
     return Translate(std::make_pair(sent_bytes, err));
 }
@@ -2355,6 +2463,14 @@ std::pair<s32, Errno> BSD::SendToImpl(s32 fd, u32 flags, std::span<const u8> mes
                 addr_in.ip = *recovered;
             }
         }
+        const char* uch_lab = std::getenv("NEXTENDO_UCH_LAB_TOKEN_FILE");
+        if (uch_lab && *uch_lab &&
+            system.GetApplicationProcessProgramID() == 0x0100FCF002A58000ULL &&
+            descriptor.type == Network::Type::DGRAM && addr_in.ip == zero_addr &&
+            addr_in.portno == 18888) {
+            addr_in.ip = {127, 0, 0, 2};
+            LOG_INFO(Service, "[UCH lab] Recovered numeric loopback relay destination");
+        }
     }
 
     if (!descriptor.is_connection_based && p_addr_in) {
@@ -2363,7 +2479,22 @@ std::pair<s32, Errno> BSD::SendToImpl(s32 fd, u32 flags, std::span<const u8> mes
                   message.size(), DescribePrudpLite(message));
     }
 
-    return Translate(file_descriptors[fd]->socket->SendTo(flags, message, p_addr_in));
+    if (p_addr_in && descriptor.type == Network::Type::DGRAM &&
+        Common::UchAccountTransport::Enabled(system.GetApplicationProcessProgramID()) &&
+        Common::UchAccountTransport::IsConnect(message)) {
+        auto bootstrap = Common::UchAccountTransport::Bootstrap(addr_in.ip, addr_in.portno);
+        if (!bootstrap) return {-1, static_cast<Errno>(EACCES)};
+        auto [written, error] = file_descriptors[fd]->socket->SendTo(flags, *bootstrap, p_addr_in);
+        std::fill(bootstrap->begin(), bootstrap->end(), 0);
+        if (error != Network::Errno::SUCCESS || written != 36)
+            return Translate(std::pair<s32, Network::Errno>{-1, error == Network::Errno::SUCCESS ? Network::Errno::INVAL : error});
+    }
+    const auto sent = file_descriptors[fd]->socket->SendTo(flags, message, p_addr_in);
+    if (descriptor.type == Network::Type::DGRAM) {
+        TraceUnoDatagram(system.GetApplicationProcessProgramID(), "send-to", fd, message.size(),
+                         p_addr_in, sent.first, static_cast<int>(sent.second));
+    }
+    return Translate(sent);
 }
 
 Errno BSD::CloseImpl(s32 fd) {

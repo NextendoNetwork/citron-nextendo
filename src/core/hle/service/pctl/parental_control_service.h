@@ -28,6 +28,7 @@ private:
     Result ConfirmResumeApplicationPermission(InBuffer<BufferAttr_HipcPointer> restriction_bitset,
                                               u64 nacp_flag, u64 application_id);
     Result ConfirmSnsPostPermission();
+    Result ConfirmSystemSettingsPermission();
     Result IsRestrictionTemporaryUnlocked(Out<bool> out_is_temporary_unlocked);
     Result IsRestrictedSystemSettingsEntered(Out<bool> out_is_restricted_system_settings_entered);
     Result ConfirmStereoVisionPermission();
@@ -40,6 +41,7 @@ private:
     Result ConfirmStereoVisionRestrictionConfigurable();
     Result IsStereoVisionPermitted(Out<bool> out_is_permitted);
     Result GetPinCodeLength(Out<s32> out_length);
+    Result GetPinCodeChangedEvent(OutCopyHandle<Kernel::KReadableEvent> out_event);
     Result IsPairingActive(Out<bool> out_is_pairing_active);
     Result GetSynchronizationEvent(OutCopyHandle<Kernel::KReadableEvent> out_event);
     Result StartPlayTimer();
@@ -87,6 +89,7 @@ private:
     Event unlinked_event;
     Event request_suspension_event;
     Event extended_play_timer_event;
+    Event pin_code_changed_event;
 };
 
 } // namespace Service::PCTL

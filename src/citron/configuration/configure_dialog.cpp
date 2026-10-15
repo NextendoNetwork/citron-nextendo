@@ -543,3 +543,20 @@ void ConfigureDialog::SwitchTab(int id) {
     }
     ui->stackedWidget->setCurrentIndex(id);
 }
+
+void ConfigureDialog::SelectNetworkTab() {
+    const int id = tab_button_group->id(ui->networkTabButton);
+    ui->networkTabButton->setChecked(true);
+    SwitchTab(id);
+}
+
+void ConfigureDialog::SelectHomebrewShortcut() {
+    tab_button_group->button(9)->click();
+    hotkeys_tab->SelectHomebrewShortcut();
+}
+
+void ConfigureDialog::SelectInputTab() {
+    const int id = tab_button_group->id(ui->inputTabButton);
+    ui->inputTabButton->setChecked(true);
+    SwitchTab(id);
+}

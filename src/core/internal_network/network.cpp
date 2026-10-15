@@ -1128,6 +1128,14 @@ Errno Socket::SetRcvBuf(u32 value) {
     return SetSockOpt(fd, SO_RCVBUF, value);
 }
 
+std::pair<u32, Errno> Socket::GetSndBuf() {
+    return GetSockOpt<u32>(fd, SO_SNDBUF);
+}
+
+std::pair<u32, Errno> Socket::GetRcvBuf() {
+    return GetSockOpt<u32>(fd, SO_RCVBUF);
+}
+
 // [Nextendo] SO_SNDTIMEO/SO_RCVTIMEO take a raw DWORD (milliseconds) on Winsock, but POSIX
 // requires a struct timeval{tv_sec, tv_usec} instead -- passing the generic SetSockOpt<u32>'s
 // 4-byte int there fails setsockopt with EINVAL (confirmed live: a parked UDP socket's drain

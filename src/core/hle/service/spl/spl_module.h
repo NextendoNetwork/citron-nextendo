@@ -4,6 +4,8 @@
 #pragma once
 
 #include <random>
+#include <map>
+#include "core/crypto/key_manager.h"
 #include "core/hle/service/service.h"
 #include "core/hle/service/spl/spl_results.h"
 #include "core/hle/service/spl/spl_types.h"
@@ -30,6 +32,8 @@ public:
         void IsDevelopment(HLERequestContext& ctx);
         void SetBootReason(HLERequestContext& ctx);
         void GetBootReason(HLERequestContext& ctx);
+        void GenerateAesKek(HLERequestContext& ctx);
+        void GenerateAesKey(HLERequestContext& ctx);
 
     protected:
         std::shared_ptr<Module> module;
@@ -38,6 +42,8 @@ public:
         Result GetConfigImpl(u64* out_config, ConfigItem config_item) const;
 
         std::mt19937 rng;
+        std::map<Core::Crypto::Key128, Core::Crypto::Key128> kek_handles;
+        u64 next_kek_handle{1};
     };
 };
 

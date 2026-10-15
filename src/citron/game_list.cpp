@@ -66,6 +66,7 @@
 #include "citron/game_details_panel.h"
 #include "citron/game_grid_delegate.h"
 #include "citron/game_list.h"
+#include "core/hle/service/ns/application_manager_interface.h"
 #include "citron/game_list_delegate.h"
 #include "citron/game_list_loading_overlay.h"
 #include "citron/game_list_p.h"
@@ -1182,6 +1183,17 @@ GameList::GameList(std::shared_ptr<FileSys::VfsFilesystem> vfs_,
 
     watcher = new QFileSystemWatcher(this);
     connect(watcher, &QFileSystemWatcher::directoryChanged, this, &GameList::RefreshGameDirectory);
+    connect(watcher, &QFileSystemWatcher::fileChanged, this, &GameList::RefreshGameDirectory);
+    library_refresh_timer.setSingleShot(true);
+    library_refresh_timer.setInterval(1000);
+    connect(&library_refresh_timer, &QTimer::timeout, this, [this] {
+        if (current_worker) {
+            library_refresh_timer.start(); // Retain changes arriving during another scan.
+            return;
+        }
+        LOG_INFO(Frontend, "Library content change: rescanning completed file changes");
+        PopulateAsync(UISettings::values.game_dirs);
+    });
 
     m_resize_timer = new QTimer(this);
     m_resize_timer->setSingleShot(true);
@@ -2973,6 +2985,10 @@ bool GameList::IsEmpty() const {
 }
 
 void GameList::DonePopulating(const QStringList& watch_list) {
+    if (system.IsPoweredOn()) {
+        Service::NS::NotifyApplicationContentChanged(system);
+        LOG_INFO(Frontend, "Library content change: notified native HOME application records");
+    }
     if (item_model) {
         item_model->sort(COLUMN_NAME, Qt::AscendingOrder);
     }
@@ -3058,7 +3074,7 @@ void GameList::DonePopulating(const QStringList& watch_list) {
             item_model->invisibleRootItem()->takeRow(add_dir_item->row()));
     }
 
-    auto watch_dirs = watcher->directories();
+    auto watch_dirs = watcher->directories() + watcher->files();
     if (!watch_dirs.isEmpty()) {
         watcher->removePaths(watch_dirs);
     }
@@ -3945,6 +3961,7 @@ QString GameList::GetGamePath(u64 program_id) const {
 
 void GameList::PopulateAsync(QVector<UISettings::GameDir>& game_dirs, bool is_smart_update) {
     if (current_worker) {
+        library_refresh_timer.start();
         return;
     }
 
@@ -4066,10 +4083,7 @@ const QStringList GameList::supported_file_extensions = {
     QStringLiteral("nro"),  QStringLiteral("kip"),  QStringLiteral("dxci"),
     QStringLiteral("dnsp")};
 void GameList::RefreshGameDirectory() {
-    if (!UISettings::values.game_dirs.empty() && current_worker != nullptr) {
-        LOG_INFO(Frontend, "Change detected in the games directory. Reloading game list.");
-        PopulateAsync(UISettings::values.game_dirs);
-    }
+    if (!UISettings::values.game_dirs.empty()) library_refresh_timer.start();
 }
 
 void GameList::CancelPopulation() {

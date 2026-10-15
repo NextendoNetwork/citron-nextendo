@@ -68,9 +68,9 @@ void QtFriendInvitation::Close() const {
 }
 
 void QtFriendInvitation::ShowInvitation(const Core::Frontend::FriendInvitationRequest& request,
-                                       u64 title_id, Completion completion) const {
+                                       u64 title_id, Completion completion_) const {
     QMetaObject::invokeMethod(const_cast<QtFriendInvitation*>(this),
-        [this, request, title_id, completion = std::move(completion)] {
+        [this, request, title_id, completion = std::move(completion_)] {
         if (dialog || !parent || request.mode == 10) {
             completion(ResultUnknown.raw);
             return;

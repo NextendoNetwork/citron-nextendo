@@ -15,6 +15,9 @@ class ILibraryAppletAccessor;
 class IStorage;
 class WindowSystem;
 
+bool LaunchHomebrewMenu(Core::System& system, WindowSystem& window_system,
+                        const std::shared_ptr<Applet>& home);
+
 class ILibraryAppletCreator final : public ServiceFramework<ILibraryAppletCreator> {
 public:
     explicit ILibraryAppletCreator(Core::System& system_, std::shared_ptr<Applet> applet,

@@ -4,6 +4,7 @@
 #include "core/file_sys/nca_metadata.h"
 #include "core/file_sys/registered_cache.h"
 #include "core/hle/service/am/am_types.h"
+#include "core/hle/service/am/am_results.h"
 #include "core/hle/service/am/applet.h"
 #include "core/hle/service/am/applet_manager.h"
 #include "core/hle/service/am/process_creation.h"
@@ -18,7 +19,8 @@ namespace Service::AM {
 namespace {
 
 Result CreateGuestApplication(SharedPointer<IApplicationAccessor>* out_application_accessor,
-                              Core::System& system, WindowSystem& window_system, u64 program_id) {
+                              Core::System& system, WindowSystem& window_system, u64 program_id,
+                              std::vector<u8> invitation = {}) {
     FileSys::VirtualFile nca_raw{};
 
     // Get the program NCA from storage.
@@ -41,6 +43,11 @@ Result CreateGuestApplication(SharedPointer<IApplicationAccessor>* out_applicati
     applet->type = AppletType::Application;
     applet->library_applet_mode = LibraryAppletMode::AllForeground;
 
+    if (!invitation.empty()) {
+        applet->friend_invitation_storage_channel.push_back(std::move(invitation));
+        applet->friend_invitation_storage_channel_event.Signal();
+    }
+
     window_system.TrackApplet(applet, true);
 
     *out_application_accessor =
@@ -55,7 +62,7 @@ IApplicationCreator::IApplicationCreator(Core::System& system_, WindowSystem& wi
     // clang-format off
     static const FunctionInfo functions[] = {
         {0, D<&IApplicationCreator::CreateApplication>, "CreateApplication"},
-        {1, nullptr, "PopLaunchRequestedApplication"},
+        {1, D<&IApplicationCreator::PopLaunchRequestedApplication>, "PopLaunchRequestedApplication"},
         {10, nullptr, "CreateSystemApplication"},
         {100, nullptr, "PopFloatingApplicationForDevelopment"},
     };
@@ -65,6 +72,15 @@ IApplicationCreator::IApplicationCreator(Core::System& system_, WindowSystem& wi
 }
 
 IApplicationCreator::~IApplicationCreator() = default;
+
+Result IApplicationCreator::PopLaunchRequestedApplication(
+    Out<SharedPointer<IApplicationAccessor>> out_application_accessor) {
+    auto request = m_window_system.TakeInvitationLaunch();
+    R_UNLESS(request.has_value(), ResultNoDataInChannel);
+    LOG_INFO(Service_AM, "Launching invited application through HOME: {:016X}", request->program_id);
+    R_RETURN(CreateGuestApplication(out_application_accessor, system, m_window_system,
+                                   request->program_id, std::move(request->storage)));
+}
 
 Result IApplicationCreator::CreateApplication(
     Out<SharedPointer<IApplicationAccessor>> out_application_accessor, u64 application_id) {

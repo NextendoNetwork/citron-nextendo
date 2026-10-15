@@ -122,6 +122,7 @@ namespace UISettings {
 
                 Setting<bool> first_start{linkage, false, "firstStart", Category::Ui};
                 Setting<bool> setup_resume{linkage, false, "setupResume", Category::Ui};
+                Setting<bool> setup_wizard_seen{linkage, false, "setupWizardSeen", Category::Ui};
                 Setting<bool> pause_when_in_background{linkage,
                     false,
                     "pauseWhenInBackground",
@@ -297,7 +298,7 @@ namespace UISettings {
     // This must be in alphabetical order according to action name as it must have the same order as
     // UISetting::values.shortcuts, which is alphabetically ordered.
     // clang-format off
-    extern const std::array<Shortcut, 35> default_hotkeys;
+    extern const std::array<Shortcut, 36> default_hotkeys;
 // clang-format on
 
 } // namespace UISettings

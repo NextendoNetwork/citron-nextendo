@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdlib>
+#include "common/logging.h"
 #include "common/scope_exit.h"
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/k_resource_limit.h"
@@ -29,8 +31,31 @@ Result KTransferMemory::Initialize(KProcessAddress addr, std::size_t size,
     };
 
     // Lock the memory.
-    R_TRY(page_table.LockForTransferMemory(std::addressof(*m_page_group), addr, size,
-                                           ConvertToKMemoryPermission(own_perm)));
+    const auto lock_result = page_table.LockForTransferMemory(
+        std::addressof(*m_page_group), addr, size, ConvertToKMemoryPermission(own_perm));
+    if (lock_result.IsError() && std::getenv("CITRON_HOMEBREW_ALBUM") &&
+        m_owner->GetProgramId() == 0x010000000000100DULL) {
+        LOG_INFO(Debug, "HOME transfer lock failed: result={:08X} size={:X}",
+                 lock_result.raw, size);
+        auto current = GetInteger(addr);
+        for (unsigned region = 0; region < 16 && current < GetInteger(addr) + size; ++region) {
+            KMemoryInfo info{};
+            Svc::PageInfo page{};
+            if (page_table.QueryInfo(&info, &page, current).IsError()) {
+                break;
+            }
+            const auto state = info.GetSvcMemoryInfo();
+            LOG_INFO(Debug, "HOME transfer region: offset={:X} size={:X} state={:X} perm={:X} attr={:X}",
+                     current - GetInteger(addr), state.size, static_cast<u32>(state.state),
+                     static_cast<u32>(state.permission), static_cast<u32>(state.attribute));
+            const auto next = state.base_address + state.size;
+            if (next <= current) {
+                break;
+            }
+            current = next;
+        }
+    }
+    R_TRY(lock_result);
 
     // Set remaining tracking members.
     m_owner->Open();

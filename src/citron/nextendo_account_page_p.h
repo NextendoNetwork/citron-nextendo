@@ -21,10 +21,20 @@ public:
     static constexpr int IsMeRole = Qt::UserRole + 9;        // true for the local player's own row; suppresses the pill
     static constexpr int DetailRole = Qt::UserRole + 10;     // replaces the presence line when set
     static constexpr int InviteIdRole = Qt::UserRole + 11;   // game invitation id, invites list only
+    static constexpr int PlatformRole = Qt::UserRole + 12;
+
+    static QString PlatformLabel(const QString& platform) {
+        if (platform == QStringLiteral("switch")) return QStringLiteral("Nintendo Switch");
+        if (platform == QStringLiteral("citron")) return QStringLiteral("Citron");
+        if (platform == QStringLiteral("ryujinx")) return QStringLiteral("Ryujinx");
+        if (platform == QStringLiteral("emulator")) return QStringLiteral("Emulator");
+        return {};
+    }
 
     NextendoFriendItem(u64 pid, const QString& name, const QString& friend_code, s32 presence,
                        const QString& game, const QString& avatar_b64, bool is_request,
-                       const QString& pill_label = QString{}, bool is_me = false) {
+                       const QString& pill_label = QString{}, bool is_me = false,
+                       const QString& platform = QString{}) {
         setEditable(false);
         setData(QVariant::fromValue<qulonglong>(pid), PidRole);
         setData(name, NameRole);
@@ -35,6 +45,7 @@ public:
         setData(is_request, IsRequestRole);
         setData(pill_label, PillLabelRole);
         setData(is_me, IsMeRole);
+        setData(PlatformLabel(platform), PlatformRole);
     }
 };
 

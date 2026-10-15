@@ -18,6 +18,8 @@ u64 GetPid();
 std::string GetUsername();
 std::string GetFriendCode();
 std::string GetToken();
+// Web API credential; legacy sessions use their existing token as fallback.
+std::string GetApiToken();
 
 // Bumped by every Save()/Clear(). Lets callers that cache derived data (e.g. the acc
 // service's signed id_token, which embeds GetToken() in an "nnex" claim) detect a link
@@ -26,7 +28,7 @@ std::string GetToken();
 u64 GetGeneration();
 
 void Save(u64 pid, std::string_view username, std::string_view friend_code,
-          std::string_view token);
+          std::string_view token, std::string_view api_token = {});
 void Clear();
 
 // Mirrors the link state onto the guest SD card (sdmc_root/config/nextendo/session.txt) so

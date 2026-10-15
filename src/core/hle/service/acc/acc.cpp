@@ -22,6 +22,7 @@
 #include "common/nextendo_avatar.h"
 #include "common/nextendo_compatible_titles.h"
 #include "common/settings.h"
+#include "common/uch_account_transport.h"
 #include <ranges>
 #include "common/stb.h"
 #include "common/string_util.h"
@@ -31,6 +32,8 @@
 #include "core/core_timing.h"
 #include "core/file_sys/control_metadata.h"
 #include "core/file_sys/patch_manager.h"
+#include "core/hle/kernel/k_process.h"
+#include "core/hle/kernel/k_thread.h"
 #include "core/hle/service/acc/acc.h"
 #include "core/hle/service/acc/nextendo_cached_account_info.h"
 #include "core/hle/service/acc/acc_aa.h"
@@ -213,8 +216,12 @@ std::string SignRs256(std::string_view signing_input) {
     return signature;
 }
 
-std::string GetInstalledTitleVersion(Core::System& system) {
-    const u64 program_id = system.GetApplicationProcessProgramID();
+u64 GetCallerProgramId(HLERequestContext& ctx) {
+    const auto* process = ctx.GetThread().GetOwnerProcess();
+    return process != nullptr ? process->GetProgramId() : 0;
+}
+
+std::string GetInstalledTitleVersion(Core::System& system, u64 program_id) {
     if (program_id == 0) {
         return {};
     }
@@ -298,7 +305,21 @@ std::string BuildIdToken(const std::string& installed_version, u64 program_id) {
     return signing_input + "." + SignRs256(signing_input);
 }
 
-std::vector<u8> GetIdTokenBytes(Core::System& system) {
+std::vector<u8> GetIdTokenBytes(Core::System& system, u64 program_id) {
+    // Explicit loopback UCH experiment; never replace another title's account token.
+    if (program_id == 0x0100FCF002A58000ULL) {
+        if (const char* path = std::getenv("NEXTENDO_UCH_LAB_TOKEN_FILE"); path && *path) {
+            const auto token = Common::FS::ReadStringFromFile(
+                std::filesystem::path{path}, Common::FS::FileType::TextFile);
+            if (!token.empty() && token.size() <= 4096 &&
+                token.find_first_of("\r\n\0", 0, 3) == std::string::npos) {
+                LOG_INFO(Service_ACC, "[UCH lab] Providing local credential ({} bytes)", token.size());
+                return {token.begin(), token.end()};
+            }
+            LOG_ERROR(Service_ACC, "[UCH lab] Local credential file is missing or invalid");
+            return {};
+        }
+    }
     static std::mutex mutex;
     static std::vector<u8> cached;
     static std::chrono::steady_clock::time_point expiry{};
@@ -310,9 +331,8 @@ std::vector<u8> GetIdTokenBytes(Core::System& system) {
     std::lock_guard lock{mutex};
 
     const u64 generation = Common::NextendoAccount::GetGeneration();
-    const std::string installed_version = GetInstalledTitleVersion(system);
+    const std::string installed_version = GetInstalledTitleVersion(system, program_id);
     const u64 test_pid = ConfiguredTestPid();
-    const u64 program_id = system.GetApplicationProcessProgramID();
     const auto now = std::chrono::steady_clock::now();
     if (cached.empty() || now >= expiry || generation != cached_generation ||
         installed_version != cached_version || test_pid != cached_test_pid ||
@@ -510,8 +530,8 @@ public:
 
 class IAdministrator final : public ServiceFramework<IAdministrator> {
 public:
-    explicit IAdministrator(Core::System& system_, Common::UUID)
-        : ServiceFramework{system_, "IAdministrator"} {
+    explicit IAdministrator(Core::System& system_, Common::UUID uuid)
+        : ServiceFramework{system_, "IAdministrator"}, user_id{uuid} {
         // clang-format off
         static const FunctionInfo functions[] = {
             {0, nullptr, "CheckAvailability"},
@@ -546,7 +566,7 @@ public:
             {220, nullptr, "SynchronizeProfileAsync"},
             {221, nullptr, "UploadProfileAsync"},
             {222, nullptr, "SynchronizaProfileAsyncIfSecondsElapsed"},
-            {250, nullptr, "IsLinkedWithNintendoAccount"},
+            {250, D<&IAdministrator::IsLinkedWithNintendoAccount>, "IsLinkedWithNintendoAccount"},
             {251, nullptr, "CreateProcedureToLinkWithNintendoAccount"},
             {252, nullptr, "ResumeProcedureToLinkWithNintendoAccount"},
             {255, nullptr, "CreateProcedureToUpdateLinkageStateOfNintendoAccount"},
@@ -567,6 +587,15 @@ public:
 
         RegisterHandlers(functions);
     }
+
+private:
+    Result IsLinkedWithNintendoAccount(Out<bool> out_linked) {
+        *out_linked = system.GetProfileManager().UserExists(user_id) &&
+                      Common::NextendoAccount::IsLinked();
+        R_SUCCEED();
+    }
+
+    Common::UUID user_id;
 };
 
 class IAuthorizationRequest final : public ServiceFramework<IAuthorizationRequest> {
@@ -941,7 +970,7 @@ public:
     ~EnsureTokenIdCacheAsyncInterface() = default;
 
     void LoadIdTokenCache(HLERequestContext& ctx) {
-        const std::vector<u8> token_bytes = GetIdTokenBytes(system);
+        const std::vector<u8> token_bytes = GetIdTokenBytes(system, GetCallerProgramId(ctx));
         LOG_INFO(Service_ACC, "[Nextendo] Providing BAAS ID token in async interface ({} bytes)",
                  token_bytes.size());
 
@@ -1146,7 +1175,15 @@ public:
     }
 
 private:
-    u64 GetEffectivePid() const {
+    u64 GetEffectivePid(u64 program_id) const {
+        if (Common::UchAccountTransport::Enabled(program_id)) {
+            if (const char* fixture = std::getenv("NEXTENDO_UCH_FIXTURE_PID"); fixture && *fixture) {
+                char* end{};
+                const auto id = std::strtoull(fixture, &end, 10);
+                if (id && end && !*end) return id;
+                return 0xcafe;
+            }
+        }
         const u64 raw_pid = []() -> u64 {
             if (const u64 linked = Common::NextendoAccount::GetPid(); linked != 0) {
                 return linked;
@@ -1165,9 +1202,8 @@ private:
         // Keeps outdated clients off the servers entirely -- reduces load from clients that
         // can't speak the wire format the server expects, and keeps the playerbase from
         // fragmenting across versions.
-        const u64 program_id = system.GetApplicationProcessProgramID();
         if (Nextendo::CompatibleTitles::Table().contains(program_id)) {
-            const std::string installed_version = GetInstalledTitleVersion(system);
+            const std::string installed_version = GetInstalledTitleVersion(system, program_id);
             if (!Nextendo::CompatibleTitles::IsVersionOk(program_id, installed_version)) {
                 LOG_WARNING(Service_ACC,
                             "[Nextendo] Refusing online PID: installed version doesn't match "
@@ -1186,7 +1222,7 @@ private:
     }
 
     void GetAccountId(HLERequestContext& ctx) {
-        u64 account_id = GetEffectivePid();
+        u64 account_id = GetEffectivePid(GetCallerProgramId(ctx));
         // The PID is accepted as a bare identity by the online service, so never log its value.
         LOG_DEBUG(Service_ACC, "[Nextendo] Returning the linked account's Network ID");
 
@@ -1210,7 +1246,7 @@ private:
     }
 
     void LoadIdTokenCache(HLERequestContext& ctx) {
-        const std::vector<u8> token_bytes = GetIdTokenBytes(system);
+        const std::vector<u8> token_bytes = GetIdTokenBytes(system, GetCallerProgramId(ctx));
         LOG_INFO(Service_ACC, "[Nextendo] Providing BAAS ID token ({} bytes)", token_bytes.size());
 
         ctx.WriteBuffer(token_bytes);
@@ -1222,7 +1258,7 @@ private:
     }
 
     void GetNintendoAccountUserResourceCacheForApplication(HLERequestContext& ctx) {
-        const u64 account_id = GetEffectivePid();
+        const u64 account_id = GetEffectivePid(GetCallerProgramId(ctx));
         // NasUserBase is the fixed output pointer (C), not the B resource buffer.
         // SDK GetBirthday reads a NUL-terminated date from offset zero.
         if (ctx.BufferDescriptorC().empty() ||
@@ -1491,25 +1527,20 @@ void Module::Interface::CheckNetworkServiceAvailabilityAsync(HLERequestContext& 
 
 void Module::Interface::IsUserAccountSwitchLocked(HLERequestContext& ctx) {
     LOG_DEBUG(Service_ACC, "called");
-    FileSys::NACP nacp;
-    const auto res = system.GetAppLoader().ReadControlData(nacp);
-
+    const auto program_id = GetCallerProgramId(ctx);
+    const FileSys::PatchManager pm{program_id, system.GetFileSystemController(),
+                                  system.GetContentProvider()};
+    const auto nacp_unique = pm.GetControlMetadata().first;
     bool is_locked = false;
-
-    if (res != Loader::ResultStatus::Success) {
-        const FileSys::PatchManager pm{system.GetApplicationProcessProgramID(),
-                                       system.GetFileSystemController(),
-                                       system.GetContentProvider()};
-        const auto nacp_unique = pm.GetControlMetadata().first;
-
-        if (nacp_unique != nullptr) {
-            is_locked = nacp_unique->GetUserAccountSwitchLock();
-        } else {
-            LOG_ERROR(Service_ACC, "nacp_unique is null!");
+    if (nacp_unique != nullptr) {
+        is_locked = nacp_unique->GetUserAccountSwitchLock();
+    } else if (program_id == system.GetApplicationProcessProgramID()) {
+        FileSys::NACP nacp;
+        if (system.GetAppLoader().ReadControlData(nacp) == Loader::ResultStatus::Success) {
+            is_locked = nacp.GetUserAccountSwitchLock();
         }
-    } else {
-        is_locked = nacp.GetUserAccountSwitchLock();
     }
+    LOG_INFO(Service_ACC, "caller_program_id={:016X}, locked={}", program_id, is_locked);
 
     IPC::ResponseBuilder rb{ctx, 3};
     rb.Push(ResultSuccess);

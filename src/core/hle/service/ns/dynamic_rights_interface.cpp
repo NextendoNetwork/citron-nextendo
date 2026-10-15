@@ -34,6 +34,7 @@ IDynamicRightsInterface::IDynamicRightsInterface(Core::System& system_)
         {23, nullptr, "GetLimitedApplicationLicenseUpgradableEvent"},
         {24, nullptr, "NotifyLimitedApplicationLicenseUpgradableEventForDebug"},
         {25, nullptr, "RequestProceedDynamicRightsState"},
+        {26, D<&IDynamicRightsInterface::HasAccountRestrictedRightsInRunningApplications>, "HasAccountRestrictedRightsInRunningApplications"},
     };
     // clang-format on
 
@@ -41,6 +42,15 @@ IDynamicRightsInterface::IDynamicRightsInterface(Core::System& system_)
 }
 
 IDynamicRightsInterface::~IDynamicRightsInterface() = default;
+
+Result IDynamicRightsInterface::HasAccountRestrictedRightsInRunningApplications(
+    Out<bool> out_has_restricted_rights) {
+    // Citron has no server-assigned account-restricted running application rights.
+    // This query does not assign or authorize rights; HOME also uses it after registering a user.
+    *out_has_restricted_rights = false;
+    LOG_DEBUG(Service_NS, "called, has_account_restricted_running_rights=false");
+    R_SUCCEED();
+}
 
 Result IDynamicRightsInterface::NotifyApplicationRightsCheckStart() {
     LOG_WARNING(Service_NS, "(STUBBED) called");

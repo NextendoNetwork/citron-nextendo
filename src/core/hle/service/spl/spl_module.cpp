@@ -3,10 +3,12 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <vector>
 #include "common/logging.h"
 #include "common/settings.h"
+#include "core/crypto/aes_util.h"
 #include "core/hle/api_version.h"
 #include "core/hle/service/ipc_helpers.h"
 #include "core/hle/service/server_manager.h"
@@ -23,6 +25,63 @@ Module::Interface::Interface(Core::System& system_, std::shared_ptr<Module> modu
                                             : static_cast<u32>(std::time(nullptr))) {}
 
 Module::Interface::~Interface() = default;
+
+void Module::Interface::GenerateAesKek(HLERequestContext& ctx) {
+    using namespace Core::Crypto;
+    IPC::RequestParser rp{ctx};
+    const auto source = rp.PopRaw<Key128>();
+    const auto generation = rp.Pop<u32>();
+    const auto option = rp.Pop<u32>();
+    auto& keys = KeyManager::Instance();
+    const u32 revision = generation == 0 ? 0 : generation - 1;
+    const auto kek_source = static_cast<u64>(SourceKeyType::AESKekGeneration);
+    const auto key_source = static_cast<u64>(SourceKeyType::AESKeyGeneration);
+    Result result = ResultSuccess;
+    Key128 handle{};
+    if (option != 0) {
+        result = ResultSecureMonitorNotImplemented;
+    } else if (revision >= 32 || !keys.HasKey(S128KeyType::Master, revision) ||
+               !keys.HasKey(S128KeyType::Source, kek_source) ||
+               !keys.HasKey(S128KeyType::Source, key_source)) {
+        result = ResultSecureMonitorNotInitialized;
+    } else if (kek_handles.size() >= 64) {
+        result = ResultSecureMonitorBusy;
+    } else {
+        // Keep derived material in the service; the guest receives an opaque access handle.
+        std::memcpy(handle.data(), &next_kek_handle, sizeof(next_kek_handle));
+        ++next_kek_handle;
+        kek_handles.emplace(handle, GenerateKeyEncryptionKey(
+            source, keys.GetKey(S128KeyType::Master, revision),
+            keys.GetKey(S128KeyType::Source, kek_source),
+            keys.GetKey(S128KeyType::Source, key_source)));
+    }
+    LOG_INFO(Service_SPL, "GenerateAesKek generation={} option={} result={}", generation,
+             option, result.raw);
+    IPC::ResponseBuilder rb{ctx, result.IsSuccess() ? 6u : 2u};
+    rb.Push(result);
+    if (result.IsSuccess()) {
+        rb.PushRaw(handle);
+    }
+}
+
+void Module::Interface::GenerateAesKey(HLERequestContext& ctx) {
+    using namespace Core::Crypto;
+    IPC::RequestParser rp{ctx};
+    const auto handle = rp.PopRaw<Key128>();
+    const auto source = rp.PopRaw<Key128>();
+    const auto found = kek_handles.find(handle);
+    if (found == kek_handles.end()) {
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(ResultSecureMonitorInvalidArgument);
+        return;
+    }
+    Key128 key{};
+    AESCipher<Key128> cipher(found->second, Mode::ECB);
+    cipher.Transcode(source.data(), source.size(), key.data(), Op::Decrypt);
+    IPC::ResponseBuilder rb{ctx, 6};
+    rb.Push(ResultSuccess);
+    rb.PushRaw(key);
+}
 
 void Module::Interface::GetConfig(HLERequestContext& ctx) {
     IPC::RequestParser rp{ctx};

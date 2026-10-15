@@ -80,6 +80,9 @@ size_t System::GetSessionId() const {
 }
 
 Result System::Start() {
+    LOG_INFO(Service_Audio, "GenesisDiag Start begin session={} state={} pending={} next={} played={}",
+             session_id, static_cast<u32>(state.load()), buffers.GetAppendedRegisteredCount(),
+             buffers.GetNextTimestamp(), session->GetPlayedSampleCount());
     if (state != State::Stopped) {
         return Service::Audio::ResultOperationFailed;
     }
@@ -94,11 +97,17 @@ Result System::Start() {
     buffers.RegisterBuffers(buffers_to_flush);
     session->AppendBuffers(buffers_to_flush);
     session->SetRingSize(static_cast<u32>(buffers_to_flush.size()));
+    LOG_INFO(Service_Audio, "GenesisDiag Start end session={} registered={} next={} played={}",
+             session_id, buffers_to_flush.size(), buffers.GetNextTimestamp(),
+             session->GetPlayedSampleCount());
 
     return ResultSuccess;
 }
 
 Result System::Stop() {
+    LOG_INFO(Service_Audio, "GenesisDiag Stop begin session={} state={} pending={} next={} played={}",
+             session_id, static_cast<u32>(state.load()), buffers.GetAppendedRegisteredCount(),
+             buffers.GetNextTimestamp(), session->GetPlayedSampleCount());
     if (state == State::Started) {
         session->Stop();
         session->SetVolume(0.0f);
@@ -143,6 +152,24 @@ void System::RegisterBuffers() {
 
 void System::ReleaseBuffers() {
     bool signal{buffers.ReleaseBuffers(system.CoreTiming(), *session, false)};
+    const auto now = system.CoreTiming().GetGlobalTimeNs().count();
+    const auto played = session->GetPlayedSampleCount();
+    const auto pending = buffers.GetAppendedRegisteredCount();
+    if (pending == 0 || played != diagnostic_last_played ||
+        pending != diagnostic_last_pending || state.load() != State::Started) {
+        diagnostic_last_progress_ns = now;
+    }
+    constexpr s64 report_interval_ns = 2'000'000'000;
+    if (pending > 0 && state.load() == State::Started &&
+        now - diagnostic_last_progress_ns >= report_interval_ns &&
+        now - diagnostic_last_report_ns >= report_interval_ns) {
+        LOG_WARNING(Service_Audio,
+                    "GenesisDiag stalled session={} pending={} next={} played={} signal={}",
+                    session_id, pending, buffers.GetNextTimestamp(), played, signal);
+        diagnostic_last_report_ns = now;
+    }
+    diagnostic_last_played = played;
+    diagnostic_last_pending = pending;
     if (signal) {
         // Signal if any buffer was released, or if none are registered, we need more.
         buffer_event->Signal();
@@ -154,6 +181,9 @@ u32 System::GetReleasedBuffers(std::span<u64> tags) {
 }
 
 bool System::FlushAudioOutBuffers() {
+    LOG_INFO(Service_Audio, "GenesisDiag Flush begin session={} state={} pending={} next={} played={}",
+             session_id, static_cast<u32>(state.load()), buffers.GetAppendedRegisteredCount(),
+             buffers.GetNextTimestamp(), session->GetPlayedSampleCount());
     if (state != State::Started) {
         return false;
     }

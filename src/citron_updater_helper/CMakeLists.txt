@@ -12,4 +12,7 @@ add_executable(citron-updater-helper main.cpp)
 
 target_link_libraries(citron-updater-helper PRIVATE LibArchive::LibArchive)
 target_compile_definitions(citron-updater-helper PRIVATE UNICODE _UNICODE)
+if(MINGW)
+    target_link_options(citron-updater-helper PRIVATE -municode)
+endif()
 set_target_properties(citron-updater-helper PROPERTIES WIN32_EXECUTABLE OFF)

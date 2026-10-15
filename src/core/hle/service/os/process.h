@@ -29,7 +29,7 @@ public:
     void Finalize();
 
     bool Run();
-    void Terminate();
+    void Terminate(bool defer_cleanup = false);
     void Suspend(bool suspended);
     void ResetSignal();
 

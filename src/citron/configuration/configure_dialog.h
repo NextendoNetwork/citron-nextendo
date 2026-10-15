@@ -51,6 +51,9 @@ public:
     ~ConfigureDialog() override;
 
     void ApplyConfiguration();
+    void SelectHomebrewShortcut();
+    void SelectInputTab();
+    void SelectNetworkTab();
 
     ConfigureFilesystem* GetFilesystemTab() const { return filesystem_tab.get(); }
 

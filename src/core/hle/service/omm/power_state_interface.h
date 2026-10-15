@@ -24,6 +24,7 @@ public:
     ~IPowerStateInterface() override;
 
 private:
+    Result Shutdown(bool reboot);
     Result GetNotificationMessageEventHandle(OutCopyHandle<Kernel::KReadableEvent> out_event);
 
     KernelHelpers::ServiceContext service_context;

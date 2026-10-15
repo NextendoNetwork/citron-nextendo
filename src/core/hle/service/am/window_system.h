@@ -4,10 +4,13 @@
 
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <vector>
 
 #include "common/common_types.h"
 
@@ -44,9 +47,26 @@ public:
     void TrackApplet(std::shared_ptr<Applet> applet, bool is_application);
     std::shared_ptr<Applet> GetByAppletResourceUserId(u64 aruid);
     std::shared_ptr<Applet> GetMainApplet();
+    struct PresenceSnapshot {
+        u64 program_id{};
+        bool at_home{true};
+    };
+    // Frontend polling must never wait for AM while AM is dispatching frontend work.
+    std::optional<PresenceSnapshot> TryGetPresenceSnapshot();
+    u64 GetMainAppletResourceUserId() const {
+        return m_main_applet_aruid.load(std::memory_order_relaxed);
+    }
     std::shared_ptr<Applet> GetOverlayDisplayApplet();
 
+    struct InvitationLaunchRequest {
+        u64 program_id;
+        std::vector<u8> storage;
+    };
+    bool RequestInvitationLaunch(u64 program_id, std::vector<u8> storage);
+    std::optional<InvitationLaunchRequest> TakeInvitationLaunch();
+
 public:
+    bool RequestHomebrewMenu();
     void RequestHomeMenuToGetForeground();
     void RequestApplicationToGetForeground();
     void RequestLockHomeMenuIntoForeground();
@@ -90,16 +110,22 @@ private:
 
     std::mutex m_lock{};
 
+    std::atomic_bool m_homebrew_requested{};
+    bool m_homebrew_return_requested{};
     bool m_home_menu_foreground_locked{};
     Applet* m_foreground_requested_applet{};
 
     Applet* m_home_menu{};
     Applet* m_application{};
     Applet* m_overlay{};
+    // The display compositor reads this while holding the VI container lock.
+    // It must not acquire m_lock, since AM changes layer visibility under m_lock.
+    std::atomic<u64> m_main_applet_aruid{};
 
     std::map<u64, std::shared_ptr<Applet>> m_applets{};
 
     HomeMenuRequestCallback m_home_menu_request_callback{};
+    std::optional<InvitationLaunchRequest> m_invitation_launch;
 };
 
 } // namespace Service::AM

@@ -179,6 +179,51 @@ VirtualDir SaveDataFactory::GetSaveDataSpaceDirectory(SaveDataSpaceId space) con
     return dir->GetDirectoryRelative(GetSaveDataSpaceIdPath(space));
 }
 
+Result SaveDataFactory::DeleteUserSaveDataAll(u128 user_id) const {
+    // Never match the zero UID used by shared/device saves.
+    R_UNLESS(user_id != u128{}, ResultInvalidArgument);
+    const auto legacy_name = fmt::format("{:016X}{:016X}", user_id[1], user_id[0]);
+    Common::UUID uuid;
+    std::memcpy(uuid.uuid.data(), user_id.data(), sizeof(uuid));
+    const auto account_name = uuid.RawString();
+
+    for (const auto space : {SaveDataSpaceId::System, SaveDataSpaceId::User,
+                             SaveDataSpaceId::SdUser, SaveDataSpaceId::Temporary}) {
+        const auto root = GetSaveDataSpaceDirectory(space);
+        if (!root) {
+            continue;
+        }
+        const auto saves = root->GetSubdirectory("save");
+        if (saves) {
+            // Legacy layouts: save/<save-id>/<uid>/<title-id>. The directory
+            // names are fixed hex strings; deletion stays within this VFS root.
+            for (const auto& save_id : saves->GetSubdirectories()) {
+                if (save_id->GetName().size() != 16) {
+                    continue;
+                }
+                if (save_id->GetSubdirectory(legacy_name)) {
+                    R_UNLESS(save_id->DeleteSubdirectoryRecursive(legacy_name),
+                             ResultPermissionDenied);
+                }
+            }
+            // Current account layout: save/account/<uid>/<title-id>.
+            if (const auto accounts = saves->GetSubdirectory("account");
+                accounts && accounts->GetSubdirectory(account_name)) {
+                R_UNLESS(accounts->DeleteSubdirectoryRecursive(account_name),
+                         ResultPermissionDenied);
+            }
+        }
+        if (space == SaveDataSpaceId::Temporary) {
+            const auto temporary = root->GetSubdirectory("0000000000000000");
+            if (temporary && temporary->GetSubdirectory(legacy_name)) {
+                R_UNLESS(temporary->DeleteSubdirectoryRecursive(legacy_name),
+                         ResultPermissionDenied);
+            }
+        }
+    }
+    R_SUCCEED();
+}
+
 std::string SaveDataFactory::GetSaveDataSpaceIdPath(SaveDataSpaceId space) {
     switch (space) {
     case SaveDataSpaceId::System:

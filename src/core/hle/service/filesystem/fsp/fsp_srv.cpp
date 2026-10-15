@@ -17,6 +17,7 @@
 #include "common/settings.h"
 #include "common/string_util.h"
 #include "core/core.h"
+#include "core/file_sys/bis_factory.h"
 #include "core/file_sys/common_funcs.h"
 #include "core/file_sys/content_archive.h"
 #include "core/file_sys/errors.h"
@@ -63,7 +64,7 @@ FSP_SRV::FSP_SRV(Core::System& system_)
         {7, D<&FSP_SRV::OpenFileSystemWithPatch>, "OpenFileSystemWithPatch"},
         {8, nullptr, "OpenFileSystemWithId"},
         {9, nullptr, "OpenDataFileSystemByApplicationId"},
-        {11, nullptr, "OpenBisFileSystem"},
+        {11, D<&FSP_SRV::OpenBisFileSystem>, "OpenBisFileSystem"},
         {12, D<&FSP_SRV::OpenBisStorage>, "OpenBisStorage"},
         {13, nullptr, "InvalidateBisCache"},
         {17, nullptr, "OpenHostFileSystem"},
@@ -149,7 +150,7 @@ FSP_SRV::FSP_SRV(Core::System& system_)
         {617, nullptr, "UnregisterExternalKey"},
         {620, nullptr, "SetSdCardEncryptionSeed"},
         {630, nullptr, "SetSdCardAccessibility"},
-        {631, nullptr, "IsSdCardAccessible"},
+        {631, D<&FSP_SRV::IsSdCardAccessible>, "IsSdCardAccessible"},
         {640, nullptr, "IsSignedSystemPartitionOnSdCardValid"},
         {700, nullptr, "OpenAccessFailureResolver"},
         {701, nullptr, "GetAccessFailureDetectionEvent"},
@@ -231,6 +232,14 @@ Result FSP_SRV::OpenSdCardFileSystem(OutInterface<IFileSystem> out_interface) {
     *out_interface = std::make_shared<IFileSystem>(
         system, sdmc_dir, SizeGetter::FromStorageId(fsc, FileSys::StorageId::SdCard));
 
+    R_SUCCEED();
+}
+
+Result FSP_SRV::IsSdCardAccessible(Out<bool> out_is_accessible) {
+    FileSys::VirtualDir sdmc_dir{};
+    const auto result = fsc.OpenSDMC(&sdmc_dir);
+    *out_is_accessible = result.IsSuccess() && sdmc_dir != nullptr;
+    LOG_INFO(Service_FS, "called, accessible={}", *out_is_accessible);
     R_SUCCEED();
 }
 
@@ -701,6 +710,22 @@ Result FSP_SRV::OpenBisWiper(OutInterface<IWiper> out_interface) {
 
     *out_interface = std::make_shared<IWiper>(system);
 
+    R_SUCCEED();
+}
+
+Result FSP_SRV::OpenBisFileSystem(OutInterface<IFileSystem> out_interface, u32 partition_id,
+                                InBuffer<BufferAttr_HipcPointer> partition_name) {
+    // The name is a reserved BIS mount argument, not a host filesystem path.
+    FileSys::VirtualDir partition;
+    R_TRY(fsc.OpenBISPartition(&partition, static_cast<FileSys::BisPartitionId>(partition_id)));
+
+    const auto storage_id = partition_id == static_cast<u32>(FileSys::BisPartitionId::User)
+                                ? FileSys::StorageId::NandUser
+                                : FileSys::StorageId::NandSystem;
+    *out_interface = std::make_shared<IFileSystem>(
+        system, std::move(partition), SizeGetter::FromStorageId(fsc, storage_id));
+    LOG_INFO(Service_FS, "Opened BIS filesystem: partition_id={} name_buffer_size={}",
+             partition_id, partition_name.size());
     R_SUCCEED();
 }
 

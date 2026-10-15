@@ -196,7 +196,7 @@ Result ILibraryAppletSelfAccessor::GetMainAppletStorageId(Out<FileSys::StorageId
 
 Result ILibraryAppletSelfAccessor::ExitProcessAndReturn() {
     LOG_INFO(Service_AM, "called");
-    m_applet->process->Terminate();
+    m_applet->process->Terminate(true);
     m_window_system.RequestUpdate();
     R_SUCCEED();
 }

@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <memory>
+#include "common/fs/fs.h"
+#include "common/fs/path_util.h"
 #include "core/file_sys/registered_cache.h"
 #include "core/file_sys/sdmc_factory.h"
 #include "core/file_sys/vfs/vfs.h"
 #include "core/file_sys/xts_archive.h"
 
 namespace FileSys {
-
-constexpr u64 SDMC_TOTAL_SIZE = 35733492472; // random shit
 
 SDMCFactory::SDMCFactory(VirtualDir sd_dir_, VirtualDir sd_mod_dir_)
     : sd_dir(std::move(sd_dir_)), sd_mod_dir(std::move(sd_mod_dir_)),
@@ -52,11 +52,11 @@ VirtualDir SDMCFactory::GetImageDirectory() const {
 }
 
 u64 SDMCFactory::GetSDMCFreeSpace() const {
-    return GetSDMCTotalSpace() - sd_dir->GetSize();
+    return Common::FS::GetFreeSpaceSize(Common::FS::GetCitronPath(Common::FS::CitronPath::SDMCDir));
 }
 
 u64 SDMCFactory::GetSDMCTotalSpace() const {
-    return SDMC_TOTAL_SIZE;
+    return Common::FS::GetTotalSpaceSize(Common::FS::GetCitronPath(Common::FS::CitronPath::SDMCDir));
 }
 
 } // namespace FileSys

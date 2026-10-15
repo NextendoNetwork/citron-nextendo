@@ -204,6 +204,7 @@ private:
     std::unordered_map<DeviceFD, NvCore::SessionId> sessions;
     u32 channel_syncpoint;
     std::mutex channel_mutex;
+    u32 homebrew_diag_submits{};
 
     // Events
     Kernel::KEvent* sm_exception_breakpoint_int_report_event;

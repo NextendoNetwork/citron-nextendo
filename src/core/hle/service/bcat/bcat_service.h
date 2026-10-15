@@ -22,7 +22,7 @@ class IDeliveryTaskSuspensionService;
 
 class IBcatService final : public ServiceFramework<IBcatService> {
 public:
-    explicit IBcatService(Core::System& system_, BcatBackend& backend_);
+    explicit IBcatService(Core::System& system_, BcatBackend& backend_, u64 client_program_id_);
     ~IBcatService() override;
 
 private:
@@ -65,6 +65,7 @@ private:
     const ProgressServiceBackend& GetProgressBackend(SyncType type) const;
 
     BcatBackend& backend;
+    const u64 client_program_id;
     std::array<ProgressServiceBackend, static_cast<size_t>(SyncType::Count)> progress;
 };
 

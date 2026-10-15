@@ -115,12 +115,15 @@ std::unique_ptr<Process> CreateApplicationProcess(std::vector<u8>& out_control,
     FileSys::PatchManager pm{launch.title_id, system.GetFileSystemController(), storage};
     launch.version = pm.GetGameVersion().value_or(0);
 
-    // TODO(DarkLordZach): When FSController/Game Card Support is added, if
-    // current_process_game_card use correct StorageId
-    launch.base_game_storage_id = GetStorageIdForFrontendSlot(
-        storage.GetSlotForEntry(launch.title_id, FileSys::ContentRecordType::Program));
-    launch.update_storage_id = GetStorageIdForFrontendSlot(storage.GetSlotForEntry(
-        FileSys::GetUpdateTitleID(launch.title_id), FileSys::ContentRecordType::Program));
+    const auto source_storage = [&storage](u64 id) {
+        return storage.GetEntryOrigin(id, FileSys::ContentRecordType::Program) ==
+                       FileSys::ContentOrigin::GameCardImage
+                   ? FileSys::StorageId::GameCard
+                   : GetStorageIdForFrontendSlot(storage.GetSlotForEntry(id, FileSys::ContentRecordType::Program));
+    };
+    launch.base_game_storage_id = out_loader->GetFileType() == Loader::FileType::XCI
+        ? FileSys::StorageId::GameCard : source_storage(launch.title_id);
+    launch.update_storage_id = source_storage(FileSys::GetUpdateTitleID(launch.title_id));
 
     system.GetARPManager().Register(launch.title_id, launch, out_control);
 

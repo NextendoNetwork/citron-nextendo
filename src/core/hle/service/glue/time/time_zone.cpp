@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <chrono>
+#include <cstdlib>
+#include "core/arm/debug.h"
+#include "core/hle/kernel/k_process.h"
 
 #include "common/scope_exit.h"
 #include "core/core.h"
@@ -41,7 +44,7 @@ TimeZoneService::TimeZoneService(
         {8,   D<&TimeZoneService::ParseTimeZoneBinary>, "ParseTimeZoneBinary"},
         {20,  D<&TimeZoneService::GetDeviceLocationNameOperationEventReadableHandle>, "GetDeviceLocationNameOperationEventReadableHandle"},
         {100, D<&TimeZoneService::ToCalendarTime>, "ToCalendarTime"},
-        {101, D<&TimeZoneService::ToCalendarTimeWithMyRule>, "ToCalendarTimeWithMyRule"},
+        {101, &TimeZoneService::TraceProfileCalendarTime, "ToCalendarTimeWithMyRule"},
         {201, D<&TimeZoneService::ToPosixTime>, "ToPosixTime"},
         {202, D<&TimeZoneService::ToPosixTimeWithMyRule>, "ToPosixTimeWithMyRule"},
     };
@@ -190,6 +193,23 @@ Result TimeZoneService::ToCalendarTime(
     };
 
     R_RETURN(m_wrapped_service->ToCalendarTime(out_calendar_time, out_additional_info, time, rule));
+}
+
+void TimeZoneService::TraceProfileCalendarTime(HLERequestContext& ctx) {
+    IPC::RequestParser rp{ctx};
+    const auto time = rp.Pop<s64>();
+    if (std::getenv("CITRON_TRACE_PROFILE_DATE") && m_profile_date_traces < 4 &&
+        time == 946598400 && ctx.GetThread().GetOwnerProcess()->GetProgramId() ==
+                                 0x0100000000001013ULL) {
+        ++m_profile_date_traces;
+        const auto frames = Core::GetBacktrace(&ctx.GetThread());
+        LOG_INFO(Service_Time, "Profile date trace {}: {} frames", m_profile_date_traces, frames.size());
+        for (size_t i = 0; i < std::min<size_t>(frames.size(), 24); ++i) {
+            LOG_INFO(Service_Time, "Profile date trace {} frame {}: module={} offset={:X}",
+                     m_profile_date_traces, i, frames[i].module, frames[i].offset);
+        }
+    }
+    (this->*D<&TimeZoneService::ToCalendarTimeWithMyRule>)(ctx);
 }
 
 Result TimeZoneService::ToCalendarTimeWithMyRule(

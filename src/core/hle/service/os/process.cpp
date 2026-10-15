@@ -101,9 +101,11 @@ bool Process::Run() {
     return true;
 }
 
-void Process::Terminate() {
+void Process::Terminate(bool defer_cleanup) {
     if (m_process) {
-        m_process->Terminate();
+        const auto result = m_process->Terminate(defer_cleanup);
+        LOG_INFO(Service, "Applet process termination: pid={} result={:#x} state={}",
+                 m_process->GetProcessId(), result.raw, static_cast<u32>(m_process->GetState()));
     }
 }
 

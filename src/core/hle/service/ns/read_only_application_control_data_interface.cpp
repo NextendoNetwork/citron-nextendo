@@ -3,10 +3,14 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
 #include "common/settings.h"
+#include "core/hle/service/ns/home_menu_metadata.h"
+#include "core/hle/service/ns/external_application_metadata.h"
+#include "common/nextendo_friends.h"
 #include "core/file_sys/control_metadata.h"
 #include "core/file_sys/patch_manager.h"
 #include "core/file_sys/vfs/vfs.h"
@@ -101,49 +105,98 @@ void SanitizeJPEGImageSize(std::vector<u8>& image) {
 struct CachedControl {
     bool has_nacp = false;
     bool has_icon = false;
+    bool external_metadata = false;
     std::vector<u8> nacp_bytes;
     std::vector<u8> icon_bytes;
     FileSys::LanguageEntry language_entry{};
 };
 
 std::mutex g_control_cache_mutex;
+u64 g_control_cache_generation{};
 std::unordered_map<u64, std::pair<std::chrono::steady_clock::time_point, CachedControl>>
     g_control_cache;
 
 CachedControl GetCachedControl(Core::System& system, u64 application_id) {
     const auto now = std::chrono::steady_clock::now();
+    u64 generation{};
 
     {
         std::lock_guard lock{g_control_cache_mutex};
+        generation = g_control_cache_generation;
         const auto it = g_control_cache.find(application_id);
-        if (it != g_control_cache.end()) {
+        if (it != g_control_cache.end() &&
+            ((it->second.second.has_nacp && it->second.second.has_icon &&
+              !it->second.second.external_metadata) ||
+             now - it->second.first < std::chrono::seconds{5})) {
             return it->second.second;
         }
     }
 
-    const FileSys::PatchManager pm{application_id, system.GetFileSystemController(),
-                                   system.GetContentProvider()};
-    const auto control = pm.GetControlMetadata();
-
     CachedControl result;
-    if (control.first != nullptr) {
+    FileSys::RawNACP home_nacp{};
+    if (GetHomeMenuControl(application_id, home_nacp, result.icon_bytes)) {
+        const auto* bytes = reinterpret_cast<const u8*>(&home_nacp);
+        result.nacp_bytes.assign(bytes, bytes + sizeof(home_nacp));
+        result.language_entry = home_nacp.language_entries[0];
         result.has_nacp = true;
-        const auto bytes = control.first->GetRawBytes();
-        result.nacp_bytes.assign(bytes.begin(), bytes.end());
-        result.language_entry = control.first->GetLanguageEntry();
-    }
-    if (control.second != nullptr) {
         result.has_icon = true;
-        result.icon_bytes.resize(control.second->GetSize());
-        control.second->Read(result.icon_bytes.data(), result.icon_bytes.size());
+    } else {
+        const FileSys::PatchManager pm{application_id, system.GetFileSystemController(),
+                                       system.GetContentProvider()};
+        const auto control = pm.GetControlMetadata();
+
+        if (control.first != nullptr) {
+            result.has_nacp = true;
+            const auto bytes = control.first->GetRawBytes();
+            result.nacp_bytes.assign(bytes.begin(), bytes.end());
+            result.language_entry = control.first->GetLanguageEntry();
+        }
+        if (control.second != nullptr) {
+            result.has_icon = true;
+            result.icon_bytes.resize(control.second->GetSize());
+            control.second->Read(result.icon_bytes.data(), result.icon_bytes.size());
+        }
+
+    }
+
+    // MyPage can display friends' games that are absent from this console's library.
+    // Prefer installed metadata, then cached Nextendo data, then an explicit placeholder.
+    if (const auto remote = Common::NextendoFriends::GetApplicationMetadata(application_id)) {
+        FileSys::RawNACP nacp{};
+        std::vector<u8> remote_icon;
+        GetExternalApplicationControl(*remote, nacp, remote_icon);
+        if (!result.has_nacp) {
+            result.external_metadata = true;
+            const auto* bytes = reinterpret_cast<const u8*>(&nacp);
+            result.nacp_bytes.assign(bytes, bytes + sizeof(nacp));
+            result.language_entry = nacp.language_entries[0];
+            result.has_nacp = true;
+        }
+        if (!result.has_icon) {
+            result.external_metadata = true;
+            result.icon_bytes = std::move(remote_icon);
+            result.has_icon = true;
+        }
     }
 
     std::lock_guard lock{g_control_cache_mutex};
-    g_control_cache[application_id] = {now, result};
+    // A read that started before a catalog swap must not repopulate the cache
+    // with metadata from the previous snapshot.
+    if (generation == g_control_cache_generation) {
+        g_control_cache[application_id] = {now, result};
+    }
     return result;
 }
 
 } // namespace
+
+void InvalidateApplicationControlCache() {
+    std::lock_guard lock{g_control_cache_mutex};
+    LOG_INFO(Service_NS, "Library control metadata invalidated: cached_titles={}",
+             g_control_cache.size());
+    ++g_control_cache_generation;
+    g_control_cache.clear();
+}
 
 // IAsyncValue implementation for ListApplicationTitle
 // https://switchbrew.org/wiki/NS_services#ListApplicationTitle
@@ -221,6 +274,10 @@ IReadOnlyApplicationControlDataInterface::IReadOnlyApplicationControlDataInterfa
         {13, &IReadOnlyApplicationControlDataInterface::ListApplicationTitle, "ListApplicationTitle"},
         {14, &IReadOnlyApplicationControlDataInterface::ListApplicationIcon, "ListApplicationIcon"},
         {19, D<&IReadOnlyApplicationControlDataInterface::GetApplicationControlData3>, "GetApplicationControlData"},
+        // MyPage's 21.x SDK uses command 20. Its additional request byte occupies
+        // padding before the application id; the output byte occupies the low
+        // byte of the second word. Both layouts are compatible with command 19.
+        {20, D<&IReadOnlyApplicationControlDataInterface::GetApplicationControlData3>, "GetApplicationControlData"},
     };
     // clang-format on
 

@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cstddef>
 #include <cstring>
+#include <cstdlib>
 #include <map>
 
 #include <filesystem>
@@ -24,6 +25,7 @@
 #include "core/file_sys/control_metadata.h"
 #include "core/file_sys/ips_layer.h"
 #include "core/file_sys/patch_manager.h"
+#include "core/file_sys/mypage_member_label.h"
 #include "core/file_sys/registered_cache.h"
 #include "core/file_sys/romfs.h"
 #include "core/file_sys/vfs/vfs_cached.h"
@@ -513,7 +515,30 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
 
     std::sort(patch_dirs.begin(), patch_dirs.end(),
               [](const VirtualDir& l, const VirtualDir& r) { return l->GetName() < r->GetName(); });
-    const auto patches = CollectPatches(patch_dirs, build_id);
+    auto patches = CollectPatches(patch_dirs, build_id);
+    // Atmosphere stores global build-ID patches outside contents/<title>/exefs.
+    if (std::find(disabled.begin(), disabled.end(), "SDMC") == disabled.end()) {
+        VirtualDir sdmc;
+        if (fs_controller.OpenSDMC(&sdmc).IsSuccess() && sdmc) {
+            const auto global_patches = sdmc->GetDirectoryRelative("/atmosphere/exefs_patches");
+            if (global_patches) {
+                const auto expected_id = fmt::format("{:0<64}", build_id);
+                for (const auto& group : global_patches->GetSubdirectories()) {
+                    for (const auto& file : group->GetFiles()) {
+                        if (file->GetExtension() != "ips") {
+                            continue;
+                        }
+                        const auto filename = file->GetName();
+                        const auto patch_id = filename.substr(0, filename.find('.'));
+                        if (patch_id.size() <= 64 &&
+                            fmt::format("{:0<64}", patch_id) == expected_id) {
+                            patches.push_back(file);
+                        }
+                    }
+                }
+            }
+        }
+    }
     auto out = nso;
     for (const auto& patch_file : patches) {
         if (patch_file->GetExtension() == "ips") {
@@ -554,7 +579,34 @@ bool PatchManager::HasNSOPatch(const BuildID& build_id_, std::string_view name) 
 
     std::sort(patch_dirs.begin(), patch_dirs.end(),
               [](const VirtualDir& l, const VirtualDir& r) { return l->GetName() < r->GetName(); });
-    return !CollectPatches(patch_dirs, build_id).empty();
+    if (!CollectPatches(patch_dirs, build_id).empty()) {
+        return true;
+    }
+    // The loader calls this before PatchNSO. Include global Atmosphere patches here too,
+    // otherwise an installed HOME theme's required IPS is never applied.
+    if (std::find(disabled.begin(), disabled.end(), "SDMC") == disabled.end()) {
+        VirtualDir sdmc;
+        if (fs_controller.OpenSDMC(&sdmc).IsSuccess() && sdmc) {
+            const auto global_patches = sdmc->GetDirectoryRelative("/atmosphere/exefs_patches");
+            if (global_patches) {
+                const auto expected_id = fmt::format("{:0<64}", build_id);
+                for (const auto& group : global_patches->GetSubdirectories()) {
+                    for (const auto& file : group->GetFiles()) {
+                        if (file->GetExtension() != "ips") {
+                            continue;
+                        }
+                        const auto filename = file->GetName();
+                        const auto patch_id = filename.substr(0, filename.find('.'));
+                        if (patch_id.size() <= 64 &&
+                            fmt::format("{:0<64}", patch_id) == expected_id) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return false;
 }
 
 std::vector<Core::Memory::CheatEntry> PatchManager::CreateCheatList(
@@ -596,6 +648,39 @@ std::vector<Core::Memory::CheatEntry> PatchManager::CreateCheatList(
     return out;
 }
 
+// Keep HOME's active layout independent of files that NXThemes may replace or
+// remove. RealVfsFile retains Windows read handles; a metadata-only directory
+// cache both prevents replacement and can expose partially updated resources.
+static VirtualDir SnapshotHomeTheme(const VirtualDir& source, size_t& remaining,
+                                   size_t depth = 0) {
+    if (depth > 16) {
+        return nullptr;
+    }
+    std::vector<VirtualFile> files;
+    std::vector<VirtualDir> directories;
+    for (const auto& file : source->GetFiles()) {
+        const auto size = file->GetSize();
+        if (size > remaining) {
+            return nullptr;
+        }
+        auto data = file->ReadBytes(size);
+        if (data.size() != size) {
+            return nullptr;
+        }
+        remaining -= size;
+        files.push_back(std::make_shared<VectorVfsFile>(std::move(data), file->GetName()));
+    }
+    for (const auto& directory : source->GetSubdirectories()) {
+        auto snapshot = SnapshotHomeTheme(directory, remaining, depth + 1);
+        if (!snapshot) {
+            return nullptr;
+        }
+        directories.push_back(std::move(snapshot));
+    }
+    return std::make_shared<VectorVfsDirectory>(std::move(files), std::move(directories),
+                                               source->GetName());
+}
+
 static void ApplyLayeredFS(VirtualFile& romfs, u64 title_id, ContentRecordType type,
                            const Service::FileSystem::FileSystemController& fs_controller) {
     const auto load_dir = fs_controller.GetModificationLoadRoot(title_id);
@@ -629,6 +714,16 @@ static void ApplyLayeredFS(VirtualFile& romfs, u64 title_id, ContentRecordType t
         if (!subdir)
             continue;
         auto romfs_dir = FindSubdirectoryCaseless(subdir, "romfs");
+        if (romfs_dir && title_id == 0x0100000000001000) {
+            size_t remaining = 64 * 1024 * 1024;
+            romfs_dir = SnapshotHomeTheme(romfs_dir, remaining);
+            if (romfs_dir) {
+                LOG_INFO(Loader, "HOME theme snapshot ready: bytes={}; changes apply next boot",
+                         64 * 1024 * 1024 - remaining);
+            } else {
+                LOG_ERROR(Loader, "HOME theme snapshot failed or exceeds 64 MiB; skipping layer");
+            }
+        }
         if (romfs_dir != nullptr)
             layers.emplace_back(std::make_shared<CachedVfsDirectory>(std::move(romfs_dir)));
         auto romfslite_dir = FindSubdirectoryCaseless(subdir, "romfslite");
@@ -663,6 +758,26 @@ static void ApplyLayeredFS(VirtualFile& romfs, u64 title_id, ContentRecordType t
     }
     LOG_INFO(Loader, "    RomFS: LayeredFS patches applied successfully");
     romfs = std::move(packed);
+}
+
+// Only message resources are overlaid; downloaded MyPage layouts remain intact.
+static VirtualDir MemberLabelLayer(const VirtualDir& source, size_t& count, size_t depth = 0) {
+    if (!source || depth > 3) return nullptr;
+    auto layer = std::make_shared<VectorVfsDirectory>(std::vector<VirtualFile>{},
+                                                   std::vector<VirtualDir>{}, source->GetName());
+    for (const auto& file : source->GetFiles()) {
+        if (count >= 64 || file->GetSize() > 8 * 1024 * 1024 ||
+            (!file->GetName().ends_with(".szs") && !file->GetName().ends_with(".msbt"))) continue;
+        if (auto patched = MyPageMemberLabel::Patch(file->ReadAllBytes())) {
+            layer->AddFile(std::make_shared<VectorVfsFile>(std::move(*patched), file->GetName()));
+            ++count;
+        }
+    }
+    for (const auto& dir : source->GetSubdirectories()) {
+        if (auto sub = MemberLabelLayer(dir, count, depth + 1)) layer->AddDirectory(std::move(sub));
+    }
+    if (layer->GetFiles().empty() && layer->GetSubdirectories().empty()) return nullptr;
+    return layer;
 }
 
 VirtualFile PatchManager::PatchRomFS(const NCA* base_nca, VirtualFile base_romfs,
@@ -728,6 +843,30 @@ VirtualFile PatchManager::PatchRomFS(const NCA* base_nca, VirtualFile base_romfs
 
     if (apply_layeredfs) {
         ApplyLayeredFS(romfs, title_id, type, fs_controller);
+    }
+    if (title_id == 0x0100000000001013 && type == ContentRecordType::Program) {
+        const auto extracted = ExtractRomFS(romfs);
+        size_t count = 0;
+        if (extracted) {
+            if (auto messages = MemberLabelLayer(extracted->GetSubdirectory("message"), count)) {
+                auto root = std::make_shared<VectorVfsDirectory>();
+                root->AddDirectory(std::move(messages));
+                auto layer = LayeredVfsDirectory::MakeLayeredDirectory({root, extracted});
+                if (auto packed = CreateRomFS(std::move(layer))) romfs = std::move(packed);
+            }
+        }
+        LOG_INFO(Loader, "MyPage member-since labels patched: resources={}", count);
+    }
+    // Opt-in local resource inspection; never export firmware during normal launches.
+    if (title_id == 0x0100000000001000 && std::getenv("CITRON_INSPECT_HOME_RESOURCES")) {
+        const auto root = fs_controller.GetModificationDumpRoot(title_id);
+        const auto extracted = ExtractRomFS(romfs);
+        if (root && extracted && !root->GetSubdirectory("home-resources")) {
+            const auto destination = root->CreateSubdirectory("home-resources");
+            if (destination) {
+                VfsRawCopyD(extracted, destination);
+            }
+        }
     }
     return romfs;
 }
@@ -1141,8 +1280,18 @@ PatchManager::ActiveUpdate PatchManager::GetActiveUpdate() const {
                 fmt::format("External Files/Update v{}", canonical_version_str);
 
             std::string nacp_version_str;
-            const auto control_file = content_provider_union->GetExternalEntryForVersion(
-                update_tid, ContentRecordType::Control, update.version);
+            // Display-version aliases only matter when one is explicitly disabled.
+            // HOME queries numeric versions repeatedly; avoid extracting every
+            // update's control RomFS just to select the highest enabled version.
+            const bool needs_display_version =
+                !is_disabled(canonical_name) &&
+                std::any_of(disabled.cbegin(), disabled.cend(), [](const auto& name) {
+                    return name.starts_with("External Files/Update v");
+                });
+            const auto control_file = needs_display_version
+                ? content_provider_union->GetExternalEntryForVersion(
+                      update_tid, ContentRecordType::Control, update.version)
+                : nullptr;
             if (control_file) {
                 NCA control_nca(control_file);
                 if (control_nca.GetStatus() == Loader::ResultStatus::Success) {
@@ -1182,9 +1331,6 @@ PatchManager::ActiveUpdate PatchManager::GetActiveUpdate() const {
     const auto update_tid = GetUpdateTitleID(title_id);
     if (update_tid != title_id) {
         PatchManager update_mgr{update_tid, fs_controller, content_provider};
-        const auto metadata = update_mgr.GetControlMetadata();
-        const auto& nacp = metadata.first;
-
         bool is_nand_control = true;
         bool is_nand_program = true;
         if (content_provider_union) {
@@ -1197,6 +1343,11 @@ PatchManager::ActiveUpdate PatchManager::GetActiveUpdate() const {
                 is_nand_program = false;
             }
         }
+
+        // An external control was already considered above. Loading it here
+        // cannot produce a NAND candidate and repeats its RomFS extraction.
+        const auto metadata = is_nand_control ? update_mgr.GetControlMetadata() : Metadata{};
+        const auto& nacp = metadata.first;
 
         if (nacp && is_nand_control) {
             const auto version_str = CleanNacpVersion(nacp->GetVersionString());

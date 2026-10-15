@@ -26,6 +26,8 @@ private:
     Result RequestExit();
     Result Terminate();
     Result GetResult();
+    Result GetApplicationId(Out<u64> out_application_id);
+    Result GetApplicationLaunchRequestInfo(Out<std::array<u32, 4>> out_info);
     Result GetAppletStateChangedEvent(OutCopyHandle<Kernel::KReadableEvent> out_event);
     Result PushLaunchParameter(LaunchParameterKind kind, SharedPointer<IStorage> storage);
     Result PushToFriendInvitationStorageChannel(SharedPointer<IStorage> storage);

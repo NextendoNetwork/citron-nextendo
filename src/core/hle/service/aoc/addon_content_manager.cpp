@@ -15,6 +15,8 @@
 #include "core/file_sys/patch_manager.h"
 #include "core/file_sys/registered_cache.h"
 #include "core/hle/kernel/k_event.h"
+#include "core/hle/kernel/k_process.h"
+#include "core/hle/kernel/kernel.h"
 #include "core/hle/service/aoc/addon_content_manager.h"
 #include "core/hle/service/aoc/contents_service_manager.h"
 #include "core/hle/service/aoc/purchase_event_manager.h"
@@ -30,6 +32,15 @@
 
 namespace Service::AOC {
 
+static std::optional<u64> GetAOCProgramId(Core::System& system, ClientProcessId process_id) {
+    for (auto& process : system.Kernel().GetProcessList()) {
+        if (process->GetProcessId() == process_id.pid) {
+            return process->GetProgramId();
+        }
+    }
+    return std::nullopt;
+}
+
 static bool CheckAOCTitleIDMatchesBase(u64 title_id, u64 base) {
     return FileSys::GetBaseTitleID(title_id) == base;
 }
@@ -40,12 +51,15 @@ static std::vector<u64> AccumulateAOCTitleIDs(Core::System& system) {
     const auto list =
         rcu.ListEntriesFilter(FileSys::TitleType::AOC, FileSys::ContentRecordType::Data);
     for (const auto& entry : list) {
-        if (rcu.GetEntry(entry.title_id, FileSys::ContentRecordType::Data)->GetStatus() ==
-            Loader::ResultStatus::Success) {
+        const auto nca = rcu.GetEntry(entry.title_id, FileSys::ContentRecordType::Data);
+        if (nca && nca->GetStatus() == Loader::ResultStatus::Success) {
             add_on_content.push_back(entry.title_id);
         }
     }
-    LOG_DEBUG(Service_AOC, "Accumulated {} AOC title IDs", add_on_content.size());
+    std::sort(add_on_content.begin(), add_on_content.end());
+    add_on_content.erase(std::unique(add_on_content.begin(), add_on_content.end()),
+                         add_on_content.end());
+    LOG_INFO(Service_AOC, "Accumulated {} valid unique AOC title IDs", add_on_content.size());
     return add_on_content;
 }
 
@@ -102,7 +116,9 @@ IAddOnContentManager::~IAddOnContentManager() {
 
 Result IAddOnContentManager::CountAddOnContent(Out<u32> out_count, ClientProcessId process_id) {
     LOG_DEBUG(Service_AOC, "CountAddOnContent called. process_id={}", process_id.pid);
-    const auto raw_program_id = system.GetApplicationProcessProgramID();
+    const auto caller_program_id = GetAOCProgramId(system, process_id);
+    R_UNLESS(caller_program_id.has_value(), ResultUnknown);
+    const auto raw_program_id = *caller_program_id;
     const auto current = FileSys::GetBaseTitleID(raw_program_id);
     const auto& disabled = Settings::values.disabled_addons[current];
     const auto dlc_disabled = std::find(disabled.begin(), disabled.end(), "DLC") != disabled.end();
@@ -140,7 +156,9 @@ Result IAddOnContentManager::ListAddOnContent(Out<u32> out_count,
     LOG_DEBUG(Service_AOC, "called with offset={}, count={}, process_id={}", offset, count,
               process_id.pid);
 
-    const auto current = FileSys::GetBaseTitleID(system.GetApplicationProcessProgramID());
+    const auto caller_program_id = GetAOCProgramId(system, process_id);
+    R_UNLESS(caller_program_id.has_value(), ResultUnknown);
+    const auto current = FileSys::GetBaseTitleID(*caller_program_id);
     const auto& disabled = Settings::values.disabled_addons[current];
 
     if (std::find(disabled.begin(), disabled.end(), "DLC") != disabled.end()) {
@@ -244,7 +262,9 @@ Result IAddOnContentManager::GetAddOnContentBaseId(Out<u64> out_title_id,
                                                    ClientProcessId process_id) {
     // LOG_DEBUG(Service_AOC, "called. process_id={}", process_id.pid);
     LOG_WARNING(Service_AOC, "GetAddOnContentBaseId called. process_id={}", process_id.pid);
-    const auto title_id = system.GetApplicationProcessProgramID();
+    const auto caller_program_id = GetAOCProgramId(system, process_id);
+    R_UNLESS(caller_program_id.has_value(), ResultUnknown);
+    const auto title_id = *caller_program_id;
     const FileSys::PatchManager pm{title_id, system.GetFileSystemController(),
                                    system.GetContentProvider()};
 
@@ -266,7 +286,9 @@ Result IAddOnContentManager::GetAddOnContentBaseId(Out<u64> out_title_id,
 }
 
 Result IAddOnContentManager::PrepareAddOnContent(s32 addon_index, ClientProcessId process_id) {
-    const auto raw_program_id = system.GetApplicationProcessProgramID();
+    const auto caller_program_id = GetAOCProgramId(system, process_id);
+    R_UNLESS(caller_program_id.has_value(), ResultUnknown);
+    const auto raw_program_id = *caller_program_id;
     const auto program_id = FileSys::GetBaseTitleID(raw_program_id);
     const auto aoc_base_id = FileSys::GetAOCBaseTitleID(program_id);
     const auto matching_aocs = GetAOCTitleIDsForBase(add_on_content, program_id);

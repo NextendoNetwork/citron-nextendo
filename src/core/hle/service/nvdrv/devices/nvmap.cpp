@@ -240,12 +240,7 @@ NvResult nvmap::IocFree(IocFreeParams& params, DeviceFD fd) {
     }
 
     if (auto freeInfo{file.FreeHandle(params.handle, false)}) {
-        auto process = container.GetSession(sessions[fd])->process;
-        if (freeInfo->can_unlock) {
-            ASSERT(process->GetPageTable()
-                       .UnlockForDeviceAddressSpace(freeInfo->address, freeInfo->size)
-                       .IsSuccess());
-        }
+        // Core releases the device lock on the final guest or compositor reference.
         params.address = freeInfo->address;
         params.size = static_cast<u32>(freeInfo->size);
         params.flags.raw = 0;

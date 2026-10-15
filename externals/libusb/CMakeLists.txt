@@ -47,6 +47,12 @@ if (MINGW OR (${CMAKE_SYSTEM_NAME} MATCHES "Linux") OR APPLE)
 
     set(LIBUSB_CONFIGURE "${LIBUSB_SRC_DIR}/configure")
     set(LIBUSB_MAKEFILE "${LIBUSB_PREFIX}/Makefile")
+    set(LIBUSB_AUTOTOOLS_SRC_DIR "${LIBUSB_SRC_DIR}")
+    if(MINGW AND DEFINED ENV{MSYSTEM})
+        # configure runs in MSYS sh even when CMake/Ninja use native Windows paths.
+        string(REGEX REPLACE "^([A-Za-z]):/" "/\\1/"
+            LIBUSB_AUTOTOOLS_SRC_DIR "${LIBUSB_SRC_DIR}")
+    endif()
 
     if (MINGW)
         # Always build the static archive on MinGW targets (both llvm-mingw
@@ -88,7 +94,7 @@ if (MINGW OR (${CMAKE_SYSTEM_NAME} MATCHES "Linux") OR APPLE)
                 CFLAGS="${LIBUSB_CFLAGS}"
             sh "${LIBUSB_CONFIGURE}"
                 ${LIBUSB_CONFIGURE_ARGS}
-                --srcdir="${LIBUSB_SRC_DIR}"
+                --srcdir="${LIBUSB_AUTOTOOLS_SRC_DIR}"
         WORKING_DIRECTORY
             "${LIBUSB_PREFIX}"
     )

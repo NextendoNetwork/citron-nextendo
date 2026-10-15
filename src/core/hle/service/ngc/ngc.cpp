@@ -61,6 +61,8 @@ public:
             {1, &NgcServiceImpl::Check, "Check"},
             {2, &NgcServiceImpl::Mask, "Mask"},
             {3, &NgcServiceImpl::Reload, "Reload"},
+            {4, &NgcServiceImpl::Check2, "Check2"},
+            {5, &NgcServiceImpl::Mask2, "Mask2"},
         };
         // clang-format on
 
@@ -136,6 +138,27 @@ private:
 
         IPC::ResponseBuilder rb{ctx, 2};
         rb.Push(ResultSuccess);
+    }
+
+    void Check2(HLERequestContext& ctx) {
+        // Firmware 21+ keyboard flow. Preserve the existing HLE filter policy;
+        // don't parse newer options using the legacy option structure.
+        LOG_WARNING(Service_NGC, "(STUBBED) Check2 called");
+        IPC::ResponseBuilder rb{ctx, 3};
+        rb.Push(ResultSuccess);
+        rb.Push<u32>(0);
+    }
+
+    void Mask2(HLERequestContext& ctx) {
+        // Like legacy Mask, the HLE filter currently leaves text unchanged.
+        // Copy bytes without decoding/logging the user's nickname.
+        const auto input = ctx.ReadBuffer(0);
+        LOG_WARNING(Service_NGC, "(STUBBED) Mask2 called, input_bytes={} output_bytes={}",
+                    input.size(), ctx.GetWriteBufferSize());
+        ctx.WriteBuffer(input);
+        IPC::ResponseBuilder rb{ctx, 3};
+        rb.Push(ResultSuccess);
+        rb.Push<u32>(0);
     }
 };
 

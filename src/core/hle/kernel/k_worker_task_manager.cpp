@@ -23,7 +23,16 @@ void KWorkerTask::DoWorkerTask() {
     }
 }
 
-KWorkerTaskManager::KWorkerTaskManager() : m_waiting_thread(1, "KWorkerTaskManager") {}
+KWorkerTaskManager::KWorkerTaskManager()
+    : m_waiting_thread(1, "KWorkerTaskManager"),
+      m_process_waiting_thread(1, "KProcessExitWorker") {}
+
+void KWorkerTaskManager::WaitForRequests() {
+    // Keep the thread worker running while process tasks wait for child threads.
+    // Process tasks may enqueue thread work, so drain that queue last.
+    m_process_waiting_thread.WaitForRequests();
+    m_waiting_thread.WaitForRequests();
+}
 
 void KWorkerTaskManager::AddTask(KernelCore& kernel, WorkerType type, KWorkerTask* task) {
     ASSERT(type <= WorkerType::Count);
@@ -32,7 +41,10 @@ void KWorkerTaskManager::AddTask(KernelCore& kernel, WorkerType type, KWorkerTas
 
 void KWorkerTaskManager::AddTask(KernelCore& kernel, KWorkerTask* task) {
     KScopedSchedulerLock sl(kernel);
-    m_waiting_thread.QueueWork([task]() {
+    // KProcess::DoWorkerTaskImpl waits for KThread::FinishTermination to signal.
+    // A single shared queue deadlocks if that thread task is queued behind the process.
+    auto& worker = task->DynamicCast<KProcess*>() ? m_process_waiting_thread : m_waiting_thread;
+    worker.QueueWork([task]() {
         // Do the task.
         task->DoWorkerTask();
     });

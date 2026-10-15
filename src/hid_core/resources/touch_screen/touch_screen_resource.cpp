@@ -10,6 +10,7 @@
 #include "hid_core/hid_result.h"
 #include "hid_core/resources/applet_resource.h"
 #include "hid_core/resources/shared_memory_format.h"
+#include "hid_core/resources/touch_screen/applet_touch_state.h"
 #include "hid_core/resources/touch_screen/touch_screen_driver.h"
 #include "hid_core/resources/touch_screen/touch_screen_resource.h"
 
@@ -386,38 +387,7 @@ void TouchResource::StorePreviousTouchState(TouchScreenState& out_previous_touch
                                             TouchFingerMap& out_finger_map,
                                             const TouchScreenState& current_touch,
                                             bool is_touch_enabled) const {
-    s32 finger_count{};
-
-    if (is_touch_enabled) {
-        finger_count = current_touch.entry_count;
-        if (finger_count < 1) {
-            out_finger_map.finger_count = 0;
-            out_finger_map.finger_ids = {};
-            out_previous_touch.sampling_number = current_touch.sampling_number;
-            out_previous_touch.entry_count = 0;
-            out_previous_touch.states = {};
-            return;
-        }
-        for (std::size_t i = 0; i < static_cast<u32>(finger_count); i++) {
-            out_finger_map.finger_ids[i] = current_touch.states[i].finger;
-            out_previous_touch.states[i] = current_touch.states[i];
-        }
-        out_finger_map.finger_count = finger_count;
-        return;
-    }
-
-    if (!is_touch_enabled && out_finger_map.finger_count > 0 && current_touch.entry_count > 0) {
-        // TODO
-    }
-
-    // Zero out unused entries
-    for (std::size_t i = finger_count; i < MaxFingers; i++) {
-        out_finger_map.finger_ids[i] = 0;
-        out_previous_touch.states[i] = {};
-    }
-
-    out_previous_touch.sampling_number = current_touch.sampling_number;
-    out_previous_touch.entry_count = finger_count;
+    out_previous_touch = MakeAppletTouchState(current_touch, is_touch_enabled, out_finger_map);
 }
 
 void TouchResource::ReadTouchInput() {
@@ -557,7 +527,7 @@ void TouchResource::OnTouchUpdate(s64 timestamp) {
             auto& touch_shared = applet_data->shared_memory_format->touch_screen;
             StorePreviousTouchState(previous_touch_state, data.finger_map, current_touch_state,
                                     applet_data->flag.enable_touchscreen.As<bool>());
-            touch_shared.touch_screen_lifo.WriteNextEntry(current_touch_state);
+            touch_shared.touch_screen_lifo.WriteNextEntry(previous_touch_state);
         }
     }
 }

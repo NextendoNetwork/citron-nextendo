@@ -43,6 +43,20 @@ Result IProcessWindingController::OpenCallingLibraryApplet(
     Out<SharedPointer<ILibraryAppletAccessor>> out_calling_library_applet) {
     LOG_INFO(Service_AM, "called");
 
+    // After unwinding, the SDK retrieves the result of the reserved applet
+    // which ran in our place. The original caller (usually HOME) has no such result.
+    {
+        std::scoped_lock lk{m_applet->lock};
+        if (m_applet->launch_reason.flag == 1 && m_applet->reserved_applet) {
+            const auto& completed_applet = m_applet->reserved_applet;
+            *out_calling_library_applet = std::make_shared<ILibraryAppletAccessor>(
+                system, completed_applet->caller_applet_broker, completed_applet);
+            LOG_INFO(Service_AM, "Unwind result accessor: applet_id={} pid={}",
+                     static_cast<u32>(completed_applet->applet_id), completed_applet->aruid.pid);
+            R_SUCCEED();
+        }
+    }
+
     const auto caller_applet = m_applet->caller_applet.lock();
     if (caller_applet == nullptr) {
         LOG_ERROR(Service_AM, "No caller applet available");
@@ -112,7 +126,7 @@ Result IProcessWindingController::WindAndDoReserved() {
         LOG_WARNING(Service_AM, "called without a reserved applet to start");
     }
 
-    m_applet->process->Terminate();
+    m_applet->process->Terminate(true);
 
     R_SUCCEED();
 }

@@ -11,6 +11,7 @@ namespace Service::AM {
 
 class AppletDataBroker;
 struct Applet;
+struct LibraryAppletInfo;
 class IStorage;
 
 class ILibraryAppletAccessor final : public ServiceFramework<ILibraryAppletAccessor> {
@@ -27,6 +28,7 @@ private:
     Result GetAppletStateChangedEvent(OutCopyHandle<Kernel::KReadableEvent> out_event);
     Result IsCompleted(Out<bool> out_is_completed);
     Result GetResult();
+    Result GetLibraryAppletInfo(Out<LibraryAppletInfo> out_info);
     Result PresetLibraryAppletGpuTimeSliceZero();
     Result Start();
     Result RequestExit();

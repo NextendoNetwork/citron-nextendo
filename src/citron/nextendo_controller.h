@@ -34,6 +34,7 @@ public:
     ~NextendoController() override;
 
     bool IsLinked() const;
+    bool IsSigningIn() const { return sign_in_pending; }
 
     // Title id -> display name via the locally installed game's NACP. Falls back to hint_name
     // (a name the PLAYING client already resolved, e.g. from a friend's presence) when this
@@ -106,6 +107,7 @@ private:
     std::map<u64, int> offline_streak; // consecutive polls seen offline, not yet confirmed
     std::set<u64> last_known_requests;
     bool first_poll = true; // suppresses a toast burst for every friend already online at boot
+    bool sign_in_pending = false;
 
     NextendoChatClient* chat_client = nullptr;
     NextendoGameInvites* game_invites = nullptr;

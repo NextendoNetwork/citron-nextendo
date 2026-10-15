@@ -196,7 +196,9 @@ size_t GenericEnvironment::CachedSizeBytes() const noexcept {
 }
 
 size_t GenericEnvironment::ReadSizeBytes() const noexcept {
-    return read_highest - read_lowest + INST_SIZE;
+    // Cache graphics headers together with the analyzed instructions, just as
+    // the fast path does. CFG analysis starts after the header.
+    return static_cast<size_t>(read_highest) - start_address + INST_SIZE;
 }
 
 bool GenericEnvironment::CanBeSerialized() const noexcept {
@@ -208,7 +210,7 @@ bool GenericEnvironment::CanBeSerialized() const noexcept {
 u64 GenericEnvironment::CalculateHash() const {
     const size_t size{ReadSizeBytes()};
     const auto data{std::make_unique<char[]>(size)};
-    gpu_memory->ReadBlock(program_base + read_lowest, data.get(), size);
+    gpu_memory->ReadBlock(program_base + start_address, data.get(), size);
     return Common::CityHash64(data.get(), size);
 }
 

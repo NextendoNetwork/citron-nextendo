@@ -19,6 +19,7 @@
 #include "core/hle/service/am/am.h"
 #include "core/hle/service/am/applet_data_broker.h"
 #include "core/hle/service/am/applet_manager.h"
+#include "core/hle/service/am/window_system.h"
 #include "core/hle/service/am/frontend/applet_cabinet.h"
 #include "core/hle/service/am/frontend/applet_controller.h"
 #include "core/hle/service/am/frontend/applet_error.h"
@@ -72,10 +73,16 @@ void FrontendApplet::PushInteractiveOutData(std::shared_ptr<IStorage> storage) {
 
 void FrontendApplet::Exit() {
     auto applet_ = applet.lock();
+    if (!applet_) {
+        return;
+    }
 
     std::scoped_lock lk{applet_->lock};
     applet_->is_completed = true;
     applet_->state_changed_event.Signal();
+    if (auto* window_system = system.GetAppletManager().GetWindowSystem()) {
+        window_system->RequestUpdate();
+    }
 }
 
 FrontendAppletSet::FrontendAppletSet() = default;
@@ -211,6 +218,10 @@ void FrontendAppletHolder::ClearAll() {
 std::shared_ptr<FrontendApplet> FrontendAppletHolder::GetApplet(std::shared_ptr<Applet> applet,
                                                                 AppletId id,
                                                                 LibraryAppletMode mode) const {
+    // MyNso uses web TLVs; a generic stub's 0x1000-byte return aborts HOME.
+    if (static_cast<u32>(id) == 0x35) {
+        return std::make_shared<WebBrowser>(system, applet, mode, *frontend.web_browser);
+    }
     switch (id) {
     case AppletId::MyPage:
         return std::make_shared<MyPage>(system, applet, mode, frontend.friend_invitation.get());

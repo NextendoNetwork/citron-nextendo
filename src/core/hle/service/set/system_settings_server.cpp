@@ -6,6 +6,7 @@
 #include <fstream>
 
 #include "common/assert.h"
+#include "common/cityhash.h"
 #include "common/fs/file.h"
 #include "common/fs/fs.h"
 #include "common/fs/path_util.h"
@@ -24,6 +25,8 @@
 #include "core/hle/service/ipc_helpers.h"
 #include "core/hle/service/set/settings_server.h"
 #include "core/hle/service/set/system_settings_server.h"
+#include "core/hle/service/set/last_nat_cache.h"
+#include "core/internal_network/network_interface.h"
 
 namespace Service::Set {
 
@@ -35,6 +38,24 @@ struct SettingsHeader {
     u32 version;
     u32 reserved;
 };
+
+std::optional<u64> NatNetworkFingerprint(const std::optional<Network::NetworkInterface>& iface) {
+    if (!iface || iface->ip_address.s_addr == 0 ||
+        (iface->wireless && !iface->wireless_connection_available)) return std::nullopt;
+    std::string identity;
+    const auto append = [&identity](const auto& value) {
+        identity.append(reinterpret_cast<const char*>(&value), sizeof(value));
+    };
+    identity.append(iface->name).push_back('\0');
+    identity.append(iface->ssid).push_back('\0');
+    append(iface->ip_address);
+    append(iface->gateway);
+    append(iface->mac_address);
+    append(iface->access_point_mac);
+    identity.append(Settings::values.nextendo_server_ip.GetValue()).push_back('\0');
+    identity.append(Settings::values.nextendo_nat_ip.GetValue());
+    return Common::CityHash64(identity.data(), identity.size());
+}
 } // Anonymous namespace
 
 Result GetFirmwareVersionImpl(FirmwareVersionFormat& out_firmware, Core::System& system,
@@ -679,6 +700,13 @@ static Settings GetSettings() {
     // AM
     ret["hbloader"]["applet_heap_size"] = ToBytes(u64{0x0});
     ret["hbloader"]["applet_heap_reservation_size"] = ToBytes(u64{0x8600000});
+
+    // HOME reads both halves after measuring throughput. Zero disables the
+    // diagnostic override and preserves the speed calculated from the transfer.
+    ret["netdiag"]["override_download_speed_high"] = ToBytes(u32{0});
+    ret["netdiag"]["override_download_speed_low"] = ToBytes(u32{0});
+    ret["netdiag"]["override_upload_speed_high"] = ToBytes(u32{0});
+    ret["netdiag"]["override_upload_speed_low"] = ToBytes(u32{0});
 
     // Time
     ret["time"]["notify_time_to_fs_interval_seconds"] = ToBytes(s32{600});
@@ -1411,6 +1439,43 @@ void ISystemSettingsServer::SetSaveNeeded() {
 Result ISystemSettingsServer::GetSettingsItemValueImpl(std::span<u8> out_value, u64& out_size,
                                                        const std::string& category,
                                                        const std::string& name) {
+    // Private bridge used by the build-checked HOME patch. Only the native
+    // completed-test result is cached; this does not run another network test.
+    if (category == "citron_netdiag") {
+        std::scoped_lock lock{m_nat_cache_mutex};
+        const auto iface = Network::GetSelectedNetworkInterface();
+        const auto fingerprint = NatNetworkFingerprint(iface);
+        LastNatCache cache{Common::FS::GetCitronPath(Common::FS::CitronPath::CacheDir) /
+                           "last-home-nat.txt"};
+        out_size = 0;
+        if (name == "status_text") {
+            const std::string transport = !iface ? "Offline" : iface->wireless ? "Wi-Fi" : "Ethernet";
+            const auto nat = cache.Display(fingerprint);
+            const std::string text = transport + " | " + (nat == "retest" ? "NAT: retest" : "Last NAT: " + nat);
+            std::u16string wide(text.begin(), text.end());
+            wide.push_back(u'\0');
+            R_UNLESS(out_value.size() >= wide.size() * sizeof(char16_t), ResultUnknown);
+            out_size = wide.size() * sizeof(char16_t);
+            std::memcpy(out_value.data(), wide.data(), out_size);
+            R_SUCCEED();
+        }
+        R_UNLESS(out_value.size() >= sizeof(u32), ResultUnknown);
+        if (name == "begin") {
+            m_nat_test_network = fingerprint;
+        } else if (name.size() == 10 && name.starts_with("save_nat_") &&
+                   name.back() >= '0' && name.back() <= '4') {
+            cache.Begin(std::exchange(m_nat_test_network, std::nullopt));
+            const auto nat = static_cast<unsigned>(name.back() - '0');
+            const bool saved = cache.Complete(nat, fingerprint);
+            LOG_INFO(Service_SET, "HOME last NAT: completed native test classification={} cached={}",
+                     "ABCDF"[nat], saved);
+        } else {
+            R_RETURN(ResultUnknown);
+        }
+        std::fill_n(out_value.begin(), sizeof(u32), u8{0});
+        out_size = sizeof(u32);
+        R_SUCCEED();
+    }
     auto settings{GetSettings()};
     R_UNLESS(settings.contains(category) && settings[category].contains(name), ResultUnknown);
 

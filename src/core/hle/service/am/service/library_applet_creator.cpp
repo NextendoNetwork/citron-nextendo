@@ -2,7 +2,14 @@
 // SPDX-FileCopyrightText: Copyright 2025 citron Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdlib>
+#include <filesystem>
+#include <string_view>
+
+#include "common/fs/path_util.h"
 #include "common/settings.h"
+#include "core/core.h"
+#include "core/file_sys/vfs/vfs.h"
 #include "core/hle/kernel/k_transfer_memory.h"
 #include "core/hle/service/am/applet_data_broker.h"
 #include "core/hle/service/am/applet_manager.h"
@@ -15,6 +22,9 @@
 #include "core/hle/service/am/window_system.h"
 #include "core/hle/service/cmif_serialization.h"
 #include "core/hle/service/sm/sm.h"
+#include "core/hle/service/os/process.h"
+#include "core/loader/nro.h"
+#include "core/loader/nsp.h"
 
 namespace Service::AM {
 
@@ -99,7 +109,7 @@ std::shared_ptr<ILibraryAppletAccessor> CreateGuestApplet(Core::System& system,
                                                           WindowSystem& window_system,
                                                           std::shared_ptr<Applet> caller_applet,
                                                           AppletId applet_id,
-                                                          LibraryAppletMode mode) {
+                                                          LibraryAppletMode mode, bool homebrew_shortcut = false) {
     const auto program_id = static_cast<u64>(AppletIdToProgramId(applet_id));
     if (program_id == 0) {
         // Unknown applet
@@ -108,13 +118,53 @@ std::shared_ptr<ILibraryAppletAccessor> CreateGuestApplet(Core::System& system,
 
     // We allow any firmware generation to be loaded as a guest process if possible.
     // If the emulator lacks the necessary keys, it will fail later and fallback to a stub.
-    auto process = CreateProcess(system, program_id, 14, 22);
+    // Local opt-in prototype: expose an existing homebrew NRO or hbloader through Album.
+    // This only provides applet loading; it does not emulate Atmosphere or make
+    // Prelude's on-SD patches affect emulated services.
+    std::unique_ptr<Process> process;
+    bool is_homebrew_applet = false;
+    const char* homebrew_mode = std::getenv("CITRON_HOMEBREW_ALBUM");
+    const auto sdmc = Common::FS::GetCitronPath(Common::FS::CitronPath::SDMCDir);
+    if (homebrew_shortcut || (!homebrew_mode && Settings::values.homebrew_album.GetValue() &&
+        std::filesystem::exists(sdmc / "hbl.nsp") && std::filesystem::exists(sdmc / "hbmenu.nro"))) {
+        homebrew_mode = "hbmenu";
+    }
+    if (applet_id == AppletId::PhotoViewer && system.IsQLaunchSession() &&
+        homebrew_mode && (std::string_view{homebrew_mode} == "prelude" ||
+                          std::string_view{homebrew_mode} == "hbmenu")) {
+        const bool use_hbloader = std::string_view{homebrew_mode} == "hbmenu";
+        const auto path = Common::FS::GetCitronPath(Common::FS::CitronPath::SDMCDir) /
+                          (use_hbloader ? "hbl.nsp" : "switch/prelude/nextendo.nro");
+        auto file = system.GetFilesystem()->OpenFile(path.generic_string(), FileSys::OpenMode::Read);
+        const auto expected_type = use_hbloader ? Loader::FileType::NSP : Loader::FileType::NRO;
+        if (!file || file->GetSize() < 0x80 || file->GetSize() > 64 * 1024 * 1024 ||
+            (use_hbloader ? Loader::AppLoader_NSP::IdentifyType(file) :
+                            Loader::AppLoader_NRO::IdentifyType(file)) != expected_type) {
+            LOG_ERROR(Service_AM, "Experimental Album homebrew is missing or invalid");
+            return {};
+        }
+        // Preserve the exact hbl.nsp basename: the existing NSP loader uses it
+        // to enable hbloader's process-code-memory support.
+        auto loader = Loader::GetLoader(system, file, 0, 0);
+        Loader::ResultStatus status{};
+        process = std::make_unique<Process>(system);
+        if (!loader || !process->Initialize(*loader, status)) {
+            LOG_ERROR(Service_AM, "Experimental Album homebrew failed to initialize");
+            return {};
+        }
+        is_homebrew_applet = true;
+        LOG_INFO(Service_AM, "Experimental Album homebrew process initialized, hbloader={}",
+                 use_hbloader);
+    } else {
+        process = CreateProcess(system, program_id, 14, 22);
+    }
     if (!process) {
         // Couldn't initialize the guest process
         return {};
     }
 
     const auto applet = std::make_shared<Applet>(system, std::move(process), false);
+    applet->is_homebrew_applet = is_homebrew_applet;
     applet->program_id = program_id;
     applet->applet_id = applet_id;
     applet->type = AppletType::LibraryApplet;
@@ -158,6 +208,16 @@ std::shared_ptr<ILibraryAppletAccessor> CreateFrontendApplet(Core::System& syste
 
 } // namespace
 
+bool LaunchHomebrewMenu(Core::System& system, WindowSystem& window_system,
+                        const std::shared_ptr<Applet>& home) {
+    auto accessor = CreateGuestApplet(system, window_system, home, AppletId::PhotoViewer,
+                                     LibraryAppletMode::AllForeground, true);
+    if (!accessor) return false;
+    accessor->GetApplet()->process->Run();
+    window_system.RequestUpdate();
+    return true;
+}
+
 ILibraryAppletCreator::ILibraryAppletCreator(Core::System& system_, std::shared_ptr<Applet> applet,
                                              WindowSystem& window_system)
     : ServiceFramework{system_, "ILibraryAppletCreator"}, m_window_system{window_system},
@@ -184,7 +244,8 @@ Result ILibraryAppletCreator::CreateLibraryApplet(
 
     std::shared_ptr<ILibraryAppletAccessor> library_applet;
     if (ShouldCreateGuestApplet(applet_id) &&
-        !(applet_id == AppletId::MyPage &&
+        !(applet_id == AppletId::MyPage && !system.IsQLaunchSession() &&
+          m_applet->applet_id != AppletId::QLaunch &&
           system.GetFrontendAppletHolder().GetFrontendAppletSet().friend_invitation)) {
         library_applet =
             CreateGuestApplet(system, m_window_system, m_applet, applet_id, library_applet_mode);
@@ -213,7 +274,8 @@ Result ILibraryAppletCreator::CreateLibraryAppletEx(
     // The thread_id parameter is not used in the current implementation
     std::shared_ptr<ILibraryAppletAccessor> library_applet;
     if (ShouldCreateGuestApplet(applet_id) &&
-        !(applet_id == AppletId::MyPage &&
+        !(applet_id == AppletId::MyPage && !system.IsQLaunchSession() &&
+          m_applet->applet_id != AppletId::QLaunch &&
           system.GetFrontendAppletHolder().GetFrontendAppletSet().friend_invitation)) {
         library_applet =
             CreateGuestApplet(system, m_window_system, m_applet, applet_id, library_applet_mode);

@@ -17,8 +17,8 @@ IDisplayController::IDisplayController(Core::System& system_, std::shared_ptr<Ap
         {2, nullptr, "GetLastApplicationCaptureImage"},
         {3, nullptr, "GetCallerAppletCaptureImage"},
         {4, nullptr, "UpdateCallerAppletCaptureImage"},
-        {5, nullptr, "GetLastForegroundCaptureImageEx"},
-        {6, nullptr, "GetLastApplicationCaptureImageEx"},
+        {5, D<&IDisplayController::GetCallerAppletCaptureImageEx>, "GetLastForegroundCaptureImageEx"},
+        {6, D<&IDisplayController::GetCallerAppletCaptureImageEx>, "GetLastApplicationCaptureImageEx"},
         {7, D<&IDisplayController::GetCallerAppletCaptureImageEx>, "GetCallerAppletCaptureImageEx"},
         {8, D<&IDisplayController::TakeScreenShotOfOwnLayer>, "TakeScreenShotOfOwnLayer"},
         {9, nullptr, "CopyBetweenCaptureBuffers"},
@@ -51,7 +51,9 @@ IDisplayController::~IDisplayController() = default;
 Result IDisplayController::GetCallerAppletCaptureImageEx(
     Out<bool> out_was_written, OutBuffer<BufferAttr_HipcMapAlias> out_image_data) {
     LOG_WARNING(Service_AM, "(STUBBED) called");
-    *out_was_written = true;
+    // No capture is available yet. Do not claim the guest received an image
+    // when its output buffer has not been populated.
+    *out_was_written = false;
     R_SUCCEED();
 }
 

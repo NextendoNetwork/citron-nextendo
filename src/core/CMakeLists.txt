@@ -877,6 +877,7 @@ add_library(core STATIC
     hle/service/ns/platform_service_manager.h
     hle/service/ns/query_service.cpp
     hle/service/ns/query_service.h
+    hle/service/ns/external_application_metadata.h
     hle/service/ns/read_only_application_control_data_interface.cpp
     hle/service/ns/read_only_application_control_data_interface.h
     hle/service/ns/read_only_application_record_interface.cpp

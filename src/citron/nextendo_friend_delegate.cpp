@@ -247,6 +247,10 @@ void NextendoFriendDelegate::PaintNameAndStatus(QPainter* painter, const QRect& 
         status_text = tr("Offline");
         break;
     }
+    if (const QString platform = index.data(NextendoFriendItem::PlatformRole).toString();
+        status > 0 && !platform.isEmpty()) {
+        status_text += QStringLiteral(" · ") + platform;
+    }
     if (const QString detail = index.data(NextendoFriendItem::DetailRole).toString();
         !detail.isEmpty()) {
         status_text = detail;

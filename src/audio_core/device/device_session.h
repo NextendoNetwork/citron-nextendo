@@ -147,6 +147,8 @@ private:
     u64 applet_resource_user_id{};
     /// Total number of samples played by this device session
     std::atomic<u64> played_sample_count{};
+    // Temporary diagnostic heartbeat for the output timing callback.
+    u64 diagnostic_tick_count{};
     /// Event increasing the played sample count every 5ms
     std::shared_ptr<Core::Timing::EventType> thread_event;
     /// Is this session initialised?

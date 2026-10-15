@@ -290,6 +290,7 @@ private:
     std::unique_ptr<GameListWorker> current_worker;
     QProgressBar* progress_bar = nullptr;
     QFileSystemWatcher* watcher = nullptr;
+    QTimer library_refresh_timer;
     ControllerNavigation* controller_navigation = nullptr;
     CompatibilityList compatibility_list;
     QTimer* online_status_timer;

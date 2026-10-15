@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <cstdlib>
 
 #include "common/assert.h"
 #include "common/bit_field.h"
@@ -88,6 +89,10 @@ Result NPad::Activate(u64 aruid) {
     for (std::size_t i = 0; i < controller_data[aruid_index].size(); ++i) {
         auto& controller = controller_data[aruid_index][i];
         controller.shared_memory = &data->shared_memory_format->npad.npad_entry[i].internal_state;
+        // A homebrew chain can recreate HID shared memory in the same process.
+        // Republish controller style/colors into the new memory on the next update,
+        // rather than retaining the connection metadata from the previous NRO.
+        controller.is_connected = false;
     }
 
     // Prefill controller buffers
@@ -486,6 +491,26 @@ void NPad::OnUpdate(const Core::Timing::CoreTiming& core_timing) {
         bool is_set{};
         const auto aruid = data->aruid;
         npad_resource.IsSupportedNpadStyleSet(is_set, aruid);
+        // Temporary, bounded lab trace. Report state flags, never button values.
+        if (std::getenv("CITRON_HOMEBREW_ALBUM")) {
+            static std::array<u32, AruidIndexMax> previous{};
+            static u32 remaining = 48;
+            const auto& first = controller_data[aruid_index][0];
+            const u32 flags = 1U | (u32(is_set) << 1) |
+                (u32(data->flag.enable_pad_input.Value()) << 2) |
+                (u32(first.is_active) << 3) | (u32(first.device->IsConnected()) << 4) |
+                (u32(first.is_connected) << 5) |
+                (u32(hid_core.IsGuestInputSuspended()) << 6) |
+                (u32(first.device->GetNpadButtons().raw != Core::HID::NpadButton::None) << 7) |
+                (u32(data->shared_memory_format->npad.npad_entry[0].internal_state.style_tag.raw !=
+                     Core::HID::NpadStyleSet::None) << 8);
+            if (remaining && previous[aruid_index] != flags) {
+                previous[aruid_index] = flags;
+                --remaining;
+                LOG_INFO(Service_HID, "Homebrew HID state aruid={} slot={} flags={:02X}",
+                         aruid, aruid_index, flags);
+            }
+        }
         // Wait until style is defined
         if (!is_set) {
             continue;

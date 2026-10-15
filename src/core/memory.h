@@ -76,6 +76,9 @@ public:
      */
     void SetCurrentPageTable(Kernel::KProcess& process);
 
+    /// Stop GPU cache callbacks before the owning process frees its page table.
+    void DetachPageTable();
+
     /**
      * Maps an allocated buffer onto a region of the emulated process address space.
      *

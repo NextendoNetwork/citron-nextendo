@@ -2088,7 +2088,8 @@ void NextendoAccountDialog::OnEditUsername() {
                 if (error.empty()) {
                     Common::NextendoAccount::Save(Common::NextendoAccount::GetPid(), new_name,
                                                   Common::NextendoAccount::GetFriendCode(),
-                                                  Common::NextendoAccount::GetToken());
+                                                  Common::NextendoAccount::GetToken(),
+                                                  Common::NextendoAccount::GetApiToken());
                     header_name->setText(QString::fromStdString(new_name));
                     status->setText(tr("Username updated."));
                 } else {
@@ -2201,6 +2202,10 @@ void NextendoAccountDialog::UpdateDashboard() {
         default:
             status_text = tr("Offline");
             break;
+        }
+        if (const QString platform = index.data(NextendoFriendItem::PlatformRole).toString();
+            presence > 0 && !platform.isEmpty()) {
+            status_text += QStringLiteral(" · ") + platform;
         }
         auto* status_label = new QLabel(status_text);
         status_label->setStyleSheet(
@@ -2477,7 +2482,8 @@ void NextendoAccountDialog::RefreshFriends() {
                     friends_model->appendRow(new NextendoFriendItem(
                         entry.pid, QString::fromStdString(entry.name),
                         QString::fromStdString(entry.friend_code), entry.presence_status, game,
-                        QString::fromStdString(entry.image_base64), false));
+                        QString::fromStdString(entry.image_base64), false, QString{}, false,
+                        QString::fromStdString(entry.platform)));
                 }
                 for (const auto& entry : list.requests) {
                     requests_model->appendRow(new NextendoFriendItem(
@@ -2722,20 +2728,20 @@ QString LobbyStateLine(const WebService::NextendoApi::Lobby& lobby) {
 void NextendoAccountDialog::RefreshPlayers() {
 #ifdef ENABLE_WEB_SERVICE
     std::thread{[this, guard = QPointer<NextendoAccountDialog>(this)] {
-        auto lobby = WebService::NextendoApi::GetMyLobby();
-        auto recent = WebService::NextendoApi::GetRecentPlayers();
+        auto fetched_lobby = WebService::NextendoApi::GetMyLobby();
+        auto fetched_recent = WebService::NextendoApi::GetRecentPlayers();
 
-        std::unordered_map<u64, std::string> avatars;
+        std::unordered_map<u64, std::string> fetched_avatars;
         const auto fetch_avatar = [&](u64 pid) {
-            if (pid == 0 || avatars.contains(pid)) {
+            if (pid == 0 || fetched_avatars.contains(pid)) {
                 return;
             }
-            avatars[pid] = WebService::NextendoApi::GetAvatarByPid(pid);
+            fetched_avatars[pid] = WebService::NextendoApi::GetAvatarByPid(pid);
         };
-        for (const auto& player : lobby.players) {
+        for (const auto& player : fetched_lobby.players) {
             fetch_avatar(player.pid);
         }
-        for (const auto& player : recent) {
+        for (const auto& player : fetched_recent) {
             fetch_avatar(player.pid);
         }
 
@@ -2744,8 +2750,8 @@ void NextendoAccountDialog::RefreshPlayers() {
         }
         QMetaObject::invokeMethod(
             guard.data(),
-            [this, guard, lobby = std::move(lobby), recent = std::move(recent),
-             avatars = std::move(avatars)]() mutable {
+            [this, guard, lobby = std::move(fetched_lobby), recent = std::move(fetched_recent),
+             avatars = std::move(fetched_avatars)]() mutable {
                 if (!guard) {
                     return;
                 }

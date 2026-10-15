@@ -110,6 +110,7 @@ std::optional<Network::IPv4Address> GetNextendoServerAddress() {
     if (!RedirectionNextendoActive()) {
         return std::nullopt;
     }
+
     Network::IPv4Address ip{};
     if (!Network::TryParseIPv4Literal(
             GetConfiguredIp(Settings::values.nextendo_server_ip.GetValue(), "NEXTENDO_SERVER_IP"),
@@ -120,7 +121,42 @@ std::optional<Network::IPv4Address> GetNextendoServerAddress() {
 }
 
 static std::optional<std::string> GetNextendoRedirectIp(const std::string& host, u64 program_id) {
+    if (program_id == 0x0100B6E012EBE000ULL) {
+        const char* enabled = std::getenv("NEXTENDO_UNO_PROBE");
+        if (enabled && std::string_view{enabled} == "1" &&
+            Common::ToLower(host) == "public-ubiservices.ubi.com") {
+            LOG_INFO(Service, "[UNO diagnostic] Local compatibility route enabled");
+            return "127.0.0.3";
+        }
+    }
+    if (program_id == 0x0100FCF002A58000ULL) {
+        const char* enabled = std::getenv("NEXTENDO_UCH_LAB_TOKEN_FILE");
+        const auto name = Common::ToLower(host);
+        if (enabled && *enabled &&
+            (name == "api.braincloudservers.com" ||
+             name == "na.ultimatechickenhorseserver.com" ||
+             name == "eu.ultimatechickenhorseserver.com" ||
+             name == "ap.ultimatechickenhorseserver.com")) {
+            if (const char* target = std::getenv("NEXTENDO_UCH_SERVER_IP"); target && *target) {
+                Network::IPv4Address parsed{};
+                if (!Network::TryParseIPv4Literal(target, parsed) || parsed == Network::IPv4Address{})
+                    return "0.0.0.0";
+                LOG_INFO(Service, "[UCH lab] Isolated server route enabled");
+                return std::string{target};
+            }
+            LOG_INFO(Service, "[UCH lab] Redirecting host '{}' to loopback", host);
+            return "127.0.0.2";
+        }
+    }
     if (!RedirectionNextendoActive()) {
+        return std::nullopt;
+    }
+
+    // Public, unauthenticated speed-test CDN transfers are not served by
+    // Nextendo's API host. Resolve only these two exact endpoints normally.
+    if (host == "ctest-dl-lp1.cdn.nintendo.net" ||
+        host == "ctest-ul-lp1.cdn.nintendo.net") {
+        LOG_INFO(Service, "Connection speed test: using public CDN DNS for '{}'", host);
         return std::nullopt;
     }
 

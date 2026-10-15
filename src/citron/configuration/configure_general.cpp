@@ -179,7 +179,7 @@ void ConfigureGeneral::RefreshExternalContentList() {
 }
 
 void ConfigureGeneral::AddExternalContentDir() {
-    const QString dir = QFileDialog::getExistingDirectory(this, tr("Select Content Directory"));
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("Select updates/DLC folder"));
     if (dir.isEmpty()) {
         return;
     }

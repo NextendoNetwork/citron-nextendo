@@ -7,6 +7,7 @@
 #include "core/hle/service/am/applet_manager.h"
 #include "core/hle/service/am/frontend/applets.h"
 #include "core/hle/service/am/service/library_applet_accessor.h"
+#include "core/hle/service/am/service/library_applet_self_accessor.h"
 #include "core/hle/service/am/service/storage.h"
 #include "core/hle/service/cmif_serialization.h"
 
@@ -36,7 +37,7 @@ ILibraryAppletAccessor::ILibraryAppletAccessor(Core::System& system_,
         {105, D<&ILibraryAppletAccessor::GetPopOutDataEvent>, "GetPopOutDataEvent"},
         {106, D<&ILibraryAppletAccessor::GetPopInteractiveOutDataEvent>, "GetPopInteractiveOutDataEvent"},
         {110, nullptr, "NeedsToExitProcess"},
-        {120, nullptr, "GetLibraryAppletInfo"},
+        {120, D<&ILibraryAppletAccessor::GetLibraryAppletInfo>, "GetLibraryAppletInfo"},
         {150, nullptr, "RequestForAppletToGetForeground"},
         {160, D<&ILibraryAppletAccessor::GetIndirectLayerConsumerHandle>, "GetIndirectLayerConsumerHandle"},
         {170, D<&ILibraryAppletAccessor::GetMainAppletRequestExitEvent>, "GetMainAppletRequestExitEvent"},
@@ -68,6 +69,18 @@ Result ILibraryAppletAccessor::GetResult() {
     R_RETURN(m_applet->terminate_result);
 }
 
+Result ILibraryAppletAccessor::GetLibraryAppletInfo(Out<LibraryAppletInfo> out_info) {
+    std::scoped_lock lk{m_applet->lock};
+    *out_info = {
+        .applet_id = m_applet->applet_id,
+        .library_applet_mode = m_applet->library_applet_mode,
+    };
+    LOG_INFO(Service_AM, "Applet accessor info: applet_id={} mode={}",
+             static_cast<u32>(m_applet->applet_id),
+             static_cast<u32>(m_applet->library_applet_mode));
+    R_SUCCEED();
+}
+
 Result ILibraryAppletAccessor::PresetLibraryAppletGpuTimeSliceZero() {
     LOG_INFO(Service_AM, "(STUBBED) called");
     R_SUCCEED();
@@ -93,7 +106,7 @@ Result ILibraryAppletAccessor::RequestExit() {
 
 Result ILibraryAppletAccessor::Terminate() {
     LOG_DEBUG(Service_AM, "called");
-    m_applet->process->Terminate();
+    m_applet->process->Terminate(true);
     FrontendRequestExit();
     R_SUCCEED();
 }
@@ -107,10 +120,11 @@ Result ILibraryAppletAccessor::PushInData(SharedPointer<IStorage> storage) {
 Result ILibraryAppletAccessor::PopOutData(Out<SharedPointer<IStorage>> out_storage) {
     LOG_DEBUG(Service_AM, "called");
     if (auto caller_applet = m_applet->caller_applet.lock(); caller_applet) {
-        caller_applet->lifecycle_manager.GetSystemEvent().Signal();
+        std::scoped_lock lk{caller_applet->lock};
         caller_applet->lifecycle_manager.RequestResumeNotification();
-        caller_applet->lifecycle_manager.GetSystemEvent().Clear();
         caller_applet->lifecycle_manager.UpdateRequestedFocusState();
+        // Keep pending lifecycle messages signaled until the caller consumes them.
+        caller_applet->lifecycle_manager.SignalSystemEventIfNeeded();
     }
     R_RETURN(m_broker->GetOutData().Pop(out_storage.Get()));
 }

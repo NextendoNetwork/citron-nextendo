@@ -6,6 +6,7 @@
 #include <utility>
 
 #include <QByteArray>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
@@ -42,9 +43,36 @@ NextendoController::NextendoController(Core::System& system_, QWidget* main_wind
                                        QObject* parent)
     : QObject(parent), system(system_), main_window(main_window_),
       game_invites(new NextendoGameInvites(system_, this)) {
+    if (Common::NextendoAccount::IsLinked()) {
+        Common::NextendoFriends::SetLocalStatus(Common::NextendoFriends::PresenceOnline);
+    }
 #ifdef ENABLE_WEB_SERVICE
     WebService::NplnPatchCatalog::StartTitleIndexCheck();
     Common::NextendoFriends::SetNameResolver(&WebService::NextendoApi::GetNameByPid);
+    Common::NextendoFriends::SetPlayHistoryResolver([](u64 pid)
+        -> std::optional<Common::NextendoFriends::PlayHistory> {
+        const auto fetched = pid == Common::NextendoAccount::GetPid()
+                                 ? WebService::NextendoApi::GetHistory()
+                                 : WebService::NextendoApi::GetFriendHistory(pid);
+        if (!fetched.ok) {
+            return std::nullopt;
+        }
+        Common::NextendoFriends::PlayHistory history;
+        for (const auto& item : fetched.entries) {
+            bool valid = false;
+            const auto title_id = QString::fromStdString(item.title_id).toULongLong(&valid, 16);
+            if (!valid || title_id == 0) {
+                continue;
+            }
+            const auto date = QDateTime::fromString(QString::fromStdString(item.last_played),
+                                                   Qt::ISODateWithMs);
+            const auto icon = QByteArray::fromBase64(QByteArray::fromStdString(item.icon_base64));
+            history.push_back({title_id, item.seconds, date.isValid() ? date.toSecsSinceEpoch() : 0,
+                               item.name, std::vector<u8>(icon.begin(), icon.end())});
+        }
+        LOG_INFO(Frontend, "[Nextendo] Profile history loaded: {} titles", history.size());
+        return history;
+    });
 #endif
     friend_poll_timer.setInterval(20000);
     connect(&friend_poll_timer, &QTimer::timeout, this, &NextendoController::PollFriends);
@@ -195,7 +223,12 @@ std::string NextendoController::GetLocalAppId() const {
 }
 
 void NextendoController::SignIn() {
+    if (sign_in_pending) {
+        emit StatusChanged(tr("A sign-in is already waiting in your browser."));
+        return;
+    }
 #ifdef ENABLE_WEB_SERVICE
+    sign_in_pending = true;
     emit StatusChanged(tr("Finish signing in in your browser, then come back here."));
 
     QPointer<NextendoController> self(this);
@@ -236,18 +269,21 @@ void NextendoController::SignIn() {
                     return;
                 }
                 if (!result.ok) {
+                    sign_in_pending = false;
                     emit StatusChanged(QString::fromStdString(result.error));
                     emit SignInFinished();
                     return;
                 }
 
                 Common::NextendoAccount::Save(result.pid, result.username, result.friend_code,
-                                              result.token);
+                                              result.token, result.api_token);
                 ApplyProfileName(result.username);
                 SyncProfileAvatar();
                 Common::NextendoFriends::SetLocalStatus(Common::NextendoFriends::PresenceOnline);
                 first_poll = true;
                 emit AccountLinked();
+                sign_in_pending = false;
+                emit StatusChanged(tr("Nextendo account linked successfully."));
                 emit SignInFinished();
                 RefreshFriendCache();
                 EnsureChatConnected();
@@ -256,6 +292,7 @@ void NextendoController::SignIn() {
     }}.detach();
 #else
     emit StatusChanged(tr("This build has no web services support."));
+    emit SignInFinished();
 #endif
 }
 
@@ -426,12 +463,21 @@ void NextendoController::PollFriends() {
                     if (!entry.account_hex.empty()) {
                         account_id = std::strtoull(entry.account_hex.c_str(), nullptr, 16);
                     }
+                    const auto member_date = QDateTime::fromString(
+                        QString::fromStdString(entry.member_since), Qt::ISODateWithMs);
                     cache.push_back({entry.pid, entry.name, entry.presence_status, entry.app_field,
                                      std::vector<u8>(decoded_image.begin(), decoded_image.end()),
                                      account_id, entry.is_console,
-                                     std::strtoull(entry.app_id.c_str(), nullptr, 16)});
+                                     std::strtoull(entry.app_id.c_str(), nullptr, 16),
+                                     entry.app_name, entry.platform, entry.app_detail,
+                                     member_date.isValid() ? member_date.toSecsSinceEpoch() : 0});
                 }
                 Common::NextendoFriends::Set(std::move(cache));
+                std::vector<u64> history_pids{Common::NextendoAccount::GetPid()};
+                for (const auto& entry : list.friends) {
+                    history_pids.push_back(entry.pid);
+                }
+                Common::NextendoFriends::PrefetchPlayHistory(std::move(history_pids));
                 // [Nextendo] The guest's own INotificationService only ever signals once, at
                 // construction -- before this first real poll has a chance to land. Without this,
                 // a Friends viewer already on-screen never learns that real data showed up.

@@ -9,7 +9,9 @@
 #include "core/hle/service/am/applet.h"
 #include "core/hle/service/am/applet_manager.h"
 #include "core/hle/service/am/event_observer.h"
+#include "core/hle/service/am/frontend/applets.h"
 #include "core/hle/service/am/process_creation.h"
+#include "core/hle/service/am/service/library_applet_creator.h"
 #include "core/hle/service/am/window_system.h"
 
 namespace Service::AM {
@@ -29,6 +31,29 @@ void WindowSystem::RequestUpdate() {
     if (m_event_observer) {
         m_event_observer->RequestUpdate();
     }
+}
+
+bool WindowSystem::RequestInvitationLaunch(u64 program_id, std::vector<u8> storage) {
+    {
+        std::scoped_lock lk{m_lock};
+        if (!m_home_menu || m_application || m_invitation_launch ||
+            storage.size() < 0x10 || storage.size() > 0x410) {
+            return false;
+        }
+        m_invitation_launch = InvitationLaunchRequest{program_id, std::move(storage)};
+        std::scoped_lock applet_lk{m_home_menu->lock};
+        m_home_menu->lifecycle_manager.PushUnorderedMessage(AppletMessage::LaunchApplicationRequested);
+        m_foreground_requested_applet = m_home_menu;
+    }
+    RequestUpdate();
+    return true;
+}
+
+std::optional<WindowSystem::InvitationLaunchRequest> WindowSystem::TakeInvitationLaunch() {
+    std::scoped_lock lk{m_lock};
+    auto request = std::move(m_invitation_launch);
+    m_invitation_launch.reset();
+    return request;
 }
 
 WindowSystem::DisplayParams WindowSystem::ComputeOverlayDisplayParams(Applet& applet) const {
@@ -65,9 +90,49 @@ void WindowSystem::ApplyDisplayParams(Applet& applet, const DisplayParams& param
     applet.display_layer_manager.SetOverlayZIndex(params.z_index);
 }
 
+bool WindowSystem::RequestHomebrewMenu() {
+    {
+        std::scoped_lock lk{m_lock};
+        if (!m_home_menu || m_foreground_requested_applet != m_home_menu) return false;
+        if (!m_home_menu->child_applets.empty()) {
+            // The same controller shortcut opens hbmenu and returns from it.
+            if (!m_home_menu->child_applets.front()->is_homebrew_applet) return false;
+            m_homebrew_return_requested = true;
+        } else if (m_homebrew_requested.exchange(true)) {
+            return false;
+        }
+    }
+    RequestUpdate();
+    return true;
+}
+
 void WindowSystem::Update() {
+    if (m_homebrew_requested.exchange(false)) {
+        std::shared_ptr<Applet> home;
+        {
+            std::scoped_lock lk{m_lock};
+            if (m_home_menu && m_foreground_requested_applet == m_home_menu &&
+                m_home_menu->child_applets.empty()) home = m_applets.at(m_home_menu->aruid.pid);
+        }
+        if (home && !LaunchHomebrewMenu(m_system, *this, home)) {
+            LOG_ERROR(Service_AM, "Homebrew Menu shortcut failed to initialize hbloader");
+        }
+    }
     std::scoped_lock lk{m_lock};
 
+    if (m_homebrew_return_requested) {
+        m_homebrew_return_requested = false;
+        if (m_home_menu) {
+            // Run termination on the AM observer, never the input/Qt thread.
+            for (const auto& child : m_home_menu->child_applets) {
+                if (!child->is_homebrew_applet) continue;
+                std::scoped_lock child_lock{child->lock};
+                child->process->Terminate(true);
+                LOG_INFO(Service_AM, "Homebrew return requested: pid={}", child->aruid.pid);
+            }
+            m_foreground_requested_applet = m_home_menu;
+        }
+    }
     this->PruneTerminatedAppletsLocked();
 
     if (this->LockHomeMenuIntoForegroundLocked()) {
@@ -113,6 +178,9 @@ void WindowSystem::TrackApplet(std::shared_ptr<Applet> applet, bool is_applicati
         m_application = applet.get();
     }
 
+    m_main_applet_aruid.store(m_application ? m_application->aruid.pid
+                                           : m_home_menu ? m_home_menu->aruid.pid : 0,
+                             std::memory_order_relaxed);
     m_event_observer->TrackAppletProcess(applet);
     m_applets.emplace(applet->aruid.pid, std::move(applet));
 }
@@ -140,6 +208,23 @@ std::shared_ptr<Applet> WindowSystem::GetMainApplet() {
     }
 
     return nullptr;
+}
+
+std::optional<WindowSystem::PresenceSnapshot> WindowSystem::TryGetPresenceSnapshot() {
+    std::unique_lock window_lock{m_lock, std::try_to_lock};
+    if (!window_lock.owns_lock()) {
+        return std::nullopt;
+    }
+    if (!m_application) {
+        return PresenceSnapshot{};
+    }
+    std::unique_lock applet_lock{m_application->lock, std::try_to_lock};
+    if (!applet_lock.owns_lock()) {
+        return std::nullopt;
+    }
+    return PresenceSnapshot{m_application->program_id,
+                            m_foreground_requested_applet != m_application ||
+                                !m_application->window_visible};
 }
 
 void WindowSystem::RequestHomeMenuToGetForeground() {
@@ -232,6 +317,14 @@ void WindowSystem::OnHomeButtonPressed(ButtonPressDuration type) {
 
     switch (type) {
     case ButtonPressDuration::ShortPressing:
+        // qlaunch cannot dismiss a frontend-created accessor it never received.
+        // Finish the override first; broadcasting HOME alone leaves its child on top.
+        if (!m_home_menu->child_applets.empty() &&
+            m_home_menu->child_applets.front()->is_homebrew_applet) {
+            m_homebrew_return_requested = true;
+            RequestUpdate();
+            break;
+        }
         BroadcastButtonMessage(AppletMessage::DetectShortPressingHomeButton);
         break;
     case ButtonPressDuration::MiddlePressing:
@@ -266,7 +359,9 @@ void WindowSystem::PruneTerminatedAppletsLocked() {
 
         std::scoped_lock lk{applet->lock};
 
-        if (!applet->process->IsTerminated()) {
+        // Frontend applets have no kernel process to reach the Terminated state.
+        const bool frontend_finished = !applet->process->IsInitialized() && applet->is_completed;
+        if (!applet->process->IsTerminated() && !frontend_finished) {
             it = std::next(it);
             continue;
         }
@@ -337,7 +432,12 @@ void WindowSystem::PruneTerminatedAppletsLocked() {
             m_overlay = nullptr;
         }
 
+        m_main_applet_aruid.store(m_application ? m_application->aruid.pid
+                                               : m_home_menu ? m_home_menu->aruid.pid : 0,
+                                 std::memory_order_relaxed);
         applet->OnProcessTerminatedLocked();
+        LOG_INFO(Service_AM, "Applet return completed: applet_id={} pid={} caller_cleared={}",
+                 static_cast<u32>(applet->applet_id), aruid, applet->caller_applet.expired());
 
         m_event_observer->RequestUpdate();
 
@@ -395,9 +495,17 @@ void WindowSystem::TerminateChildAppletsLocked(Applet* applet) {
 
     applet->lock.unlock();
     for (const auto& child_applet : child_applets) {
+        // RequestExit may lock the applet itself, so call it before taking its lock.
+        if (child_applet->frontend) {
+            child_applet->frontend->RequestExit();
+        }
         std::scoped_lock lk{child_applet->lock};
-        child_applet->process->Terminate();
+        child_applet->process->Terminate(true);
         child_applet->terminate_result = AM::ResultLibraryAppletTerminated;
+        if (!child_applet->process->IsInitialized()) {
+            child_applet->OnProcessTerminatedLocked();
+            m_event_observer->RequestUpdate();
+        }
     }
     applet->lock.lock();
 }
@@ -440,9 +548,15 @@ void WindowSystem::ReconcileAppletTreeLocked(Applet* applet, bool is_foreground,
     const auto current_state = applet->lifecycle_manager.GetActivityState();
 
     if (is_obscured && current_state != obscured_state) {
+        LOG_INFO(Service_AM, "Applet activity: id={} pid={} state={} -> {}",
+                 static_cast<u32>(applet->applet_id), applet->aruid.pid,
+                 static_cast<u32>(current_state), static_cast<u32>(obscured_state));
         applet->lifecycle_manager.SetActivityState(obscured_state);
         applet->UpdateSuspensionStateLocked(true);
     } else if (!is_obscured && current_state != visible_state) {
+        LOG_INFO(Service_AM, "Applet activity: id={} pid={} state={} -> {}",
+                 static_cast<u32>(applet->applet_id), applet->aruid.pid,
+                 static_cast<u32>(current_state), static_cast<u32>(visible_state));
         applet->lifecycle_manager.SetActivityState(visible_state);
         applet->UpdateSuspensionStateLocked(true);
     }

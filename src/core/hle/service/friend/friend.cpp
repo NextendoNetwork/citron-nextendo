@@ -3,17 +3,30 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <limits>
 #include <mutex>
 #include <queue>
+#include <thread>
 #include <fmt/format.h>
 #include "common/hex_util.h"
+#include "common/home_menu_activity.h"
 #include "common/logging.h"
 #include "common/uuid.h"
 #include "core/core.h"
+#include "core/hle/service/am/am.h"
+#include "core/hle/service/am/applet.h"
+#include "core/hle/service/am/applet_manager.h"
+#include "core/hle/service/am/window_system.h"
+#ifdef ENABLE_WEB_SERVICE
+#include "web_service/nextendo_api.h"
+#endif
 #include "core/hle/kernel/k_event.h"
 #include "core/hle/service/acc/errors.h"
 #include "common/nextendo_account.h"
 #include "common/nextendo_friends.h"
+#include "common/nextendo_friend_code.h"
+#include "core/hle/service/acc/profile_manager.h"
+#include "common/nextendo_viewer_presence.h"
 #include "common/nextendo_nat.h"
 #include "core/hle/service/friend/friend.h"
 #include "core/hle/service/friend/friend_interface.h"
@@ -57,6 +70,108 @@ static_assert(sizeof(FriendImpl) == 0x200, "FriendImpl has the wrong size");
 static_assert(offsetof(FriendImpl, presence) == 0x40);
 static_assert(offsetof(FriendImpl, is_favourite) == 0x120);
 static_assert(offsetof(FriendImpl, is_valid) == 0x128);
+
+// Firmware 22 viewer records are not the game-facing FriendImpl. Verified against
+// the local MyPage client: stride 0x220, presence at 0xE0, valid at 0x21F.
+struct FriendViewerPresenceV2 {
+    u64 application_id;
+    u32 application_version;
+    u8 application_type;
+    std::array<u8, 3> application_padding;
+    u64 presence_group_id;
+    s64 last_time_online_timestamp;
+    s8 status;
+    u8 same_presence_group_application;
+    std::array<u8, 6> padding;
+    std::array<u8, 0xC0> app_key_value;
+};
+static_assert(sizeof(FriendViewerPresenceV2) == 0xE8);
+static_assert(offsetof(FriendViewerPresenceV2, application_version) == 0x08);
+static_assert(offsetof(FriendViewerPresenceV2, application_type) == 0x0C);
+static_assert(offsetof(FriendViewerPresenceV2, presence_group_id) == 0x10);
+static_assert(offsetof(FriendViewerPresenceV2, status) == 0x20);
+static_assert(offsetof(FriendViewerPresenceV2, app_key_value) == 0x28);
+
+struct FriendViewerV2 {
+    Common::UUID user_id;
+    u64 network_user_id;
+    std::array<char, 0x21> nickname;
+    std::array<u8, 7> nickname_pad;
+    std::array<u8, 0xA0> profile_image_data;
+    FriendViewerPresenceV2 presence;
+    std::array<u8, 0x51> reserved;
+    u8 is_favourite;
+    u8 is_new;
+    std::array<u8, 4> padding;
+    u8 is_valid;
+};
+static_assert(sizeof(FriendViewerV2) == 0x220);
+static_assert(offsetof(FriendViewerV2, network_user_id) == 0x10);
+static_assert(offsetof(FriendViewerV2, nickname) == 0x18);
+static_assert(offsetof(FriendViewerV2, presence) == 0xE0);
+static_assert(offsetof(FriendViewerV2, is_favourite) == 0x219);
+static_assert(offsetof(FriendViewerV2, is_valid) == 0x21F);
+
+// MyPage command 20107 returns one 0x800-byte detail, not an array of
+// game-facing friends. Its SDK reads the state at 0x568 and AppInfo at
+// 0x570 (id/version/type/presence group). Unimplemented history stays empty.
+struct FriendDetailedInfoV2 {
+    std::array<u8, 0x568> profile_and_history;
+    u32 state;
+    u32 padding;
+    u64 application_id;
+    u32 application_version;
+    u8 application_type;
+    std::array<u8, 3> application_padding;
+    u64 presence_group_id;
+    std::array<u8, 0x48> reserved_before_date;
+    s64 member_since; // Native date slot, relabeled to account creation by the MyPage MSBT layer.
+    std::array<u8, 0x228> reserved_after_date;
+};
+static_assert(sizeof(FriendDetailedInfoV2) == 0x800);
+static_assert(offsetof(FriendDetailedInfoV2, member_since) == 0x5D0);
+static_assert(offsetof(FriendDetailedInfoV2, state) == 0x568);
+static_assert(offsetof(FriendDetailedInfoV2, application_id) == 0x570);
+static_assert(offsetof(FriendDetailedInfoV2, application_type) == 0x57C);
+static_assert(offsetof(FriendDetailedInfoV2, presence_group_id) == 0x580);
+
+// MyPage iterates twenty 0x30-byte play logs from ProfileExtraV2 + 0xD0.
+// The UI reads total minutes at +0x1C and the initial timestamp at +0x20.
+struct ViewerPlayLog {
+    u64 application_id;
+    u32 application_version;
+    u8 application_type;
+    std::array<u8, 3> padding;
+    u64 presence_group_id;
+    u32 total_play_count;
+    u32 total_play_minutes;
+    s64 first_played;
+    s64 last_played;
+};
+static_assert(sizeof(ViewerPlayLog) == 0x30);
+static_assert(offsetof(ViewerPlayLog, total_play_minutes) == 0x1C);
+static_assert(offsetof(ViewerPlayLog, first_played) == 0x20);
+struct ProfileExtraV2 {
+    std::array<u8, 0xD0> profile;
+    std::array<ViewerPlayLog, 20> play_logs;
+    u8 is_valid;
+    std::array<u8, 0x17> reserved;
+};
+static_assert(sizeof(ProfileExtraV2) == 0x4A8);
+static_assert(offsetof(ProfileExtraV2, play_logs) == 0xD0);
+static_assert(offsetof(ProfileExtraV2, is_valid) == 0x490);
+// The local MyPage SDK loads a 0x800-byte UserSettingV2. It obtains the
+// FriendCode string at +0x20 and ProfileExtraV2 (including activity) at +0x48.
+struct UserSettingV2 {
+    std::array<u8, 0x20> reserved_header;
+    std::array<char, 15> friend_code;
+    std::array<u8, 0x19> reserved_settings;
+    ProfileExtraV2 profile;
+    std::array<u8, 0x310> reserved;
+};
+static_assert(sizeof(UserSettingV2) == 0x800);
+static_assert(offsetof(UserSettingV2, friend_code) == 0x20);
+static_assert(offsetof(UserSettingV2, profile) == 0x48);
 #pragma pack(pop)
 
 // [Nextendo] InGame never leaves "0" for a hosted private battle even once NAT resolution is
@@ -185,7 +300,7 @@ bool ResolveProfileName(u64 pid, std::string& out_name) {
         out_name = it->name;
         return true;
     }
-    out_name = Common::NextendoFriends::ResolveName(pid, 1500);
+    out_name = Common::NextendoFriends::ResolveName(pid, 0);
     return !out_name.empty();
 }
 
@@ -222,6 +337,36 @@ std::optional<ProfileImpl> MakeProfile(u64 pid) {
     return out;
 }
 
+ProfileExtraV2 MakeProfileExtraV2(u64 id) {
+    ProfileExtraV2 out{};
+    const auto profile = MakeProfile(id);
+    if (!profile) {
+        return out;
+    }
+    std::memcpy(out.profile.data(), &*profile, out.profile.size());
+    out.is_valid = 1;
+    u64 pid = id;
+    for (const auto& entry : Common::NextendoFriends::Get()) {
+        if (FriendMatchesId(entry, id)) {
+            pid = entry.pid;
+            break;
+        }
+    }
+    const auto history = Common::NextendoFriends::GetPlayHistory(pid);
+    for (size_t i = 0; i < std::min(history.size(), out.play_logs.size()); ++i) {
+        const auto& source = history[i];
+        auto& log = out.play_logs[i];
+        log.application_id = source.application_id;
+        log.presence_group_id = source.application_id;
+        log.total_play_minutes = static_cast<u32>(std::min<u64>(
+            source.seconds / 60, std::numeric_limits<u32>::max()));
+        log.last_played = source.last_played;
+        // Nextendo's history has no first-play date or session count. Leave those
+        // unknown instead of substituting the most recent session's date.
+    }
+    return out;
+}
+
 // Records carry the id the caller asked about, or the title cannot pair them with its query.
 FriendImpl MakeFriend(const Common::NextendoFriends::Entry& entry, u64 requested_id = 0,
                        const Common::UUID* owner = nullptr) {
@@ -250,13 +395,29 @@ FriendImpl MakeFriend(const Common::NextendoFriends::Entry& entry, u64 requested
     return out;
 }
 
+FriendViewerV2 MakeFriendViewerV2(const Common::NextendoFriends::Entry& entry,
+                                const Common::UUID& owner, u64 requested_id = 0) {
+    FriendViewerV2 out{};
+    out.user_id = owner;
+    out.network_user_id = requested_id != 0 ? requested_id : FriendAdvertisedId(entry);
+    std::memcpy(out.nickname.data(), entry.name.data(),
+                std::min(entry.name.size(), out.nickname.size() - 1));
+    out.presence.application_id = Common::NextendoFriends::ViewerApplicationId(entry);
+    out.presence.presence_group_id = out.presence.application_id;
+    out.presence.status = static_cast<s8>(std::clamp(entry.status, 0, 2));
+    out.presence.app_key_value = Common::NextendoFriends::MakeViewerAppField(entry);
+    out.is_valid = 1;
+    return out;
+}
+
 } // Anonymous namespace
 
 
 class IFriendService final : public ServiceFramework<IFriendService> {
 public:
-    explicit IFriendService(Core::System& system_)
-        : ServiceFramework{system_, "IFriendService"}, service_context{system, "IFriendService"} {
+    explicit IFriendService(Core::System& system_, std::shared_ptr<Module> module_)
+        : ServiceFramework{system_, "IFriendService"}, service_context{system, "IFriendService"},
+          friend_module{std::move(module_)} {
         // clang-format off
         static const FunctionInfo functions[] = {
             {0, &IFriendService::GetCompletionEvent, "GetCompletionEvent"},
@@ -291,7 +452,10 @@ public:
             {20105, &IFriendService::GetFriendListForViewer, "GetFriendListForViewer"},
             {20106, &IFriendService::UpdateFriendInfoForViewer, "UpdateFriendInfoForViewer"},
             {20107, &IFriendService::GetFriendDetailedInfoV2, "GetFriendDetailedInfoV2"},
+            {20108, &IFriendService::GetFriendListForViewerV2, "GetFriendListForViewerV2"},
+            {20109, &IFriendService::UpdateFriendInfoForViewerV2, "UpdateFriendInfoForViewerV2"},
             {20110, &IFriendService::LoadFriendSetting, "LoadFriendSetting"},
+            {20111, &IFriendService::LoadFriendSetting, "LoadFriendSettingV2"},
             {20200, &IFriendService::GetReceivedFriendRequestCount, "GetReceivedFriendRequestCount"},
             {20201, &IFriendService::GetFriendRequestList, "GetFriendRequestList"},
             {20202, &IFriendService::GetFriendRequestListV2, "GetFriendRequestListV2"},
@@ -373,9 +537,8 @@ public:
     }
 
     ~IFriendService() override {
-        // nnSdk closes an async session only after storing its result.
-        if (is_async_session) {
-            completion_event->Signal();
+        if (invitation_worker.joinable()) {
+            invitation_worker.join();
         }
         service_context.CloseEvent(completion_event);
     }
@@ -386,20 +549,21 @@ public:
     // but individually forgetting to signal completion_event in any one of them leaves the
     // guest polling forever, so signal it centrally after every command in this class instead.
     Result HandleSyncRequest(Kernel::KServerSession& session, HLERequestContext& context) override {
+        if (context.GetCommand() != 0) {
+            completion_event->Clear();
+        }
         const Result result = ServiceFrameworkBase::HandleSyncRequest(session, context);
-        if (!is_async_session) {
+        // Getting the event subscribes to completion; it does not complete a job.
+        // Signal after the actual command, even when the event was requested first.
+        // Waiting until session destruction makes the client wait on its own close.
+        if (context.GetCommand() != 0 && !context.GetIsDeferred()) {
             completion_event->Signal();
         }
-        ++handled_requests;
         return result;
     }
 
     void GetCompletionEvent(HLERequestContext& ctx) {
         LOG_DEBUG(Service_Friend, "GetCompletionEvent called");
-        // nnSdk's AsyncContextInternal opens a fresh session and asks for this first.
-        if (handled_requests == 0) {
-            is_async_session = true;
-        }
         IPC::ResponseBuilder rb{ctx, 2, 1};
         rb.Push(ResultSuccess);
         rb.PushCopyObjects(completion_event->GetReadableEvent());
@@ -481,6 +645,8 @@ private:
     void SyncFriendList(HLERequestContext& ctx);
     void RequestSyncFriendList(HLERequestContext& ctx);
     void GetFriendListForViewer(HLERequestContext& ctx);
+    void GetFriendListForViewerV2(HLERequestContext& ctx);
+    void UpdateFriendInfoForViewerV2(HLERequestContext& ctx);
     void UpdateFriendInfoForViewer(HLERequestContext& ctx);
     void GetFriendDetailedInfoV2(HLERequestContext& ctx);
     void LoadFriendSetting(HLERequestContext& ctx);
@@ -573,8 +739,10 @@ private:
 
     KernelHelpers::ServiceContext service_context;
     Kernel::KEvent* completion_event;
-    u64 handled_requests{};
-    bool is_async_session{};
+    std::shared_ptr<Module> friend_module;
+    std::mutex invitation_mutex;
+    std::optional<std::string> invitation_result;
+    std::jthread invitation_worker;
 };
 
 // [Nextendo] Registry of every live INotificationService so NotifyFriendsListUpdated() (called
@@ -729,7 +897,7 @@ public:
 void Module::Interface::CreateFriendService(HLERequestContext& ctx) {
     IPC::ResponseBuilder rb{ctx, 2, 0, 1};
     rb.Push(ResultSuccess);
-    rb.PushIpcInterface<IFriendService>(system);
+    rb.PushIpcInterface<IFriendService>(system, module);
     LOG_DEBUG(Service_Friend, "called");
 }
 
@@ -761,6 +929,7 @@ Module::Interface::~Interface() = default;
 void LoopProcess(Core::System& system) {
     auto server_manager = std::make_unique<ServerManager>(system);
     auto module = std::make_shared<Module>();
+    server_manager->ManageDeferral(&module->invitation_deferral_event);
 
     server_manager->RegisterNamedService("friend:a",
                                          std::make_shared<Friend>(module, system, "friend:a"));
@@ -891,8 +1060,25 @@ void IFriendService::GetPlayHistoryRegistrationKey(HLERequestContext& ctx) {
 }
 
 void IFriendService::GetFriendCount(HLERequestContext& ctx) {
-    const auto count = static_cast<u32>(Common::NextendoFriends::Get().size());
-    LOG_INFO(Service_Friend, "[Nextendo] GetFriendCount -> {}", count);
+    IPC::RequestParser rp{ctx};
+    [[maybe_unused]] const auto uuid = rp.PopRaw<Common::UUID>();
+    const auto filter = rp.PopRaw<SizedFriendFilter>();
+    const auto entries = Common::NextendoFriends::Get();
+    const auto count = static_cast<u32>(std::count_if(entries.begin(), entries.end(),
+        [&filter](const auto& entry) {
+            switch (filter.presence) {
+            case PresenceFilter::Online:
+                return entry.status == Common::NextendoFriends::PresenceOnline;
+            case PresenceFilter::OnlinePlay:
+                return entry.status == Common::NextendoFriends::PresenceOnlinePlay;
+            case PresenceFilter::OnlineOrOnlinePlay:
+                return entry.status != Common::NextendoFriends::PresenceOffline;
+            default:
+                return true;
+            }
+        }));
+    LOG_INFO(Service_Friend, "[Nextendo] GetFriendCount presence_filter={} total={} -> {}",
+             static_cast<u32>(filter.presence), entries.size(), count);
     IPC::ResponseBuilder rb{ctx, 3};
     rb.Push(ResultSuccess);
     rb.Push(count);
@@ -1204,7 +1390,6 @@ struct FriendSettingPayload { unsigned char data[1]; };
 struct NintendoNetworkIdInfoPayload { unsigned char data[8]; };
 struct SnsAccountLinkagePayload { unsigned char data[8]; };
 struct RelationshipPayload { unsigned char data[4]; };
-struct UserSettingPayload { unsigned char data[16]; };
 struct FacedFriendRequestRegistrationKeyPayload { unsigned char data[16]; };
 struct FriendCodePayload { char code[15]; }; // Size 15 for 14 chars + null terminator
 
@@ -1332,6 +1517,67 @@ void IFriendService::GetFriendListForViewer(HLERequestContext& ctx) {
     rb.Push<u32>(count);
 }
 
+void IFriendService::GetFriendListForViewerV2(HLERequestContext& ctx) {
+    IPC::RequestParser rp{ctx};
+    const auto offset = rp.Pop<s32>();
+    rp.Pop<u32>(); // Uid is aligned to 8 bytes in the IPC input.
+    const auto owner = rp.PopRaw<Common::UUID>();
+    const auto entries = Common::NextendoFriends::Get();
+    std::vector<FriendViewerV2> records;
+    if (ctx.CanWriteBuffer()) {
+        const auto capacity = std::min<std::size_t>(ctx.GetWriteBufferNumElements<FriendViewerV2>(), 300);
+        records.resize(capacity);
+        const auto start = offset >= 0 ? std::min<std::size_t>(offset, entries.size()) : entries.size();
+        const auto count = std::min(capacity, entries.size() - start);
+        for (std::size_t i = 0; i < count; ++i) {
+            records[i] = MakeFriendViewerV2(entries[start + i], owner);
+        }
+        if (!records.empty()) {
+            ctx.WriteBuffer(records);
+        }
+        records.resize(count);
+    }
+    LOG_INFO(Service_Friend, "HOME viewer V2: cached={} offset={} returned={} output_bytes={}",
+             entries.size(), offset, records.size(), ctx.GetWriteBufferSize());
+    IPC::ResponseBuilder rb{ctx, 3};
+    rb.Push(ResultSuccess);
+    rb.Push<u32>(static_cast<u32>(records.size()));
+}
+
+void IFriendService::UpdateFriendInfoForViewerV2(HLERequestContext& ctx) {
+    IPC::RequestParser rp{ctx};
+    const auto owner = rp.PopRaw<Common::UUID>();
+    const auto entries = Common::NextendoFriends::Get();
+    std::vector<FriendViewerV2> records;
+    std::size_t matched = 0;
+    if (ctx.CanReadBuffer() && ctx.CanWriteBuffer()) {
+        const auto ids = ctx.ReadBuffer();
+        const auto count = std::min({ids.size() / sizeof(u64),
+                                    ctx.GetWriteBufferNumElements<FriendViewerV2>(), std::size_t{300}});
+        records.resize(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            u64 id;
+            std::memcpy(&id, ids.data() + i * sizeof(id), sizeof(id));
+            const auto it = std::find_if(entries.begin(), entries.end(),
+                                        [id](const auto& entry) { return FriendMatchesId(entry, id); });
+            if (it != entries.end()) {
+                records[i] = MakeFriendViewerV2(*it, owner, id);
+                ++matched;
+            }
+        }
+        if (!records.empty()) {
+            ctx.WriteBuffer(records);
+        }
+    }
+    const auto playing = std::count_if(records.begin(), records.end(), [](const auto& record) {
+        return record.presence.status == 2 && record.presence.application_id != 0;
+    });
+    LOG_INFO(Service_Friend, "HOME viewer V2 refresh: requested={} matched={} playing={}",
+             records.size(), matched, playing);
+    IPC::ResponseBuilder rb{ctx, 2};
+    rb.Push(ResultSuccess);
+}
+
 void IFriendService::UpdateFriendInfoForViewer(HLERequestContext& ctx) {
     // [Nextendo] This, not GetFriendDetailedInfoV2, turns out to be what MyPage's Friends viewer
     // actually polls per-tile (GetFriendDetailedInfoV2 was only ever seen called with an empty id
@@ -1395,49 +1641,53 @@ void IFriendService::UpdateFriendInfoForViewer(HLERequestContext& ctx) {
 }
 
 void IFriendService::GetFriendDetailedInfoV2(HLERequestContext& ctx) {
-    // [Nextendo] Same ids-in/details-out contract as UpdateFriendInfo above (one resolved entry
-    // per requested id, in the same order, zeroed rather than skipped when an id can't be
-    // resolved) -- this is the detail half of the GetFriendListForViewer flow MyPage's Friends
-    // viewer actually uses, so without this the viewer had ids but nothing to show for them.
-    constexpr std::size_t MaxRequestedIds = 300;
-    std::vector<u64> requested_ids;
-    if (ctx.CanReadBuffer(0)) {
-        const auto requested_ids_raw = ctx.ReadBuffer(0);
-        const auto id_count = std::min(requested_ids_raw.size() / sizeof(u64), MaxRequestedIds);
-        requested_ids.resize(id_count);
-        if (id_count > 0) {
-            std::memcpy(requested_ids.data(), requested_ids_raw.data(), id_count * sizeof(u64));
-        }
+    IPC::RequestParser rp{ctx};
+    rp.PopRaw<Common::UUID>();
+    const auto wanted = rp.Pop<u64>();
+    if (!ctx.CanWriteBuffer() || ctx.GetWriteBufferSize() != sizeof(FriendDetailedInfoV2)) {
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(ResultUnknown);
+        return;
     }
 
     const auto entries = Common::NextendoFriends::Get();
-    const auto capacity = std::min(ctx.GetWriteBufferNumElements<FriendImpl>(), MaxRequestedIds);
-    const auto out_count = std::min(requested_ids.size(), capacity);
-
-    std::vector<FriendImpl> info(out_count);
-    for (std::size_t i = 0; i < out_count; ++i) {
-        const auto wanted = requested_ids[i];
-        const auto it = std::find_if(entries.begin(), entries.end(),
-                                     [wanted](const auto& e) { return FriendMatchesId(e, wanted); });
-        info[i] = it != entries.end() ? MakeFriend(*it, wanted) : FriendImpl{};
+    const auto it = std::find_if(entries.begin(), entries.end(),
+                                [wanted](const auto& e) { return FriendMatchesId(e, wanted); });
+    FriendDetailedInfoV2 info{};
+    if (it != entries.end()) {
+        const auto profile = MakeProfileExtraV2(wanted);
+        // FriendDetailedInfoV2 embeds its ProfileExtraV2 after the 16-byte owner Uid.
+        std::memcpy(info.profile_and_history.data() + 0x10, &profile, sizeof(profile));
+        // Native MyPage state 1 selects online with/without an application;
+        // state 2 selects offline. OnlinePlay remains part of viewer presence.
+        info.state = it->status > 0 ? 1 : 2;
+        info.application_id = it->app_id;
+        info.presence_group_id = it->app_id;
+        info.member_since = it->member_since;
     }
-
-    if (!info.empty()) {
-        ctx.WriteBuffer(info);
-    }
-
-    LOG_INFO(Service_Friend, "[Nextendo] GetFriendDetailedInfoV2 requested={} -> {} resolved",
-             requested_ids.size(), out_count);
+    ctx.WriteBuffer(info);
+    LOG_INFO(Service_Friend,
+             "[Nextendo] Friend detail resolved={} state={} application={:016X}",
+             it != entries.end(), info.state, info.application_id);
     IPC::ResponseBuilder rb{ctx, 2};
-    rb.Push(ResultSuccess);
+    rb.Push(it != entries.end() ? ResultSuccess : ResultUnknown);
 }
 
 void IFriendService::LoadFriendSetting(HLERequestContext& ctx) {
-    LOG_WARNING(Service_Friend, "(STUBBED) LoadFriendSetting called");
-    IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+    // MyPage passes a single friend id inline and receives a fixed pointer
+    // buffer (0x40 for V1, 0x80 for V2), not an IPC object or inline byte.
+    const auto size = ctx.GetWriteBufferSize();
+    if (size != 0x40 && size != 0x80) {
+        LOG_ERROR(Service_Friend, "Unsupported friend setting buffer size={}", size);
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(ResultUnknown);
+        return;
+    }
+    const std::vector<u8> defaults(size, 0);
+    ctx.WriteBuffer(defaults);
+    LOG_INFO(Service_Friend, "Friend setting defaults returned: bytes={}", size);
+    IPC::ResponseBuilder rb{ctx, 2};
     rb.Push(ResultSuccess);
-    FriendSettingPayload payload{{0}};
-    rb.PushRaw(payload);
 }
 
 void IFriendService::GetFriendRequestList(HLERequestContext& ctx) {
@@ -1517,28 +1767,69 @@ void IFriendService::GetProfileExtraList(HLERequestContext& ctx) {
 
 void IFriendService::GetRelationship(HLERequestContext& ctx) {
     LOG_WARNING(Service_Friend, "(STUBBED) GetRelationship called");
-    IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+    IPC::ResponseBuilder rb{ctx, 3};
     rb.Push(ResultSuccess);
     RelationshipPayload payload{{0}};
     rb.PushRaw(payload);
 }
 
 void IFriendService::GetProfileExtraListV2(HLERequestContext& ctx) {
-    RespondProfileList(ctx, "GetProfileExtraListV2");
+    const auto ids = ctx.ReadBuffer();
+    const auto count = std::min({ids.size() / sizeof(u64),
+                                ctx.GetWriteBufferSize() / sizeof(ProfileExtraV2), size_t{300}});
+    std::vector<ProfileExtraV2> profiles;
+    profiles.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+        u64 id{};
+        std::memcpy(&id, ids.data() + i * sizeof(id), sizeof(id));
+        profiles.push_back(MakeProfileExtraV2(id));
+    }
+    if (!profiles.empty()) {
+        ctx.WriteBuffer(profiles);
+    }
+    LOG_INFO(Service_Friend, "[Nextendo] GetProfileExtraListV2 returned {} native profiles", count);
+    IPC::ResponseBuilder rb{ctx, 3};
+    rb.Push(ResultSuccess);
+    rb.Push<u32>(static_cast<u32>(count));
 }
 
 void IFriendService::GetUserPresenceView(HLERequestContext& ctx) {
     LOG_WARNING(Service_Friend, "(STUBBED) GetUserPresenceView called");
+    if (ctx.CanWriteBuffer()) {
+        const std::vector<u8> presence(ctx.GetWriteBufferSize(), 0);
+        ctx.WriteBuffer(presence);
+    }
     IPC::ResponseBuilder rb{ctx, 2};
     rb.Push(ResultSuccess);
-    // TODO [Zephyron]: Needs buffer for UserPresenceView (X, (pid, size))
 }
 
 void IFriendService::GetUserPresenceViewV2(HLERequestContext& ctx) {
-    LOG_WARNING(Service_Friend, "(STUBBED) GetUserPresenceViewV2 called");
+    IPC::RequestParser rp{ctx};
+    const auto user_id = rp.PopRaw<Common::UUID>();
+    FriendViewerPresenceV2 presence{};
+    const bool online = Common::NextendoAccount::IsLinked() &&
+                        user_id == system.GetProfileManager().GetLastOpenedUser() &&
+                        Common::NextendoFriends::IsAccountConnectionCurrent() &&
+                        Common::NextendoFriends::GetLocalStatus() > 0;
+    if (online) {
+        presence.status = Common::NextendoFriends::PresenceOnline;
+        if (system.IsQLaunchSession()) {
+            // Viewer metadata only. Game-facing presence/session fields stay untouched.
+            presence.application_id = Common::HomeMenuActivity::ApplicationId;
+            presence.presence_group_id = Common::HomeMenuActivity::ApplicationId;
+            std::memcpy(presence.app_key_value.data(), Common::HomeMenuActivity::Description,
+                        sizeof(Common::HomeMenuActivity::Description));
+        }
+    }
+    if (!ctx.CanWriteBuffer() || ctx.GetWriteBufferSize() < sizeof(presence)) {
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(Result{ErrorModule::Friends, 2});
+        return;
+    }
+    ctx.WriteBuffer(presence);
+    LOG_INFO(Service_Friend, "HOME own presence: online={} bytes={}", online, sizeof(presence));
     IPC::ResponseBuilder rb{ctx, 2};
     rb.Push(ResultSuccess);
-    // TODO [Zephyron]: Needs buffer for UserPresenceView (X, (pid, size))
 }
 
 void IFriendService::GetPlayHistoryList(HLERequestContext& ctx) {
@@ -1557,10 +1848,14 @@ void IFriendService::GetPlayHistoryListV2(HLERequestContext& ctx) {
 
 void IFriendService::LoadUserSetting(HLERequestContext& ctx) {
     LOG_WARNING(Service_Friend, "(STUBBED) LoadUserSetting called");
-    IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+    // User settings are an output buffer, not a returned service object or
+    // inline scalar. Initialize it rather than returning uninitialized data.
+    if (ctx.CanWriteBuffer()) {
+        const std::vector<u8> settings(ctx.GetWriteBufferSize(), 0);
+        ctx.WriteBuffer(settings);
+    }
+    IPC::ResponseBuilder rb{ctx, 2};
     rb.Push(ResultSuccess);
-    UserSettingPayload payload{{0}};
-    rb.PushRaw(payload);
 }
 
 void IFriendService::SyncUserSetting(HLERequestContext& ctx) {
@@ -1570,11 +1865,30 @@ void IFriendService::SyncUserSetting(HLERequestContext& ctx) {
 }
 
 void IFriendService::LoadUserSettingV2(HLERequestContext& ctx) {
-    LOG_WARNING(Service_Friend, "(STUBBED) LoadUserSettingV2 called");
-    IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+    IPC::RequestParser rp{ctx};
+    const auto user_id = rp.PopRaw<Common::UUID>();
+    UserSettingV2 settings{};
+    const bool linked_user = Common::NextendoAccount::IsLinked() &&
+        user_id == system.GetProfileManager().GetLastOpenedUser();
+    if (linked_user) {
+        settings.friend_code = Common::NextendoFriends::NativeFriendCode(
+            Common::NextendoAccount::GetFriendCode());
+        settings.profile = MakeProfileExtraV2(Common::NextendoAccount::GetPid());
+    }
+    if (!ctx.CanWriteBuffer() || ctx.GetWriteBufferSize() < sizeof(settings)) {
+        LOG_WARNING(Service_Friend, "HOME own profile: UserSettingV2 output buffer is too small");
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(Result{ErrorModule::Friends, 2});
+        return;
+    }
+    ctx.WriteBuffer(settings);
+    const auto titles = std::count_if(settings.profile.play_logs.begin(),
+        settings.profile.play_logs.end(), [](const auto& log) { return log.application_id != 0; });
+    LOG_INFO(Service_Friend,
+        "HOME own profile: linked_user={} friend_code_present={} history_titles={} bytes={}",
+        linked_user, settings.friend_code[0] != '\0', titles, sizeof(settings));
+    IPC::ResponseBuilder rb{ctx, 2};
     rb.Push(ResultSuccess);
-    UserSettingPayload payload{{0}};
-    rb.PushRaw(payload);
 }
 
 void IFriendService::RequestListSummaryOverlayNotification(HLERequestContext& ctx) {
@@ -1837,15 +2151,94 @@ void IFriendService::ClearPlayLog(HLERequestContext& ctx) {
 }
 
 void IFriendService::SendFriendInvitation(HLERequestContext& ctx) {
-    LOG_WARNING(Service_Friend, "(STUBBED) SendFriendInvitation called");
+#ifdef ENABLE_WEB_SERVICE
+    if (invitation_worker.joinable()) {
+        std::optional<std::string> result;
+        {
+            std::lock_guard lock{invitation_mutex};
+            result = invitation_result;
+        }
+        if (!result) {
+            ctx.SetIsDeferred();
+            return;
+        }
+        invitation_worker.join();
+        invitation_result.reset();
+        LOG_INFO(Service_Friend, "Native friend invitation delivery accepted={}", result->empty());
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(result->empty() ? ResultSuccess : ResultUnknown);
+        return;
+    }
+
+    // The friend IDs are an input pointer buffer; description and opaque game
+    // data are separate map-alias buffers. Read them by descriptor class, since
+    // ReadBuffer(0) would prefer the description over the recipient pointer.
+    const auto& pointers = ctx.BufferDescriptorX();
+    const auto& aliases = ctx.BufferDescriptorA();
+    LOG_INFO(Service_Friend, "Native invitation buffers: pointers={} aliases={} ids_bytes={} description_bytes={} data_bytes={}",
+             pointers.size(), aliases.size(), pointers.empty() ? 0 : pointers[0].Size(),
+             aliases.empty() ? 0 : aliases[0].Size(), aliases.size() < 2 ? 0 : aliases[1].Size());
+    u64 title_id = system.GetApplicationProcessProgramID();
+    if (system.IsQLaunchSession()) {
+        title_id = 0;
+        if (auto* windows = system.GetAppletManager().GetWindowSystem()) {
+            if (const auto app = windows->GetMainApplet(); app && app->applet_id != AM::AppletId::QLaunch) {
+                title_id = app->program_id;
+            }
+        }
+    }
+    if (title_id != 0 && !pointers.empty() && aliases.size() >= 2 &&
+        pointers[0].Size() > 0 && pointers[0].Size() <= 15 * sizeof(u64) &&
+        pointers[0].Size() % sizeof(u64) == 0 && aliases[0].Size() == 0xC00 &&
+        aliases[1].Size() <= 0x400) {
+        const auto ids = ctx.ReadBufferX(0);
+        const auto description_view = ctx.ReadBufferA(0);
+        const auto data_view = ctx.ReadBufferA(1);
+        std::vector<u8> description(description_view.begin(), description_view.end());
+        std::vector<u8> data(data_view.begin(), data_view.end());
+        std::vector<u64> recipients;
+        const auto friends = Common::NextendoFriends::Get();
+        for (std::size_t offset = 0; offset < ids.size(); offset += sizeof(u64)) {
+            u64 id;
+            std::memcpy(&id, ids.data() + offset, sizeof(id));
+            const auto found = std::find_if(friends.begin(), friends.end(),
+                [id](const auto& entry) { return FriendMatchesId(entry, id); });
+            if (found == friends.end()) {
+                IPC::ResponseBuilder rb{ctx, 2};
+                rb.Push(ResultUnknown);
+                return;
+            }
+            recipients.push_back(found->pid);
+        }
+        const auto generation = Common::NextendoAccount::GetGeneration();
+        ctx.SetIsDeferred();
+        invitation_worker = std::jthread{[this, title_id, generation,
+                targets = std::move(recipients), payload = std::move(data),
+                mode_description = std::move(description)] {
+            std::string result = "Account changed before invitation submission.";
+            try {
+                if (generation == Common::NextendoAccount::GetGeneration()) {
+                    result = WebService::NextendoApi::SendGameInvitation(title_id, targets, payload, mode_description);
+                }
+            } catch (const std::exception&) {
+                result = "Invitation transport failed.";
+            }
+            {
+                std::lock_guard lock{invitation_mutex};
+                invitation_result = std::move(result);
+            }
+            friend_module->invitation_deferral_event->Signal();
+        }};
+        return;
+    }
+#endif
+    LOG_ERROR(Service_Friend, "Native friend invitation rejected: unsupported request buffers or no running game");
     IPC::ResponseBuilder rb{ctx, 2};
-    rb.Push(ResultSuccess);
+    rb.Push(ResultUnknown);
 }
 
 void IFriendService::SendFriendInvitationV2(HLERequestContext& ctx) {
-    LOG_WARNING(Service_Friend, "(STUBBED) SendFriendInvitationV2 called");
-    IPC::ResponseBuilder rb{ctx, 2};
-    rb.Push(ResultSuccess);
+    SendFriendInvitation(ctx);
 }
 
 void IFriendService::ReadFriendInvitation(HLERequestContext& ctx) {

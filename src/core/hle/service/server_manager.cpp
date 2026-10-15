@@ -12,6 +12,7 @@
 #include "core/hle/kernel/k_server_port.h"
 #include "core/hle/kernel/k_server_session.h"
 #include "core/hle/kernel/k_synchronization_object.h"
+#include "core/hle/kernel/k_thread.h"
 #include "core/hle/kernel/svc_results.h"
 #include "core/hle/service/hle_ipc.h"
 #include "core/hle/service/ipc_helpers.h"
@@ -370,7 +371,10 @@ Result ServerManager::CompleteSyncRequest(Session* session) {
 
     // Complete the request. We have exclusive access to this session.
     auto* server_session = static_cast<Kernel::KServerSession*>(session->GetNativeHandle());
-    Result service_res = session->GetManager()->CompleteSyncRequest(server_session, *session->GetContext());
+    // A client that exited while deferred has no reply buffers left to use.
+    Result service_res = session->GetContext()->GetThread().IsTerminationRequested()
+        ? IPC::ResultSessionClosed
+        : session->GetManager()->CompleteSyncRequest(server_session, *session->GetContext());
 
     // If we've been deferred, we're done.
     if (session->GetContext()->GetIsDeferred()) {

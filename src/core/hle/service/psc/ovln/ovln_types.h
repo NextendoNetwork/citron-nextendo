@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <algorithm>
+#include <array>
+#include <string>
 #include "common/bit_field.h"
 #include "common/common_types.h"
 
@@ -19,11 +22,13 @@ union MessageFlags {
 static_assert(sizeof(MessageFlags) == 0x8, "MessageFlags has incorrect size");
 
 struct SourceName {
-    char name[0x16];
+    char name[0x10];
 
-    const char* GetString() const {
-        return name;
+    std::string GetString() const {
+        return std::string(name, std::find(std::begin(name), std::end(name), '\0'));
     }
 };
+
+static_assert(sizeof(SourceName) == 0x10);
 
 } // namespace Service::PSC

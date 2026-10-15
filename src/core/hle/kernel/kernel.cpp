@@ -118,6 +118,12 @@ struct KernelCore::Impl {
 
         CloseServices();
 
+        // Guest cores have stopped before System calls Shutdown(). Deferred
+        // termination must also finish before releasing schedulers and slabs.
+        LOG_INFO(Kernel, "Shutdown: draining deferred process and thread termination");
+        worker_task_manager.WaitForRequests();
+        LOG_INFO(Kernel, "Shutdown: deferred termination drained");
+
         if (application_process) {
             application_process->Close();
             application_process = nullptr;

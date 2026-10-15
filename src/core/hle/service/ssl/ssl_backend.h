@@ -36,6 +36,9 @@ public:
     virtual void SetSocket(std::shared_ptr<Network::SocketBase> socket) = 0;
     virtual Result SetHostName(const std::string& hostname) = 0;
     virtual Result SetVerifyOption(u32 verify_option) = 0;
+    virtual Result SetUchAccountVerification(bool enabled) {
+        return enabled ? ResultInternalError : ResultSuccess;
+    }
     // requested_alpn_protos: whatever the game asked for via SetNextAlpnProto (used for NPLN hosts only).
     virtual Result DoHandshake(std::span<const std::string> requested_alpn_protos = {}) = 0;
     virtual Result Read(size_t* out_size, std::span<u8> data) = 0;

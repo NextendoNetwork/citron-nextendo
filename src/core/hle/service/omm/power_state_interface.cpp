@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/core.h"
 #include "core/hle/kernel/k_event.h"
 #include "core/hle/service/cmif_serialization.h"
 #include "core/hle/service/omm/power_state_interface.h"
@@ -19,7 +20,7 @@ IPowerStateInterface::IPowerStateInterface(Core::System& system_)
         {0, nullptr, "GetState"},
         {1, nullptr, "EnterSleep"},
         {2, nullptr, "GetLastWakeReason"},
-        {3, nullptr, "Shutdown"},
+        {3, D<&IPowerStateInterface::Shutdown>, "Shutdown"},
         {4, D<&IPowerStateInterface::GetNotificationMessageEventHandle>, "GetNotificationMessageEventHandle"},
         {5, nullptr, "ReceiveNotificationMessage"},
         {6, nullptr, "AnalyzeLogForLastSleepWakeSequence"},
@@ -37,6 +38,16 @@ IPowerStateInterface::IPowerStateInterface(Core::System& system_)
 
 IPowerStateInterface::~IPowerStateInterface() {
     service_context.CloseEvent(notification_event);
+}
+
+Result IPowerStateInterface::Shutdown(bool reboot) {
+    LOG_INFO(Service, "SPSM shutdown request: reboot={}", reboot);
+    if (reboot) {
+        R_UNLESS(system.Reboot(), ResultUnknown);
+    } else {
+        system.Exit();
+    }
+    R_SUCCEED();
 }
 
 Result IPowerStateInterface::GetNotificationMessageEventHandle(

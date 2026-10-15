@@ -8,8 +8,18 @@
 #include "core/hle/service/bcat/service_creator.h"
 #include "core/hle/service/cmif_serialization.h"
 #include "core/hle/service/filesystem/filesystem.h"
+#include "core/hle/kernel/k_process.h"
+#include "core/hle/kernel/kernel.h"
+#include "core/hle/service/bcat/bcat_result.h"
 
 namespace Service::BCAT {
+
+static std::optional<u64> ResolveBcatProgram(Core::System& system, ClientProcessId id) {
+    for (auto& process : system.Kernel().GetProcessList()) {
+        if (process->GetProcessId() == id.pid) return process->GetProgramId();
+    }
+    return std::nullopt;
+}
 
 std::unique_ptr<BcatBackend> CreateBackendFromSettings([[maybe_unused]] Core::System& system,
                                                        DirectoryGetter getter) {
@@ -42,7 +52,10 @@ IServiceCreator::~IServiceCreator() = default;
 Result IServiceCreator::CreateBcatService(ClientProcessId process_id,
                                           OutInterface<IBcatService> out_interface) {
     LOG_INFO(Service_BCAT, "called, process_id={}", process_id.pid);
-    *out_interface = std::make_shared<IBcatService>(system, *backend);
+    const auto title_id = ResolveBcatProgram(system, process_id);
+    R_UNLESS(title_id, ResultInvalidArgument);
+    LOG_INFO(Service_BCAT, "BCAT client program={:016X}", *title_id);
+    *out_interface = std::make_shared<IBcatService>(system, *backend, *title_id);
     R_SUCCEED();
 }
 
@@ -50,9 +63,11 @@ Result IServiceCreator::CreateDeliveryCacheStorageService(
     ClientProcessId process_id, OutInterface<IDeliveryCacheStorageService> out_interface) {
     LOG_INFO(Service_BCAT, "called, process_id={}", process_id.pid);
 
-    const auto title_id = system.GetApplicationProcessProgramID();
+    const auto title_id = ResolveBcatProgram(system, process_id);
+    R_UNLESS(title_id, ResultInvalidArgument);
+    LOG_INFO(Service_BCAT, "BCAT storage program={:016X}", *title_id);
     *out_interface =
-        std::make_shared<IDeliveryCacheStorageService>(system, fsc.GetBCATDirectory(title_id));
+        std::make_shared<IDeliveryCacheStorageService>(system, fsc.GetBCATDirectory(*title_id));
     R_SUCCEED();
 }
 

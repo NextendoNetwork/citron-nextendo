@@ -2,16 +2,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <fmt/format.h>
+#include "common/fs/fs.h"
 #include "common/fs/path_util.h"
 #include "core/file_sys/bis_factory.h"
 #include "core/file_sys/registered_cache.h"
 #include "core/file_sys/vfs/vfs.h"
 
 namespace FileSys {
-
-constexpr u64 NAND_USER_SIZE = 0x680000000;  // 26624 MiB
-constexpr u64 NAND_SYSTEM_SIZE = 0xA0000000; // 2560 MiB
-constexpr u64 NAND_TOTAL_SIZE = 0x747C00000; // 29820 MiB
 
 BISFactory::BISFactory(VirtualDir nand_root_, VirtualDir load_root_, VirtualDir dump_root_)
     : nand_root(std::move(nand_root_)), load_root(std::move(load_root_)),
@@ -110,30 +107,23 @@ VirtualDir BISFactory::GetImageDirectory() const {
 }
 
 u64 BISFactory::GetSystemNANDFreeSpace() const {
-    const auto sys_dir = GetOrCreateDirectoryRelative(nand_root, "/system");
-    if (sys_dir == nullptr) {
-        return GetSystemNANDTotalSpace();
-    }
-
-    return GetSystemNANDTotalSpace() - sys_dir->GetSize();
+    return Common::FS::GetFreeSpaceSize(Common::FS::GetCitronPath(Common::FS::CitronPath::NANDDir));
 }
 
 u64 BISFactory::GetSystemNANDTotalSpace() const {
-    return NAND_SYSTEM_SIZE;
+    return Common::FS::GetTotalSpaceSize(Common::FS::GetCitronPath(Common::FS::CitronPath::NANDDir));
 }
 
 u64 BISFactory::GetUserNANDFreeSpace() const {
-    // For some reason games such as BioShock 1 checks whether this is exactly 0x680000000 bytes.
-    // Set the free space to be 1 MiB less than the total as a workaround to this issue.
-    return GetUserNANDTotalSpace() - 0x100000;
+    return Common::FS::GetFreeSpaceSize(Common::FS::GetCitronPath(Common::FS::CitronPath::NANDDir));
 }
 
 u64 BISFactory::GetUserNANDTotalSpace() const {
-    return NAND_USER_SIZE;
+    return Common::FS::GetTotalSpaceSize(Common::FS::GetCitronPath(Common::FS::CitronPath::NANDDir));
 }
 
 u64 BISFactory::GetFullNANDTotalSpace() const {
-    return NAND_TOTAL_SIZE;
+    return GetUserNANDTotalSpace();
 }
 
 VirtualDir BISFactory::GetBCATDirectory(u64 title_id) const {

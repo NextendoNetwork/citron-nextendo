@@ -654,6 +654,14 @@ void GRenderWindow::mousePressEvent(QMouseEvent* event) {
 }
 
 void GRenderWindow::mouseMoveEvent(QMouseEvent* event) {
+    // Native touch events already have their own handler.
+    if (event->source() == Qt::MouseEventSynthesizedBySystem) {
+        return;
+    }
+    UpdateMousePosition();
+}
+
+void GRenderWindow::UpdateMousePosition() {
     if (UISettings::values.hide_mouse) {
         if (Settings::values.mouse_panning) {
             // Panning is ON. Enforce a hidden cursor immediately and do not start the hide timer.
@@ -669,10 +677,6 @@ void GRenderWindow::mouseMoveEvent(QMouseEvent* event) {
         }
     }
 
-    // Touch input is handled in TouchUpdateEvent
-    if (event->source() == Qt::MouseEventSynthesizedBySystem) {
-        return;
-    }
     // Qt sometimes returns the parent coordinates. To avoid this we read the global mouse
     // coordinates and map them to the current render area
     const auto pos = mapFromGlobal(QCursor::pos());
@@ -1070,8 +1074,9 @@ bool GRenderWindow::eventFilter(QObject* object, QEvent* event) {
     // Only handle HoverMove for panning.
     if (event->type() == QEvent::HoverMove) {
         if (Settings::values.mouse_panning.GetValue() || Settings::values.mouse_enabled.GetValue()) {
-            auto* hover_event = static_cast<QMouseEvent*>(event);
-            mouseMoveEvent(hover_event);
+            // QHoverEvent is not a QMouseEvent. Both paths use the mapped
+            // global cursor position, so no event reinterpretation is needed.
+            UpdateMousePosition();
             // Consume the hover event to prevent it from being processed twice.
             return true;
         }

@@ -156,6 +156,7 @@ struct Values {
                                         Category::LibraryApplet};
     Setting<AppletMode> shop_applet_mode{linkage, AppletMode::HLE, "shop_applet_mode",
                                          Category::LibraryApplet};
+    Setting<bool> homebrew_album{linkage, true, "homebrew_album", Category::LibraryApplet};
     Setting<AppletMode> photo_viewer_applet_mode{
         linkage, AppletMode::LLE, "photo_viewer_applet_mode", Category::LibraryApplet};
     Setting<AppletMode> offline_web_applet_mode{linkage, AppletMode::HLE, "offline_web_applet_mode",

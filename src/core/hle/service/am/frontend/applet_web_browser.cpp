@@ -363,7 +363,7 @@ void WebBrowser::Initialize() {
         InitializeLobby();
         break;
     case ShimKind::Unknown8:
-        LOG_WARNING(Service_AM, "(STUBBED) called, Unknown8 Applet is not implemented");
+        LOG_INFO(Service_AM, "Nextendo Page: initialized MyNso web protocol (shim 8)");
         break;
     default:
         ASSERT_MSG(false, "Invalid ShimKind={}", web_arg_header.shim_kind);
@@ -403,7 +403,8 @@ void WebBrowser::Execute() {
         ExecuteLobby();
         break;
     case ShimKind::Unknown8:
-        WebBrowserExit(WebExitReason::EndButtonPressed);
+        frontend.OpenExternalWebPage("https://nextendo.network/compte",
+            [this](WebExitReason reason, std::string) { WebBrowserExit(reason); });
         break;
     default:
         ASSERT_MSG(false, "Invalid ShimKind={}", web_arg_header.shim_kind);
@@ -427,10 +428,13 @@ void WebBrowser::ExtractOfflineRomFS() {
 void WebBrowser::WebBrowserExit(WebExitReason exit_reason, std::string last_url) {
     if ((web_arg_header.shim_kind == ShimKind::Share &&
          web_applet_version >= WebAppletVersion::Version196608) ||
+        web_arg_header.shim_kind == ShimKind::Unknown8 ||
         (web_arg_header.shim_kind == ShimKind::Web &&
          web_applet_version >= WebAppletVersion::Version524288)) {
         // These versions pop output TLVs; a WebCommonReturnValue here aborts the SDK (2162-0001).
         complete = true;
+        LOG_INFO(Service_AM, "Web applet return: shim={} TLV storage=8192 reason={}",
+                 web_arg_header.shim_kind, exit_reason);
         PushOutData(std::make_shared<IStorage>(
             system, BuildWebOutputTlvs(web_arg_header.shim_kind, exit_reason, last_url)));
         Exit();

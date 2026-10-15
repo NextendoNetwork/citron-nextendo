@@ -239,7 +239,7 @@ public:
         m_is_suspended = suspended;
     }
 
-    Result Terminate();
+    Result Terminate(bool defer_cleanup = false);
 
     bool IsTerminated() const {
         return m_state == State::Terminated;

@@ -15,6 +15,7 @@
 #endif
 
 #include "citron/mod_manager/zip_extractor.h"
+#include "citron/util/temporary_directory.h"
 #include "common/fs/fs.h"
 #include "common/logging.h"
 
@@ -401,7 +402,7 @@ static void RobustMove(const std::filesystem::path& src, const std::filesystem::
 }
 
 bool ZipExtractor::ExtractAndOrganize(const QString& zip_path, const QString& mod_folder) {
-    QTemporaryDir temp_dir;
+    QTemporaryDir temp_dir(Citron::TemporaryDirectoryTemplate());
     if (!temp_dir.isValid())
         return false;
 

@@ -268,6 +268,12 @@ Result GetThreadCoreMask(Core::System& system, s32* out_core_id, u64* out_affini
     // Get the thread from its handle.
     KScopedAutoObject thread =
         GetCurrentProcess(system.Kernel()).GetHandleTable().GetObject<KThread>(thread_handle);
+    if (thread.IsNull()) {
+        LOG_ERROR(Kernel_SVC,
+                  "GetThreadCoreMask rejected handle=0x{:08X} process_id={} current_thread_id={}",
+                  thread_handle, GetCurrentProcess(system.Kernel()).GetProcessId(),
+                  GetCurrentThread(system.Kernel()).GetThreadId());
+    }
     R_UNLESS(thread.IsNotNull(), ResultInvalidHandle);
 
     // Get the core mask.

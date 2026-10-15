@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
+#include <cstdlib>
 #include <fmt/format.h>
+#include "common/logging.h"
 
 #include "citron/debugger/wait_tree.h"
 #include "citron/uisettings.h"
@@ -411,6 +413,44 @@ WaitTreeWidget::~WaitTreeWidget() = default;
 void WaitTreeWidget::OnDebugModeEntered() {
     if (!system.IsPoweredOn())
         return;
+    // The CPU is suspended here. Limit the local HOME diagnostic to the Album
+    // process and emit addresses/wait states, never guest buffers or credentials.
+    if (std::getenv("CITRON_HOMEBREW_ALBUM")) {
+        unsigned count = 0;
+        for (auto* thread : system.GlobalSchedulerContext().GetThreadList()) {
+            auto* process = thread->GetOwnerProcess();
+            if (thread->GetThreadType() != Kernel::ThreadType::User || !process ||
+                process->GetProgramId() != 0x010000000000100DULL || count++ >= 32) {
+                continue;
+            }
+            LOG_INFO(Debug, "HOME wait: thread={} state={}", thread->GetThreadId(),
+                     Core::GetThreadState(thread));
+            const auto stack = Core::GetBacktrace(thread);
+            // Recognize the captured hbmenu 3.6.1 nvInitialize -> nvCleanup ->
+            // tmemWaitForPermission path. Read only its saved Result and whether
+            // its transfer-memory source is null, not arbitrary register values.
+            if (stack.size() > 3 && stack[1].offset == 0x24018 &&
+                stack[2].offset == 0x1A5CC && stack[3].offset == 0x1A7D8) {
+                auto& memory = process->GetMemory();
+                const auto& context = thread->GetContext();
+                u64 cleanup_frame{}, saved_result{}, source{};
+                if (memory.ReadBlock(context.fp, &cleanup_frame, sizeof(cleanup_frame)) &&
+                    memory.ReadBlock(cleanup_frame + 0x10, &saved_result, sizeof(saved_result)) &&
+                    memory.ReadBlock(context.r[19] + 0x18, &source, sizeof(source))) {
+                    LOG_INFO(Debug, "HOME nv init cleanup: result={:08X} source_is_null={}",
+                             static_cast<u32>(saved_result), source == 0);
+                }
+            }
+            unsigned frame = 0;
+            for (const auto& entry : stack) {
+                if (frame++ >= 12) {
+                    break;
+                }
+                LOG_INFO(Debug, "HOME stack: thread={} pc={:016X} offset={:X}",
+                         thread->GetThreadId(), entry.original_address, entry.offset);
+            }
+        }
+    }
     model->InitItems();
     view->setModel(model);
     setEnabled(true);

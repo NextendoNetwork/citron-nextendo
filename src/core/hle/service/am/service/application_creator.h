@@ -19,6 +19,7 @@ public:
 
 private:
     Result CreateApplication(Out<SharedPointer<IApplicationAccessor>>, u64 application_id);
+    Result PopLaunchRequestedApplication(Out<SharedPointer<IApplicationAccessor>>);
 
     WindowSystem& m_window_system;
 };

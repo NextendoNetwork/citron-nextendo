@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/fs/path_util.h"
+#include "citron/setup_startup.h"
 #include "common/logging.h"
 #include "input_common/main.h"
 #include "qt_config.h"
@@ -48,6 +49,12 @@ const std::array<int, 2> QtConfig::default_ringcon_analogs{{
 
 QtConfig::QtConfig(const std::string& config_name, const ConfigType config_type)
     : Config(config_type) {
+    if (config_type == ConfigType::GlobalConfig) {
+        // Capture this before Initialize/SaveQtValues creates a first-run INI.
+        configuration_existed_at_startup = Citron::SetupStartup::ConfigurationExists(
+            Common::FS::GetCitronPath(Common::FS::CitronPath::ConfigDir) /
+            (config_name + ".ini"));
+    }
     Initialize(config_name);
     if (config_type != ConfigType::InputProfile) {
         ReadQtValues();

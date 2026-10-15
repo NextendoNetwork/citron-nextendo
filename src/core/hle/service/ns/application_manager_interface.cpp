@@ -1,9 +1,14 @@
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/nextendo_account.h"
+#include <mutex>
 #include "core/file_sys/common_funcs.h"
+#include "core/file_sys/errors.h"
 #include "core/file_sys/nca_metadata.h"
+#include "core/file_sys/patch_manager.h"
 #include "core/file_sys/registered_cache.h"
+#include "core/file_sys/savedata_factory.h"
 #include "core/hle/service/cmif_serialization.h"
 #include "core/hle/service/filesystem/filesystem.h"
 #include "core/hle/service/ns/application_manager_interface.h"
@@ -12,6 +17,52 @@
 #include "core/hle/service/ns/read_only_application_control_data_interface.h"
 
 namespace Service::NS {
+
+namespace {
+std::mutex content_event_mutex;
+std::vector<std::pair<Core::System*, IApplicationManagerInterface*>> content_event_services;
+}
+
+void NotifyApplicationContentChanged(Core::System& system) {
+    InvalidateApplicationControlCache();
+    std::scoped_lock lock{content_event_mutex};
+    for (const auto& [owner, service] : content_event_services) {
+        if (owner == &system) service->NotifyContentChanged();
+    }
+}
+
+// qlaunch's command 4042 consumes a copy event and an IAsyncResult session.
+// Until the underlying operation is implemented, complete with an error instead
+// of reporting success with missing handles and leaving its waiter stranded.
+class IVirtualCardRequestResult final : public ServiceFramework<IVirtualCardRequestResult> {
+public:
+    explicit IVirtualCardRequestResult(Core::System& system_)
+        : ServiceFramework{system_, "IAsyncResult"}, context{system_, "VirtualCardRequest"},
+          completion{context} {
+        static const FunctionInfo functions[] = {
+            {0, D<&IVirtualCardRequestResult::Get>, "Get"},
+            {1, D<&IVirtualCardRequestResult::Cancel>, "Cancel"},
+            {2, D<&IVirtualCardRequestResult::GetErrorContext>, "GetErrorContext"},
+        };
+        RegisterHandlers(functions);
+        completion.Signal();
+    }
+
+    Kernel::KReadableEvent* GetCompletionEvent() { return completion.GetHandle(); }
+
+private:
+    Result Get() {
+        LOG_WARNING(Service_NS, "Virtual card request completed: operation unavailable");
+        R_RETURN(ResultUnknown);
+    }
+    Result Cancel() { R_SUCCEED(); }
+    Result GetErrorContext(OutBuffer<BufferAttr_HipcMapAlias> out_context) {
+        std::fill(out_context.begin(), out_context.end(), 0);
+        R_SUCCEED();
+    }
+    KernelHelpers::ServiceContext context;
+    Event completion;
+};
 
 IApplicationManagerInterface::IApplicationManagerInterface(Core::System& system_)
 
@@ -26,7 +77,7 @@ IApplicationManagerInterface::IApplicationManagerInterface(Core::System& system_
         {0, D<&IApplicationManagerInterface::ListApplicationRecord>, "ListApplicationRecord"},
         {1, D<&IApplicationManagerInterface::GenerateApplicationRecordCount>, "GenerateApplicationRecordCount"},
         {2, D<&IApplicationManagerInterface::GetApplicationRecordUpdateSystemEvent>, "GetApplicationRecordUpdateSystemEvent"},
-        {3, nullptr, "GetApplicationViewDeprecated"},
+        {3, D<&IApplicationManagerInterface::GetApplicationViewDeprecated>, "GetApplicationViewDeprecated"},
         {4, nullptr, "DeleteApplicationEntity"},
         {5, nullptr, "DeleteApplicationCompletely"},
         {6, nullptr, "IsAnyApplicationEntityRedundant"},
@@ -111,7 +162,7 @@ IApplicationManagerInterface::IApplicationManagerInterface(Core::System& system_
         {210, nullptr, "DeleteUserSystemSaveData"},
         {211, nullptr, "DeleteSaveData"},
         {220, nullptr, "UnregisterNetworkServiceAccount"},
-        {221, nullptr, "UnregisterNetworkServiceAccountWithUserSaveDataDeletion"},
+        {221, D<&IApplicationManagerInterface::UnregisterNetworkServiceAccountWithUserSaveDataDeletion>, "UnregisterNetworkServiceAccountWithUserSaveDataDeletion"},
         {300, D<&IApplicationManagerInterface::GetApplicationShellEvent>, "GetApplicationShellEvent"},
         {301, D<&IApplicationManagerInterface::PopApplicationShellEventInfo>, "PopApplicationShellEventInfo"},
         {302, nullptr, "LaunchLibraryApplet"},
@@ -140,7 +191,7 @@ IApplicationManagerInterface::IApplicationManagerInterface(Core::System& system_
         {509, nullptr, "ListApplicationIdOnGameCard"},
         {510, nullptr, "GetGameCardPlatformRegion"},
         {600, D<&IApplicationManagerInterface::CountApplicationContentMeta>, "CountApplicationContentMeta"},
-        {601, nullptr, "ListApplicationContentMetaStatus"},
+        {601, D<&IApplicationManagerInterface::ListApplicationContentMetaStatus>, "ListApplicationContentMetaStatus"},
         {602, D<&IApplicationManagerInterface::ListAvailableAddOnContent>, "ListAvailableAddOnContent"},
 
         {603, nullptr, "GetOwnedApplicationContentMetaStatus"},
@@ -209,12 +260,12 @@ IApplicationManagerInterface::IApplicationManagerInterface(Core::System& system_
         {1600, nullptr, "GetSystemSeedForPseudoDeviceId"},
         {1601, nullptr, "ResetSystemSeedForPseudoDeviceId"},
         {1700, nullptr, "ListApplicationDownloadingContentMeta"},
-        {1701, D<&IApplicationManagerInterface::GetApplicationView>, "GetApplicationView"},
+        {1701, D<&IApplicationManagerInterface::GetApplicationViewLegacy>, "GetApplicationView"},
         {1702, nullptr, "GetApplicationDownloadTaskStatus"},
         {1703, nullptr, "GetApplicationViewDownloadErrorContext"},
         {1704, D<&IApplicationManagerInterface::GetApplicationViewWithPromotionInfo>, "GetApplicationViewWithPromotionInfo"},
         {1705, nullptr, "IsPatchAutoDeletableApplication"},
-        {1706, D<&IApplicationManagerInterface::GetApplicationViewDeprecated>, "GetApplicationView"},
+        {1706, D<&IApplicationManagerInterface::GetApplicationView>, "GetApplicationView"},
         {1800, nullptr, "IsNotificationSetupCompleted"},
         {1801, nullptr, "GetLastNotificationInfoCount"},
         {1802, nullptr, "ListLastNotificationInfo"},
@@ -404,9 +455,30 @@ IApplicationManagerInterface::IApplicationManagerInterface(Core::System& system_
     // clang-format on
 
     RegisterHandlers(functions);
+    std::scoped_lock lock{content_event_mutex};
+    content_event_services.emplace_back(&system, this);
 }
 
-IApplicationManagerInterface::~IApplicationManagerInterface() = default;
+IApplicationManagerInterface::~IApplicationManagerInterface() {
+    std::scoped_lock lock{content_event_mutex};
+    std::erase_if(content_event_services, [this](const auto& entry) { return entry.second == this; });
+}
+
+void IApplicationManagerInterface::NotifyContentChanged() {
+    record_update_system_event.Signal();
+}
+
+Result IApplicationManagerInterface::UnregisterNetworkServiceAccountWithUserSaveDataDeletion(
+    Uid account_id) {
+    R_UNLESS(account_id.uuid.IsValid(), FileSys::ResultInvalidArgument);
+    // Nextendo credentials currently have no per-UID association. Do not unlink
+    // that global account as a side effect of deleting an unrelated local user.
+    R_UNLESS(!Common::NextendoAccount::IsLinked(), FileSys::ResultPermissionDenied);
+    u128 user_id{};
+    std::memcpy(user_id.data(), account_id.uuid.uuid.data(), sizeof(user_id));
+    LOG_INFO(Service_NS, "Deleting save data for the requested local, unlinked user");
+    R_RETURN(system.GetFileSystemController().GetSaveDataFactory().DeleteUserSaveDataAll(user_id));
+}
 
 Result IApplicationManagerInterface::GetApplicationControlData(
     OutBuffer<BufferAttr_HipcMapAlias> out_buffer, Out<u32> out_actual_size,
@@ -474,7 +546,11 @@ Result IApplicationManagerInterface::ListApplicationRecord(
 
         ApplicationRecord record{};
         record.application_id = game.title_id;
-        record.last_event = ApplicationEvent::Installed;
+        const bool card = cache.GetEntryOrigin(game.title_id, FileSys::ContentRecordType::Program) ==
+                          FileSys::ContentOrigin::GameCardImage;
+        record.last_event = card ? ApplicationEvent::GameCard : ApplicationEvent::Installed;
+        LOG_INFO(Service_NS, "HOME content origin: application={:016X} source={}",
+                 game.title_id, card ? "XCI/GameCard" : "digital");
         record.attributes = 0;
         record.last_updated = 1;
 
@@ -513,7 +589,8 @@ Result IApplicationManagerInterface::ListApplicationRecord(
 Result IApplicationManagerInterface::GetApplicationRecordUpdateSystemEvent(
     OutCopyHandle<Kernel::KReadableEvent> out_event) {
     LOG_DEBUG(Service_NS, "called");
-    record_update_system_event.Signal();
+    // Obtaining the event is not a content change. Signalling here causes HOME to
+    // discard and rebuild the application list immediately after its initial load.
     *out_event = record_update_system_event.GetHandle();
     R_SUCCEED();
 }
@@ -536,14 +613,15 @@ Result IApplicationManagerInterface::GetApplicationView(
     OutArray<ApplicationViewV20, BufferAttr_HipcMapAlias> out_application_views,
     InArray<u64, BufferAttr_HipcMapAlias> application_ids) {
     const auto size = std::min(out_application_views.size(), application_ids.size());
-    LOG_INFO(Service_NS, "called, size={}", application_ids.size());
+    LOG_INFO(Service_NS, "called (v20), requested={} capacity={} stride={:#x}",
+             application_ids.size(), out_application_views.size(), sizeof(ApplicationViewV20));
 
     for (size_t i = 0; i < size; i++) {
         ApplicationViewV20 view{};
         view.application_id = application_ids[i];
-        view.version = DefaultApplicationVersion;
+        view.version = FileSys::PatchManager{application_ids[i], system.GetFileSystemController(),
+                                             system.GetContentProvider()}.GetGameVersion().value_or(0);
         view.flags = DefaultApplicationViewFlags;
-        view.unk = 0;
         view.download_state = {};
         view.download_progress = {};
 
@@ -553,16 +631,32 @@ Result IApplicationManagerInterface::GetApplicationView(
     R_SUCCEED();
 }
 
+Result IApplicationManagerInterface::GetApplicationViewLegacy(
+    OutArray<ApplicationViewLegacy, BufferAttr_HipcMapAlias> out_application_views,
+    InArray<u64, BufferAttr_HipcMapAlias> application_ids) {
+    for (size_t i = 0; i < std::min(out_application_views.size(), application_ids.size()); ++i) {
+        ApplicationViewLegacy view{};
+        view.application_id = application_ids[i];
+        view.version = FileSys::PatchManager{application_ids[i], system.GetFileSystemController(),
+                                             system.GetContentProvider()}.GetGameVersion().value_or(0);
+        view.flags = DefaultApplicationViewFlags;
+        out_application_views[i] = view;
+    }
+    R_SUCCEED();
+}
+
 Result IApplicationManagerInterface::GetApplicationViewDeprecated(
     OutArray<ApplicationViewV19, BufferAttr_HipcMapAlias> out_application_views,
     InArray<u64, BufferAttr_HipcMapAlias> application_ids) {
     const auto size = std::min(out_application_views.size(), application_ids.size());
-    LOG_INFO(Service_NS, "called (deprecated v19), size={}", application_ids.size());
+    LOG_INFO(Service_NS, "called (legacy), requested={} capacity={} stride={:#x}",
+             application_ids.size(), out_application_views.size(), sizeof(ApplicationViewV19));
 
     for (size_t i = 0; i < size; i++) {
         ApplicationViewV19 view{};
         view.application_id = application_ids[i];
-        view.version = DefaultApplicationVersion;
+        view.version = FileSys::PatchManager{application_ids[i], system.GetFileSystemController(),
+                                             system.GetContentProvider()}.GetGameVersion().value_or(0);
         view.flags = DefaultApplicationViewFlags;
 
         out_application_views[i] = view;
@@ -572,21 +666,21 @@ Result IApplicationManagerInterface::GetApplicationViewDeprecated(
 }
 
 Result IApplicationManagerInterface::GetApplicationViewWithPromotionInfo(
-    OutBuffer<BufferAttr_HipcMapAlias> out_buffer, Out<u32> out_count,
+    OutBuffer<BufferAttr_HipcMapAlias> out_buffer,
     InArray<u64, BufferAttr_HipcMapAlias> application_ids) {
     const auto requested = application_ids.size();
-    LOG_INFO(Service_NS, "called, size={}", requested);
-
     if (requested == 0 || out_buffer.size() == 0) {
-        *out_count = 0;
         return ResultSuccess;
     }
 
     const size_t expected_per_entry = out_buffer.size() / requested;
-    const bool is_fw20 = expected_per_entry >= (sizeof(ApplicationViewV20) + sizeof(PromotionInfo));
-
-    const size_t per_entry_size = is_fw20 ? (sizeof(ApplicationViewV20) + sizeof(PromotionInfo))
-                                          : (sizeof(ApplicationViewV19) + sizeof(PromotionInfo));
+    const bool is_fw20 = expected_per_entry >= 0x70;
+    const size_t per_entry_size = expected_per_entry >= 0x78 ? 0x78
+        : is_fw20 ? 0x70
+                  : (sizeof(ApplicationViewV19) + sizeof(PromotionInfo));
+    LOG_INFO(Service_NS, "called, requested={} output_bytes={} stride={:#x}",
+             requested, out_buffer.size(), per_entry_size);
+    std::fill(out_buffer.begin(), out_buffer.end(), 0);
     const size_t capacity_entries = out_buffer.size() / per_entry_size;
     const size_t to_write_entries = std::min(requested, capacity_entries);
 
@@ -594,21 +688,21 @@ Result IApplicationManagerInterface::GetApplicationViewWithPromotionInfo(
     for (size_t i = 0; i < to_write_entries; ++i) {
         ApplicationViewWithPromotionData data{};
         data.view.application_id = application_ids[i];
-        data.view.version = DefaultApplicationVersion;
-        data.view.unk = 0;
+        data.view.version = FileSys::PatchManager{application_ids[i], system.GetFileSystemController(),
+                                                  system.GetContentProvider()}.GetGameVersion().value_or(0);
         data.view.flags = DefaultApplicationViewFlags;
         data.view.download_state = {};
         data.view.download_progress = {};
         data.promotion = {};
 
-        const size_t written = WriteApplicationViewWithPromotion(dst, out_buffer.size() - (dst - out_buffer.data()), data, is_fw20);
+        const size_t written = WriteApplicationViewWithPromotion(dst,
+            out_buffer.size() - (dst - out_buffer.data()), data, is_fw20, per_entry_size);
         if (written == 0) {
             break;
         }
         dst += written;
     }
 
-    *out_count = static_cast<u32>(dst - out_buffer.data()) / static_cast<u32>(per_entry_size);
     R_SUCCEED();
 }
 
@@ -715,7 +809,9 @@ Result IApplicationManagerInterface::GetApplicationRecord(Out<ApplicationRecord>
     if (cache.HasEntry(application_id, FileSys::ContentRecordType::Program)) {
         ApplicationRecord record{};
         record.application_id = application_id;
-        record.last_event = ApplicationEvent::Installed;
+        record.last_event = cache.GetEntryOrigin(application_id, FileSys::ContentRecordType::Program) ==
+                            FileSys::ContentOrigin::GameCardImage
+                                ? ApplicationEvent::GameCard : ApplicationEvent::Installed;
         record.attributes = 0;
         record.last_updated = 1;
 
@@ -749,9 +845,13 @@ Result IApplicationManagerInterface::Cmd4023(Out<u64> out_result) {
     R_SUCCEED();
 }
 
-Result IApplicationManagerInterface::Cmd4042(Out<u64> out_result) {
-    LOG_DEBUG(Service_NS, "(STUBBED) called [20.0.0+]");
-    *out_result = 0;
+Result IApplicationManagerInterface::Cmd4042(
+    OutCopyHandle<Kernel::KReadableEvent> out_event,
+    Out<SharedPointer<IVirtualCardRequestResult>> out_result, Uid account_id) {
+    LOG_INFO(Service_NS, "Virtual card request: returning completed error event and result session");
+    auto result = std::make_shared<IVirtualCardRequestResult>(system);
+    *out_event = result->GetCompletionEvent();
+    *out_result = std::move(result);
     R_SUCCEED();
 }
 
@@ -761,25 +861,66 @@ Result IApplicationManagerInterface::Cmd4088(Out<u64> out_result) {
     R_SUCCEED();
 }
 
+std::vector<ApplicationContentMetaStatus> GetApplicationContentMetaInventory(
+    Core::System& system, u64 application_id) {
+    const auto base_id = FileSys::GetBaseTitleID(application_id);
+    const auto& cache = system.GetContentProviderUnion();
+    std::map<u64, ApplicationContentMetaStatus> unique;
+    for (const auto title_type : {FileSys::TitleType::Application, FileSys::TitleType::Update,
+                                  FileSys::TitleType::AOC}) {
+      for (const auto& [slot, entry] : cache.ListEntriesFilterOrigin(std::nullopt, title_type)) {
+        if (FileSys::GetBaseTitleID(entry.title_id) != base_id) {
+            continue;
+        }
+        const auto* provider = cache.GetSlotProvider(slot);
+        if (!provider) {
+            continue;
+        }
+        const auto version = provider->GetEntryVersion(entry.title_id).value_or(0);
+        const auto existing = unique.find(entry.title_id);
+        if (existing != unique.end() && existing->second.version >= version) {
+            continue;
+        }
+        FileSys::StorageId storage = FileSys::StorageId::SdCard;
+        if (provider->GetEntryOrigin(entry.title_id, FileSys::ContentRecordType::Program) ==
+            FileSys::ContentOrigin::GameCardImage) {
+            storage = FileSys::StorageId::GameCard;
+        } else if (slot == FileSys::ContentProviderUnionSlot::UserNAND) {
+            storage = FileSys::StorageId::NandUser;
+        } else if (slot == FileSys::ContentProviderUnionSlot::SysNAND) {
+            storage = FileSys::StorageId::NandSystem;
+        }
+        unique[entry.title_id] = {static_cast<u8>(title_type), storage, 0, 0,
+                                  version, entry.title_id};
+      }
+    }
+    std::vector<ApplicationContentMetaStatus> result;
+    for (const auto& [id, entry] : unique) {
+        result.push_back(entry);
+    }
+    return result;
+}
+
 Result IApplicationManagerInterface::CountApplicationContentMeta(Out<u32> out_count,
                                                                  u64 application_id) {
-    LOG_DEBUG(Service_NS, "called, application_id={:016X}", application_id);
+    *out_count = static_cast<u32>(GetApplicationContentMetaInventory(system, application_id).size());
+    LOG_INFO(Service_NS, "application={:016X}, content_meta_count={}", application_id, *out_count);
+    R_SUCCEED();
+}
 
-    const auto& cache = system.GetContentProviderUnion();
-    const auto installed_aocs = cache.ListEntriesFilterOrigin(std::nullopt, FileSys::TitleType::AOC,
-                                                              FileSys::ContentRecordType::Data);
-
-    u32 count = 0;
-    for (const auto& [slot, aoc] : installed_aocs) {
-        if (FileSys::GetBaseTitleID(aoc.title_id) == application_id) {
-            count++;
-        }
+Result IApplicationManagerInterface::ListApplicationContentMetaStatus(
+    OutArray<ApplicationContentMetaStatus, BufferAttr_HipcMapAlias> out_entries,
+    Out<s32> out_count, s32 offset, u64 application_id) {
+    *out_count = 0;
+    R_UNLESS(offset >= 0, ResultUnknown);
+    const auto inventory = GetApplicationContentMetaInventory(system, application_id);
+    if (static_cast<size_t>(offset) < inventory.size()) {
+        const auto count = std::min(out_entries.size(), inventory.size() - offset);
+        std::copy_n(inventory.begin() + offset, count, out_entries.begin());
+        *out_count = static_cast<s32>(count);
     }
-
-    LOG_DEBUG(Service_NS, "CountApplicationContentMeta found {} AOCS for app {:016X}", count,
-              application_id);
-
-    *out_count = count;
+    LOG_INFO(Service_NS, "application={:016X}, offset={}, returned={}, total={}",
+             application_id, offset, *out_count, inventory.size());
     R_SUCCEED();
 }
 
@@ -814,6 +955,7 @@ Result IApplicationManagerInterface::ListAvailableAddOnContent(
     }
 
     std::sort(aocs.begin(), aocs.end());
+    aocs.erase(std::unique(aocs.begin(), aocs.end()), aocs.end());
 
     size_t i = 0;
     const size_t start = static_cast<size_t>(std::max<u32>(0, offset));

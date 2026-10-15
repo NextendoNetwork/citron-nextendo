@@ -109,7 +109,9 @@ void NextendoToast::Show(const QString& headline, const QString& detail,
     const bool minimized = main_window->isMinimized() ||
                            (main_window->windowHandle() &&
                             main_window->windowHandle()->visibility() == QWindow::Minimized);
-    if (minimized || !qApp->activeWindow()) {
+    // A second emulator (or another app) may have focus when an invitation
+    // arrives. Do not silently consume that invitation without showing it.
+    if (minimized || (!qApp->activeWindow() && kind_ != Kind::GameInvite)) {
         return;
     }
     // A pending game invite isn't replaced by a passive notification.

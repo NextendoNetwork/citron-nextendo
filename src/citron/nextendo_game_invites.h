@@ -32,7 +32,7 @@ public:
 
 signals:
     void Changed();
-    // A new invite for the game that is running right now.
+    // A new invitation, including while HOME is displayed.
     void Received(QString id, QString sender_name, u64 sender_pid);
 
 private:
@@ -46,4 +46,6 @@ private:
     std::map<u64, std::string> avatars;
     u64 generation{};
     bool fetching{};
+    QString launching_invitation;
+    u64 launching_generation{};
 };

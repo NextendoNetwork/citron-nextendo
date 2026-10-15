@@ -9,11 +9,15 @@
 namespace Core {
 class System;
 }
+namespace Kernel {
+class KEvent;
+}
 
 namespace Service::Friend {
 
 class Module final {
 public:
+    Kernel::KEvent* invitation_deferral_event{};
     class Interface : public ServiceFramework<Interface> {
     public:
         explicit Interface(std::shared_ptr<Module> module_, Core::System& system_,

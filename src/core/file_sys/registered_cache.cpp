@@ -1021,6 +1021,17 @@ VirtualFile ContentProviderUnion::GetEntryRaw(u64 title_id, ContentRecordType ty
     return nullptr;
 }
 
+ContentOrigin ContentProviderUnion::GetEntryOrigin(u64 title_id, ContentRecordType type) const {
+    std::shared_lock lock{providers_mutex};
+    // Match GetEntryRaw's provider precedence, including duplicate installed copies.
+    for (const auto& [slot, provider] : providers) {
+        if (provider && provider->GetEntryRaw(title_id, type)) {
+            return provider->GetEntryOrigin(title_id, type);
+        }
+    }
+    return ContentOrigin::Unknown;
+}
+
 std::unique_ptr<NCA> ContentProviderUnion::GetEntry(u64 title_id, ContentRecordType type) const {
     std::shared_lock lock{providers_mutex};
     for (const auto& provider : providers) {
@@ -1122,14 +1133,18 @@ std::vector<ExternalUpdateEntry> ContentProviderUnion::ListExternalUpdateVersion
 ManualContentProvider::~ManualContentProvider() = default;
 
 void ManualContentProvider::AddEntry(TitleType title_type, ContentRecordType content_type,
-                                     u64 title_id, VirtualFile file) {
+                                     u64 title_id, VirtualFile file, ContentOrigin origin) {
+    std::unique_lock lock{entries_mutex};
     entries.insert_or_assign({title_type, content_type, title_id}, file);
+    origins.insert_or_assign({title_type, content_type, title_id}, origin);
 }
 
 void ManualContentProvider::AddEntryWithVersion(TitleType title_type,
                                                 ContentRecordType content_type, u64 title_id,
                                                 u32 version, const std::string& version_string,
                                                 VirtualFile file) {
+    std::unique_lock lock{entries_mutex};
+    origins.insert_or_assign({title_type, content_type, title_id}, ContentOrigin::Unknown);
     if (title_type == TitleType::Update) {
         auto it = std::find_if(multi_version_entries.begin(), multi_version_entries.end(),
                                [title_id, version](const ExternalUpdateEntry& entry) {
@@ -1167,8 +1182,18 @@ void ManualContentProvider::AddEntryWithVersion(TitleType title_type,
 }
 
 void ManualContentProvider::ClearAllEntries() {
+    std::unique_lock lock{entries_mutex};
     entries.clear();
+    origins.clear();
     multi_version_entries.clear();
+}
+
+void ManualContentProvider::ReplaceEntriesFrom(ManualContentProvider& snapshot) {
+    if (this == &snapshot) return;
+    std::scoped_lock lock{entries_mutex, snapshot.entries_mutex};
+    entries.swap(snapshot.entries);
+    origins.swap(snapshot.origins);
+    multi_version_entries.swap(snapshot.multi_version_entries);
 }
 
 void ManualContentProvider::Refresh() {}
@@ -1178,6 +1203,19 @@ bool ManualContentProvider::HasEntry(u64 title_id, ContentRecordType type) const
 }
 
 std::optional<u32> ManualContentProvider::GetEntryVersion(u64 title_id) const {
+    const auto file = GetEntryRaw(title_id, ContentRecordType::Meta);
+    if (file) {
+        const NCA meta{file};
+        if (meta.GetStatus() == Loader::ResultStatus::Success) {
+            for (const auto& dir : meta.GetSubdirectories()) {
+                for (const auto& cnmt_file : dir->GetFiles()) {
+                    if (cnmt_file->GetExtension() != "cnmt") continue;
+                    const CNMT cnmt{cnmt_file};
+                    if (cnmt.GetTitleID() == title_id) return cnmt.GetTitleVersion();
+                }
+            }
+        }
+    }
     return std::nullopt;
 }
 
@@ -1186,6 +1224,7 @@ VirtualFile ManualContentProvider::GetEntryUnparsed(u64 title_id, ContentRecordT
 }
 
 VirtualFile ManualContentProvider::GetEntryRaw(u64 title_id, ContentRecordType type) const {
+    std::shared_lock lock{entries_mutex};
     const auto iter =
         std::find_if(entries.begin(), entries.end(), [title_id, type](const auto& entry) {
             const auto content_type = std::get<1>(entry.first);
@@ -1195,6 +1234,16 @@ VirtualFile ManualContentProvider::GetEntryRaw(u64 title_id, ContentRecordType t
     if (iter == entries.end())
         return nullptr;
     return iter->second;
+}
+
+ContentOrigin ManualContentProvider::GetEntryOrigin(u64 title_id, ContentRecordType type) const {
+    std::shared_lock lock{entries_mutex};
+    const auto entry = std::find_if(entries.begin(), entries.end(), [=](const auto& item) {
+        return std::get<1>(item.first) == type && std::get<2>(item.first) == title_id;
+    });
+    if (entry == entries.end() || !entry->second) return ContentOrigin::Unknown;
+    const auto origin = origins.find(entry->first);
+    return origin == origins.end() ? ContentOrigin::Unknown : origin->second;
 }
 
 std::unique_ptr<NCA> ManualContentProvider::GetEntry(u64 title_id, ContentRecordType type) const {
@@ -1207,6 +1256,7 @@ std::unique_ptr<NCA> ManualContentProvider::GetEntry(u64 title_id, ContentRecord
 std::vector<ContentProviderEntry> ManualContentProvider::ListEntriesFilter(
     std::optional<TitleType> title_type, std::optional<ContentRecordType> record_type,
     std::optional<u64> title_id) const {
+    std::shared_lock lock{entries_mutex};
     std::vector<ContentProviderEntry> out;
 
     for (const auto& entry : entries) {

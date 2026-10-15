@@ -30,6 +30,7 @@ public:
                               QWidget* parent = nullptr);
     ~ConfigureHotkeys() override;
 
+    void SelectHomebrewShortcut();
     void ApplyConfiguration();
 
     /**

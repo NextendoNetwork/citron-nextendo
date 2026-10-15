@@ -125,7 +125,7 @@ public:
     void WriteBlockUnsafe(DAddr address, const void* src_pointer, size_t size);
 
     Asid RegisterProcess(Memory::Memory* memory);
-    void UnregisterProcess(Asid id);
+    void UnregisterProcess(Asid id, bool reuse_id = true);
 
     void UpdatePagesCachedCount(DAddr addr, size_t size, s32 delta);
 

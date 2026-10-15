@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: Copyright 2025 citron Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdlib>
 #include <random>
+#include "common/logging.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
 #include "core/arm/dynarmic/arm_dynarmic.h"
@@ -88,9 +90,18 @@ Result TerminateChildren(KernelCore& kernel, KProcess* process,
             cur_child->Close();
         };
 
+        const bool trace_mypage = process->GetProgramId() == 0x0100000000001013ULL;
+        if (trace_mypage) {
+            LOG_INFO(Kernel, "MyPage termination waiting: process={} thread={} state={}",
+                     process->GetProcessId(), cur_child->GetThreadId(),
+                     static_cast<u32>(cur_child->GetState()));
+        }
         if (const Result terminate_result = cur_child->Terminate();
             ResultTerminationRequested == terminate_result) {
             R_THROW(terminate_result);
+        }
+        if (trace_mypage) {
+            LOG_INFO(Kernel, "MyPage termination completed: thread={}", cur_child->GetThreadId());
         }
     }
 
@@ -140,6 +151,9 @@ void KProcess::Finalize() {
     const size_t used_memory_size = this->GetUsedNonSystemUserPhysicalMemorySize();
 
     // Finalize the page table.
+    // GPU cache eviction can outlive an applet's last frame. Drain its current
+    // callback and detach the table before Finalize destroys the page entries.
+    m_memory.DetachPageTable();
     m_page_table.Finalize();
 
     // Finish using our system resource.
@@ -546,7 +560,7 @@ void KProcess::Exit() {
     GetCurrentThread(m_kernel).Exit();
 }
 
-Result KProcess::Terminate() {
+Result KProcess::Terminate(bool defer_cleanup) {
     // Determine whether we need to start terminating.
     bool needs_terminate = false;
     {
@@ -567,6 +581,14 @@ Result KProcess::Terminate() {
 
     // If we need to terminate, do so.
     if (needs_terminate) {
+        // A service handling the target's own exit request must return before
+        // waiting for that process's IPC client threads to finish. Otherwise
+        // the server waits for the client while the client waits for its reply.
+        if (defer_cleanup) {
+            m_kernel.WorkerTaskManager().AddTask(m_kernel, KWorkerTaskManager::WorkerType::Exit,
+                                               this);
+            R_SUCCEED();
+        }
         // Start termination.
         if (R_SUCCEEDED(this->StartTermination())) {
             // Finish termination.
@@ -1173,7 +1195,16 @@ KProcess::~KProcess() = default;
 Result KProcess::LoadFromMetadata(const FileSys::ProgramMetadata& metadata, std::size_t code_size,
                                   KProcessAddress aslr_space_start, bool is_hbl) {
     // Create a resource limit for the process.
-    const auto pool = static_cast<KMemoryManager::Pool>(metadata.GetPoolPartition());
+    // The extracted hbl NSP normally carries application metadata. When launched
+    // through the opt-in Album bridge it replaces a library applet instead.
+    // hbloader queries IsApplication to select libnx's launch/exit contract.
+    const bool album_hbloader = is_hbl && m_kernel.System().IsQLaunchSession() &&
+                                std::getenv("CITRON_HOMEBREW_ALBUM");
+    const auto pool = album_hbloader ? KMemoryManager::Pool::Applet
+                                   : static_cast<KMemoryManager::Pool>(metadata.GetPoolPartition());
+    if (album_hbloader) {
+        LOG_INFO(Kernel, "HOME hbloader uses library-applet memory pool and exit contract");
+    }
     const auto physical_memory_size = m_kernel.MemoryManager().GetSize(pool);
     auto* res_limit =
         Kernel::CreateResourceLimitForProcess(m_kernel.System(), physical_memory_size);

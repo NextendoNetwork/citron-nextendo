@@ -3,9 +3,11 @@
 
 #pragma once
 
+#include <mutex>
 #include "common/common_types.h"
 #include "common/quaternion.h"
 #include "common/typed_address.h"
+#include "core/hle/kernel/k_transfer_memory.h"
 #include "hid_core/resources/controller_base.h"
 #include "hid_core/resources/ring_lifo.h"
 
@@ -33,7 +35,7 @@ public:
     void OnUpdate(const Core::Timing::CoreTiming& core_timing) override;
 
     // Called on InitializeSevenSixAxisSensor
-    void SetTransferMemoryAddress(Common::ProcessAddress t_mem);
+    void SetTransferMemory(Kernel::KTransferMemory* t_mem);
 
     // Called on ResetSevenSixAxisSensorTimestamp
     void ResetTimestamp();
@@ -57,7 +59,8 @@ private:
     u64 last_global_timestamp{};
 
     SevenSixAxisState next_seven_sixaxis_state{};
-    Common::ProcessAddress transfer_memory{};
+    std::mutex transfer_memory_mutex;
+    Kernel::KScopedAutoObject<Kernel::KTransferMemory> transfer_memory;
     Core::HID::EmulatedConsole* console = nullptr;
 
     Core::System& system;

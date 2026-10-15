@@ -4,6 +4,7 @@
 // Parts of this implementation were based on:
 // https://cs.android.com/android/platform/superproject/+/android-5.1.1_r38:frameworks/native/libs/gui/BufferQueueProducer.cpp
 
+#include <cstdlib>
 #include "common/assert.h"
 #include "common/settings.h"
 #include "core/hle/kernel/k_event.h"
@@ -436,6 +437,9 @@ Status BufferQueueProducer::AttachBuffer(s32* out_slot,
 }
 
 Status BufferQueueProducer::QueueBuffer(s32 slot, const QueueBufferInput& input, QueueBufferOutput* output) {
+    if (std::getenv("CITRON_HOMEBREW_ALBUM") && homebrew_diag_queues++ < 4) {
+        LOG_INFO(Service_VI, "HOME producer queue frame={} slot={}", homebrew_diag_queues, slot);
+    }
     s64 timestamp{};
     bool is_auto_timestamp{};
     Common::Rectangle<s32> crop;

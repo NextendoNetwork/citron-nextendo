@@ -459,6 +459,11 @@ public:
      */
     void RegisterExitCallback(ExitCallback&& callback);
 
+    /// Registers a frontend restart, distinct from stopping emulation.
+    void RegisterRebootCallback(ExitCallback&& callback);
+    /// Requests one restart per loaded session. False if the frontend has no handler.
+    bool Reboot();
+
     /// Instructs the frontend to exit the application.
     void Exit();
 

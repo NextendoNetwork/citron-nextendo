@@ -9,6 +9,9 @@
 #include <ctime>
 #include <random>
 #include "citron/theme.h"
+#include "common/memory_detect.h"
+#include "citron/bcat_cache_tools.h"
+#include "citron/setup_startup.h"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -17,7 +20,20 @@
 #include <memory>
 #include <string_view>
 #include <thread>
+#include <QCheckBox>
+#include <QCryptographicHash>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QSaveFile>
+#include <QTemporaryDir>
+#include "citron/util/temporary_directory.h"
+#include <QDirIterator>
+#include <QSignalBlocker>
+#include "core/internal_network/network_interface.h"
 #include "core/hle/service/am/applet_manager.h"
+#include "core/hle/service/am/applet.h"
+#include "core/hle/service/am/window_system.h"
 #include "core/loader/nca.h"
 #include "core/tools/renderdoc.h"
 
@@ -49,6 +65,9 @@
 #include "applets/qt_software_keyboard.h"
 #include "applets/qt_web_browser.h"
 #include "citron/custom_metadata.h"
+#include "citron/discord_presence.h"
+#include "network/network.h"
+#include "network/room_member.h"
 #include "citron/multiplayer/state.h"
 #include "citron/util/controller_navigation.h"
 #include "common/hex_util.h"
@@ -99,6 +118,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include <QDialogButtonBox>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QDirIterator>
 #include <QFutureWatcher>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -118,6 +138,8 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include <QSysInfo>
 #include <QSettings>
 #include <QToolTip>
+#include <QWizard>
+#include <QWizardPage>
 #include <QUrl>
 #include <QtConcurrent/QtConcurrent>
 #include "citron/applets/qt_friend_invitation.h"
@@ -133,7 +155,6 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "common/fs/path_util.h"
 #include "common/literals.h"
 #include "common/logging.h"
-#include "common/memory_detect.h"
 #include "common/scm_rev.h"
 #include "common/scope_exit.h"
 
@@ -507,7 +528,25 @@ GMainWindow::GMainWindow(std::unique_ptr<QtConfig> config_, bool has_broken_vulk
     RemoveCachedContents();
 
     // Gen keys if necessary
-    OnCheckFirmwareDecryption();
+    const bool has_game_folder = std::any_of(
+        UISettings::values.game_dirs.begin(), UISettings::values.game_dirs.end(),
+        [](const auto& dir) {
+            return dir.path != "SDMC" && dir.path != "UserNAND" && dir.path != "SysNAND";
+        });
+    const bool existing_configuration = config->HadConfigurationAtStartup();
+    if (existing_configuration && !UISettings::values.setup_wizard_seen.GetValue()) {
+        // Migrate users of releases that predate the wizard, in the active data
+        // directory (Roaming by default on Windows), without restarting setup.
+        UISettings::values.setup_wizard_seen = true;
+        UISettings::values.setup_resume = false;
+        config->SaveAllValues();
+    }
+    const bool offer_setup = Citron::SetupStartup::ShouldOffer(
+        existing_configuration, UISettings::values.setup_wizard_seen.GetValue(),
+        ContentManager::AreKeysPresent(), CheckFirmwarePresence(), has_game_folder);
+    if (!offer_setup) {
+        OnCheckFirmwareDecryption();
+    }
 
     game_list->LoadCompatibilityList();
     game_list->PopulateAsync(UISettings::values.game_dirs);
@@ -521,8 +560,9 @@ GMainWindow::GMainWindow(std::unique_ptr<QtConfig> config_, bool has_broken_vulk
     // gets refreshed instead of being treated as "done" forever after the first successful run.
     if (!has_performed_bcat_autodownload && NextendoByamlDownloadEnabled()) {
         has_performed_bcat_autodownload = true;
-        static constexpr std::array<u64, 3> kByamlTitles{
+        static constexpr std::array<u64, 4> kByamlTitles{
             0x0100f8f0000a2000ULL, 0x01003bc0000a0000ULL, 0x01003c700009c800ULL,
+            0x0100C2500FC20000ULL,
         };
         for (const u64 title_id : kByamlTitles) {
             if (!NextendoByamlSkipped(title_id)) {
@@ -582,7 +622,19 @@ GMainWindow::GMainWindow(std::unique_ptr<QtConfig> config_, bool has_broken_vulk
 
     SetupPrepareForSleep();
 
+    // A complete existing installation keeps its normal launch flow. A pristine
+    // interactive launch gets guidance before the missing-components warnings.
+    if (QApplication::arguments().size() == 1 &&
+        offer_setup) {
+        QTimer::singleShot(0, this, &GMainWindow::OnSetupWizard);
+    }
+
     QStringList args = QApplication::arguments();
+
+    if (args.contains(QStringLiteral("--setup-wizard"))) {
+        QTimer::singleShot(0, this, &GMainWindow::OnSetupWizard);
+        return;
+    }
 
     if (args.size() < 2) {
         return;
@@ -591,6 +643,7 @@ GMainWindow::GMainWindow(std::unique_ptr<QtConfig> config_, bool has_broken_vulk
     QString game_path;
     bool has_gamepath = false;
     bool is_fullscreen = false;
+    bool start_home_menu = false;
 
     for (int i = 1; i < args.size(); ++i) {
         // Preserves drag/drop functionality
@@ -598,6 +651,11 @@ GMainWindow::GMainWindow(std::unique_ptr<QtConfig> config_, bool has_broken_vulk
             game_path = args[1];
             has_gamepath = true;
             break;
+        }
+
+        if (args[i] == QStringLiteral("--home-menu")) {
+            start_home_menu = true;
+            continue;
         }
 
         // Launch game in fullscreen mode
@@ -671,6 +729,12 @@ GMainWindow::GMainWindow(std::unique_ptr<QtConfig> config_, bool has_broken_vulk
                 ui->action_Fullscreen->setChecked(is_fullscreen);
             }
             BootGame(game_path, ApplicationAppletParameters());
+        });
+    } else if (start_home_menu) {
+        // Use the same firmware checks and applet parameters as Tools → HOME.
+        QTimer::singleShot(0, this, [this, is_fullscreen]() {
+            ui->action_Fullscreen->setChecked(is_fullscreen);
+            OnQLaunch();
         });
     }
 }
@@ -961,6 +1025,12 @@ void GMainWindow::SoftwareKeyboardExit() {
 
 void GMainWindow::WebBrowserOpenWebPage(const std::string& main_url,
                                         const std::string& additional_args, bool is_local) {
+    if (!is_local && main_url == "https://nextendo.network/compte" && additional_args.empty()) {
+        const bool opened = QDesktopServices::openUrl(QUrl(QString::fromStdString(main_url)));
+        LOG_INFO(Frontend, "Nextendo Page: external browser open={}", opened);
+        emit WebBrowserClosed(Service::AM::Frontend::WebExitReason::WindowClosed, "");
+        return;
+    }
 #ifdef CITRON_USE_QT_WEB_ENGINE
 
     // Raw input breaks with the web applet, Disable web applets if enabled
@@ -1664,6 +1734,15 @@ void GMainWindow::LinkActionShortcut(QAction* action, const QString& action_name
 
 void GMainWindow::InitializeHotkeys() {
     hotkey_registry.LoadHotkeys();
+    auto* homebrew_action = findChild<QAction*>(QStringLiteral("openHomebrewMenuAction"));
+    if (!homebrew_action) {
+        homebrew_action = ui->menu_Tools->addAction(tr("Open Homebrew Menu"));
+        homebrew_action->setObjectName(QStringLiteral("openHomebrewMenuAction"));
+        connect(homebrew_action, &QAction::triggered, this, &GMainWindow::OnHomebrewMenu);
+        auto* prepare_tools = ui->menu_Tools->addAction(tr("Prepare Homebrew Tools"));
+        connect(prepare_tools, &QAction::triggered, this, &GMainWindow::OnPrepareHomebrewTools);
+    }
+    LinkActionShortcut(homebrew_action, QStringLiteral("Open Homebrew Menu"));
 
     // Link all standard menu actions
     LinkActionShortcut(ui->action_Load_File, QStringLiteral("Load File"));
@@ -2016,17 +2095,89 @@ void GMainWindow::ConnectMenuEvents() {
             &MultiplayerState::OnCreateRoom);
     connect(ui->action_Leave_Room, &QAction::triggered, multiplayer_state,
             &MultiplayerState::OnCloseRoom);
+    auto* discord_presence = new DiscordPresence(this);
+    auto* discord_action = ui->menu_NexTendo->addAction(tr("Show activity in Discord"));
+    setup_discord_action = discord_action;
+    discord_action->setCheckable(true);
+    const auto discord_config = QString::fromStdString(Common::FS::GetCitronPathString(Common::FS::CitronPath::ConfigDir)) + QStringLiteral("/discord-presence.ini");
+    discord_action->setChecked(QSettings(discord_config, QSettings::IniFormat).value(QStringLiteral("enabled"), true).toBool());
+    discord_presence->SetEnabled(discord_action->isChecked());
+    connect(discord_action, &QAction::toggled, this, [discord_presence, discord_config](bool checked) {
+        QSettings(discord_config, QSettings::IniFormat).setValue(QStringLiteral("enabled"), checked);
+        discord_presence->SetEnabled(checked);
+    });
+    auto* discord_timer = new QTimer(discord_presence);
+    discord_timer->setInterval(5000);
+    connect(discord_timer, &QTimer::timeout, this,
+            [this, discord_presence, cached_program_id = u64{}, cached_game_name = QString{}]() mutable {
+        u64 program_id = emulation_running ? play_time_manager->GetProgramId() : 0;
+        bool at_home = false;
+        if (emulation_running && system->IsQLaunchSession()) {
+            at_home = true;
+            if (auto* windows = system->GetAppletManager().GetWindowSystem()) {
+                const auto snapshot = windows->TryGetPresenceSnapshot();
+                if (!snapshot) return;
+                program_id = snapshot->program_id;
+                at_home = snapshot->at_home;
+            }
+        }
+        QString activity = tr("In the main menu");
+        if (at_home) activity = tr("On the HOME Menu");
+        else if (program_id) {
+            if (cached_program_id != program_id) {
+                const FileSys::PatchManager pm{program_id, system->GetFileSystemController(), system->GetContentProvider()};
+                const auto control = pm.GetControlMetadata().first;
+                cached_game_name = control ? QString::fromStdString(control->GetApplicationName()) : tr("Playing a game");
+                cached_program_id = program_id;
+            }
+            activity = cached_game_name;
+        }
+        QString activity_state = QStringLiteral("Citron | Nextendo");
+        if (program_id && !at_home) {
+            if (const auto member = system->GetRoomNetwork().GetRoomMember().lock();
+                member && member->IsConnected()) {
+                activity_state += tr(" · In a multiplayer room");
+            }
+        }
+        const u64 image_program_id = at_home || program_id == 0 ? 0x0100000000001000ULL : program_id;
+        const auto image_url = QString::fromStdString(fmt::format(
+            "https://nextendo.network/api/game-icon/{:016x}.jpg", image_program_id));
+        discord_presence->SetActivity(activity, activity_state, image_url);
+    });
+    discord_timer->start();
+    auto* nextendo_page = ui->menu_NexTendo->addAction(tr("Nextendo Page"));
+    connect(nextendo_page, &QAction::triggered, this, [] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://nextendo.network/compte")));
+    });
     nextendo_presence_timer.setInterval(5000);
     connect(&nextendo_presence_timer, &QTimer::timeout, this, [this] {
 #ifdef ENABLE_WEB_SERVICE
         if (!Common::NextendoAccount::IsLinked()) {
             return;
         }
-        const std::string app_id =
-            emulation_running ? fmt::format("{:016X}", play_time_manager->GetProgramId())
-                              : std::string{};
-        const std::string app_name = emulation_running ? current_game_name : std::string{};
+        u64 presence_program_id = emulation_running ? play_time_manager->GetProgramId() : 0;
+        if (emulation_running && system->IsQLaunchSession()) {
+            if (auto* windows = system->GetAppletManager().GetWindowSystem()) {
+                const auto snapshot = windows->TryGetPresenceSnapshot();
+                if (!snapshot) return;
+                presence_program_id = snapshot->program_id;
+            }
+        }
+        const std::string app_id = presence_program_id != 0
+                                      ? fmt::format("{:016X}", presence_program_id)
+                                      : std::string{};
         const bool app_id_changed = app_id != nextendo_last_pushed_app_id;
+        if (app_id_changed) {
+            nextendo_presence_app_name.clear();
+            if (presence_program_id != 0) {
+                const FileSys::PatchManager pm{presence_program_id,
+                    system->GetFileSystemController(), system->GetContentProvider()};
+                if (const auto control = pm.GetControlMetadata().first) {
+                    nextendo_presence_app_name = control->GetApplicationName();
+                }
+            }
+        }
+        const std::string app_name = nextendo_presence_app_name;
 
         s32 status = 0;
         std::string app_field;
@@ -2037,6 +2188,10 @@ void GMainWindow::ConnectMenuEvents() {
         if (!have_update) {
             status = Common::NextendoFriends::GetLocalStatus();
             app_field = Common::NextendoFriends::GetLocalAppField();
+        }
+        if (status != 0) {
+            status = presence_program_id != 0 ? Common::NextendoFriends::PresenceOnlinePlay
+                                              : Common::NextendoFriends::PresenceOnline;
         }
 
         nextendo_last_pushed_app_id = app_id;
@@ -2087,8 +2242,14 @@ void GMainWindow::ConnectMenuEvents() {
     auto* game_invites = nextendo_controller->GameInvites();
     connect(game_invites, &NextendoGameInvites::Received, this,
             [this, game_invites](const QString& id, const QString& name, u64 pid) {
-                const QString game =
-                    nextendo_controller->ResolveGameName(nextendo_controller->GetLocalAppId());
+                const auto pending = game_invites->Pending();
+                const auto invitation = std::find_if(pending.begin(), pending.end(),
+                    [&id](const auto& entry) { return entry.id == id.toStdString(); });
+                if (invitation == pending.end()) {
+                    return;
+                }
+                const QString game = nextendo_controller->ResolveGameName(
+                    fmt::format("{:016X}", invitation->title_id));
                 nextendo_toast->ShowInvite(name, tr("invited you to play %1").arg(game),
                                            game_invites->Avatar(pid), id);
             });
@@ -2133,7 +2294,7 @@ void GMainWindow::ConnectMenuEvents() {
     // fallback instead of leaving them stuck on a status bar message that vanishes in 8 seconds.
     connect(nextendo_controller, &NextendoController::SignInUrlReady, this, [this](QString url) {
         if (!nextendo_signin_dialog) {
-            nextendo_signin_dialog = new QDialog(this);
+            nextendo_signin_dialog = new QDialog(setup_wizard_window ? setup_wizard_window : this);
             nextendo_signin_dialog->setWindowTitle(tr("Sign in to Nextendo"));
             auto* layout = new QVBoxLayout(nextendo_signin_dialog);
             auto* label = new QLabel(tr("Finish signing in in your browser, then come back here.\n"
@@ -2246,6 +2407,41 @@ void GMainWindow::ConnectMenuEvents() {
 
     // Tools
     connect_menu(ui->action_Load_Home_Menu, &GMainWindow::OnQLaunch);
+    connect_menu(ui->action_Create_Home_Shortcut, [this] {
+#if defined(_WIN32) || defined(__linux__) || defined(__FreeBSD__)
+        const auto desktop = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
+#ifdef _WIN32
+        const auto filter = tr("Windows shortcut (*.lnk)");
+        const auto suffix = QStringLiteral(".lnk");
+#else
+        const auto filter = tr("Desktop shortcut (*.desktop)");
+        const auto suffix = QStringLiteral(".desktop");
+#endif
+        const auto selected = QFileDialog::getSaveFileName(
+            this, tr("Create HOME Desktop Shortcut"),
+            desktop + QStringLiteral("/Citron HOME") + suffix, filter);
+        if (selected.isEmpty()) {
+            return;
+        }
+        const QFileInfo file{selected};
+        const auto directory = std::filesystem::u8path(file.absolutePath().toUtf8().constData());
+        const auto command = std::filesystem::u8path(
+            QCoreApplication::applicationFilePath().toUtf8().constData());
+        const auto name = file.completeBaseName().toUtf8().toStdString();
+        const bool created = CreateShortcutLink(directory, "Start Citron in the HOME Menu",
+            command, command, "--home-menu -f", "Game;Emulator;Qt;", "Citron;HOME;", name);
+        if (created) {
+            QMessageBox::information(this, tr("Create HOME Desktop Shortcut"),
+                tr("Shortcut created. It starts Citron directly in the HOME Menu."));
+        } else {
+            QMessageBox::warning(this, tr("Create HOME Desktop Shortcut"),
+                tr("Could not create the shortcut in the selected folder."));
+        }
+#else
+        QMessageBox::information(this, tr("Create HOME Desktop Shortcut"),
+            tr("Desktop shortcuts are not supported on this platform."));
+#endif
+    });
     connect_menu(ui->action_Load_Album, &GMainWindow::OnAlbum);
     connect_menu(ui->action_Load_Cabinet_Nickname_Owner,
                  [this]() { OnCabinet(Service::NFP::CabinetMode::StartNicknameAndOwnerSettings); });
@@ -2271,6 +2467,8 @@ void GMainWindow::ConnectMenuEvents() {
     connect_menu(ui->action_Verify_installed_contents, &GMainWindow::OnVerifyInstalledContents);
     connect_menu(ui->action_Install_Firmware, &GMainWindow::OnInstallFirmware);
     connect_menu(ui->action_Install_Keys, &GMainWindow::OnInstallDecryptionKeys);
+    auto* setup_action = ui->menu_Tools->addAction(tr("Setup Wizard…"));
+    connect(setup_action, &QAction::triggered, this, &GMainWindow::OnSetupWizard);
     connect_menu(ui->action_Check_For_Updates, &GMainWindow::OnCheckForUpdates);
     connect_menu(ui->action_About, &GMainWindow::OnAbout);
 
@@ -2804,6 +3002,7 @@ void GMainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletP
     }
 
     // This block is only reached if LoadROM returns true.
+    current_boot_parameters = std::make_unique<Service::AM::FrontendAppletParameters>(params);
 
     system->SetShuttingDown(false);
     game_list->setDisabled(true);
@@ -2819,6 +3018,25 @@ void GMainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletP
     system->RegisterExitCallback([this] {
         emu_thread->ForceStop();
         render_window->Exit();
+    });
+
+    system->RegisterRebootCallback([this] {
+        // Keep teardown off the guest's IPC thread. Restart on the Qt thread,
+        // retaining HOME's system-applet ABI.
+        QMetaObject::invokeMethod(this, [this] {
+            if (!system->IsPoweredOn() || system->IsShuttingDown()) {
+                return;
+            }
+            const auto reboot_filename = QString(current_game_path);
+            const auto parameters = current_boot_parameters
+                                        ? *current_boot_parameters
+                                        : ApplicationAppletParameters();
+            LOG_INFO(Frontend, "Guest reboot: restarting applet id={} type={}",
+                     static_cast<u32>(parameters.applet_id),
+                     static_cast<u32>(parameters.applet_type));
+            ShutdownGame();
+            BootGame(reboot_filename, parameters);
+        }, Qt::QueuedConnection);
     });
 
     // Set up home menu callback for QLaunch support
@@ -2888,6 +3106,7 @@ void GMainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletP
                 .toBase64()
                 .toStdString();
     }
+    active_window_title_program = ~u64{0};
     UpdateWindowTitle(title_name, title_version, gpu_vendor);
 
     loading_screen->Prepare(system->GetAppLoader());
@@ -3827,6 +4046,11 @@ bool GMainWindow::CreateShortcutLink(const std::filesystem::path& shortcut_path,
         LOG_ERROR(Frontend, "Failed to create IShellLinkW instance");
         return false;
     }
+    hres = ps1->SetWorkingDirectory(command.parent_path().c_str());
+    if (FAILED(hres)) {
+        LOG_ERROR(Frontend, "Failed to set shortcut working directory");
+        return false;
+    }
     hres = ps1->SetPath(command.c_str());
     if (FAILED(hres)) {
         LOG_ERROR(Frontend, "Failed to set path");
@@ -4056,15 +4280,27 @@ void GMainWindow::OnGameListOpenDirectory(const QString& directory) {
 }
 
 void GMainWindow::OnGameListAddDirectory() {
+    AddGameDirectory(false);
+}
+
+void GMainWindow::AddGameDirectory(bool deep_scan) {
     const QString dir_path = QFileDialog::getExistingDirectory(this, tr("Select Directory"));
     if (dir_path.isEmpty()) {
         return;
     }
 
-    UISettings::GameDir game_dir{dir_path.toStdString(), false, true};
+    UISettings::GameDir game_dir{dir_path.toStdString(), deep_scan, true};
     if (!UISettings::values.game_dirs.contains(game_dir)) {
         UISettings::values.game_dirs.append(game_dir);
         game_list->PopulateAsync(UISettings::values.game_dirs);
+    } else if (deep_scan) {
+        for (auto& existing : UISettings::values.game_dirs) {
+            if (existing.path == game_dir.path && !existing.deep_scan) {
+                existing.deep_scan = true;
+                game_list->PopulateAsync(UISettings::values.game_dirs);
+                break;
+            }
+        }
     } else {
         LOG_WARNING(Frontend, "Selected directory is already in the game list");
     }
@@ -4150,9 +4386,43 @@ void GMainWindow::OnMenuInstallToNAND() {
            "Image (*.xci);;Decrypted Nintendo Submission Package (*.dnsp);;Decrypted NX "
            "Cartridge Image (*.dxci)");
 
-    QStringList filenames = QFileDialog::getOpenFileNames(
-        this, tr("Install Files"), QString::fromStdString(UISettings::values.roms_path),
-        file_filter);
+    const QStringList sources{tr("Select files"), tr("Select folder and subfolders")};
+    bool source_selected{};
+    const auto source = QInputDialog::getItem(this, tr("Install Updates and DLC"),
+                                             tr("Choose content source:"), sources, 0, false,
+                                             &source_selected);
+    if (!source_selected) {
+        return;
+    }
+    QStringList filenames;
+    if (source == sources[1]) {
+        const auto folder = QFileDialog::getExistingDirectory(
+            this, tr("Select Updates and DLC Folder"),
+            QString::fromStdString(UISettings::values.roms_path));
+        if (folder.isEmpty()) {
+            return;
+        }
+        // Do not follow directory symlinks: avoid cycles and leaving the chosen tree.
+        QDirIterator iterator(folder, QDir::Files | QDir::NoSymLinks,
+                              QDirIterator::Subdirectories);
+        while (iterator.hasNext()) {
+            const auto path = iterator.next();
+            const auto suffix = QFileInfo(path).suffix().toLower();
+            if (suffix == QStringLiteral("nsp") || suffix == QStringLiteral("nca")) {
+                filenames.append(path);
+            }
+        }
+        filenames.sort(Qt::CaseInsensitive);
+        if (filenames.isEmpty()) {
+            QMessageBox::information(this, tr("Install Updates and DLC"),
+                                     tr("No NSP or NCA files were found in this folder."));
+            return;
+        }
+    } else {
+        filenames = QFileDialog::getOpenFileNames(
+            this, tr("Install Files"), QString::fromStdString(UISettings::values.roms_path),
+            file_filter);
+    }
 
     if (filenames.isEmpty()) {
         return;
@@ -4172,7 +4442,7 @@ void GMainWindow::OnMenuInstallToNAND() {
     // Save folder location of the first selected file
     UISettings::values.roms_path = QFileInfo(filenames[0]).path().toStdString();
 
-    int remaining = filenames.size();
+    int remaining = files.size();
 
     // This would only overflow above 2^51 bytes (2.252 PB)
     int total_size = 0;
@@ -4585,8 +4855,14 @@ void GMainWindow::OnRestartGame() {
     if (ConfirmShutdownGame()) {
         // Make a copy since ShutdownGame edits game_path
         const auto current_game = QString(current_game_path);
+        const auto restart_parameters = current_boot_parameters
+                                            ? *current_boot_parameters
+                                            : ApplicationAppletParameters();
+        LOG_INFO(Frontend, "Restart preserving applet: id={} type={}",
+                 static_cast<u32>(restart_parameters.applet_id),
+                 static_cast<u32>(restart_parameters.applet_type));
         ShutdownGame();
-        BootGame(current_game, ApplicationAppletParameters());
+        BootGame(current_game, restart_parameters);
     }
 }
 
@@ -4925,6 +5201,9 @@ void GMainWindow::ResetWindowSize1080() {
     ResetWindowSize(Layout::ScreenDocked::Width, Layout::ScreenDocked::Height);
 }
 
+#include "citron/homebrew_setup.inc"
+#include "citron/setup_wizard.inc"
+
 void GMainWindow::OnConfigure() {
     m_is_configuring = true;
     const auto old_theme = UISettings::values.theme;
@@ -4941,6 +5220,10 @@ void GMainWindow::OnConfigure() {
     ConfigureDialog configure_dialog(this, hotkey_registry, input_subsystem.get(),
                                      vk_device_records, *system,
                                      !multiplayer_state->IsHostingPublicRoom());
+    if (std::exchange(setup_open_input, false)) {
+        configure_dialog.SelectInputTab();
+    }
+    if (std::exchange(setup_open_network, false)) configure_dialog.SelectNetworkTab();
     connect(&configure_dialog, &ConfigureDialog::LanguageChanged, this,
             &GMainWindow::OnLanguageChanged);
 
@@ -5888,8 +6171,14 @@ void GMainWindow::OnInstallDecryptionKeys() {
     const auto citron_keys_dir = Common::FS::GetCitronPath(Common::FS::CitronPath::KeysDir);
     for (auto key_file : source_key_files) {
         std::filesystem::path destination_key_file = citron_keys_dir / key_file.filename();
+        std::error_code copy_error;
+        if (std::filesystem::equivalent(key_file, destination_key_file, copy_error)) {
+            continue;
+        }
+        copy_error.clear();
         if (!std::filesystem::copy_file(key_file, destination_key_file,
-                                        std::filesystem::copy_options::overwrite_existing)) {
+                                       std::filesystem::copy_options::overwrite_existing,
+                                       copy_error)) {
             LOG_ERROR(Frontend, "Failed to copy file {} to {}", key_file.string(),
                       destination_key_file.string());
             QMessageBox::critical(this, tr("Decryption Keys install failed"),
@@ -6154,6 +6443,22 @@ void GMainWindow::OpenNextendoChatWindow(const QString& auto_join_room_id, u64 i
             &NextendoRoomOverlay::JoinRoom);
     connect(nextendo_room_overlay, &NextendoRoomOverlay::RoomJoined, launcher, &QDialog::accept);
     launcher->exec();
+}
+
+void GMainWindow::OnPrepareHomebrewTools() {
+    HomebrewSetup::Prepare(this, [](const auto& zip, const auto& directory) {
+        return ExtractZipToDirectory(zip, directory);
+    });
+}
+
+void GMainWindow::OnHomebrewMenu() {
+    if (!HomebrewSetup::AllReady() && !HomebrewSetup::Prepare(this,
+        [](const auto& zip, const auto& directory) { return ExtractZipToDirectory(zip, directory); }, false)) return;
+    auto* windows = system->GetAppletManager().GetWindowSystem();
+    if (!system->IsPoweredOn() || !system->IsQLaunchSession() || !windows ||
+        !windows->RequestHomebrewMenu()) {
+        statusBar()->showMessage(tr("Open HOME and close its current applet before opening Homebrew Menu."), 6000);
+    }
 }
 
 void GMainWindow::OnAlbum() {
@@ -6426,6 +6731,30 @@ void GMainWindow::UpdateStatusBar() {
     if (emu_thread == nullptr || !this->system->IsPoweredOn()) {
         status_bar_update_timer.stop();
         return;
+    }
+
+    if (emulation_running && system->IsQLaunchSession() && !system->IsShuttingDown()) {
+        if (auto* windows = system->GetAppletManager().GetWindowSystem()) {
+            if (const auto snapshot = windows->TryGetPresenceSnapshot(); snapshot &&
+                (snapshot->program_id != active_window_title_program ||
+                 snapshot->at_home != active_window_title_home)) {
+                active_window_title_program = snapshot->program_id;
+                active_window_title_home = snapshot->at_home;
+                std::string name = "HOME Menu";
+                std::string version;
+                if (!snapshot->at_home && snapshot->program_id) {
+                    const FileSys::PatchManager pm{snapshot->program_id,
+                        system->GetFileSystemController(), system->GetContentProvider()};
+                    if (const auto control = pm.GetControlMetadata().first) {
+                        name = control->GetApplicationName();
+                        version = control->GetVersionString();
+                    } else name = fmt::format("Game {:016X}", snapshot->program_id);
+                    if (auto custom = Citron::CustomMetadata::GetInstance().GetCustomTitle(snapshot->program_id))
+                        name = *custom;
+                }
+                UpdateWindowTitle(name, version, system->GPU().Renderer().GetDeviceVendor());
+            }
+        }
     }
 
     if (Settings::values.tas_enable) {
@@ -7396,6 +7725,10 @@ static void SetHighDPIAttributes() {
 #endif
 
 int main(int argc, char* argv[]) {
+    if (argc == 2 && std::string_view(argv[1]) == "--genesis-audio-diagnostic-check") {
+        std::puts("Genesis audio diagnostic build J2: Initialize / Tick / Start / Stop / Flush / stalled");
+        return 0;
+    }
     // 1. Detect Gamescope/Steam Deck hardware
     const bool is_gamescope = UISettings::IsGamescope();
 
@@ -7651,11 +7984,11 @@ bool GMainWindow::NextendoByamlRequired(u64 title_id) const {
     }
 }
 
-bool GMainWindow::NextendoByamlDownloadEnabled() const {
+bool GMainWindow::NextendoByamlDownloadEnabled() {
     return true;
 }
 
-bool GMainWindow::NextendoByamlInstalled(u64 title_id) const {
+bool GMainWindow::NextendoByamlInstalled(u64 title_id) {
     const auto bcat_dir = Common::FS::GetCitronPath(Common::FS::CitronPath::NANDDir) /
                           fmt::format("system/save/bcat/{:016X}", title_id);
     if (title_id == Nextendo::Splatoon3Bcat::TitleId) {
@@ -7785,7 +8118,9 @@ std::filesystem::path FindAtmosphereDir(const std::filesystem::path& root) {
 
 bool GMainWindow::NextendoByamlDownload(u64 title_id) {
 #ifdef ENABLE_WEB_SERVICE
-    if (!NextendoByamlDownloadEnabled()) {
+    static std::mutex download_mutex;
+    const std::scoped_lock download_lock{download_mutex};
+    if (!NextendoByamlDownloadEnabled() || Settings::values.airplane_mode.GetValue()) {
         return false;
     }
     const auto title_id_hex = fmt::format("{:016X}", title_id);
@@ -7854,16 +8189,20 @@ bool GMainWindow::NextendoByamlDownload(u64 title_id) {
         return false;
     }
 
-    // A prior download's files that aren't part of this one would otherwise linger indefinitely.
+    // Extract away from the live cache. A failed transfer/extraction must preserve it.
     std::error_code ec;
-    std::filesystem::remove_all(dest_path, ec);
-
-    const bool ok = ExtractZipToDirectory(tmp_path, dest_path);
-    std::filesystem::remove(tmp_path);
-    if (ok) {
-        NextendoByamlWriteHash(title_id_hex, server_hash);
+    const auto suffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto stage = dest_path.parent_path() / (title_id_hex + ".stage-" + suffix);
+    const auto backup = dest_path.parent_path() / (title_id_hex + ".before-" + suffix);
+    const bool extracted = ExtractZipToDirectory(tmp_path, stage);
+    std::filesystem::remove(tmp_path, ec);
+    if (!extracted) {
+        std::filesystem::remove_all(stage, ec);
+        return false;
     }
-    return ok;
+    if (!Citron::BcatCacheTools::CommitStage(stage, dest_path, backup)) return false;
+    NextendoByamlWriteHash(title_id_hex, server_hash);
+    return true;
 #else
     return false;
 #endif
@@ -7871,12 +8210,13 @@ bool GMainWindow::NextendoByamlDownload(u64 title_id) {
 
 void GMainWindow::RunNextendoByamlDownloadWithProgress(u64 title_id) {
 #ifdef ENABLE_WEB_SERVICE
-    QProgressDialog progress(tr("Downloading online schedule..."), QString{}, 0, 0, this);
+    QProgressDialog progress(tr("Refreshing this game's BCAT data..."), QString{}, 0, 0,
+                             setup_wizard_window ? setup_wizard_window : this);
     progress.setWindowModality(Qt::WindowModal);
     progress.setCancelButton(nullptr);
     progress.show();
 
-    auto future = QtConcurrent::run([this, title_id] { return NextendoByamlDownload(title_id); });
+    auto future = QtConcurrent::run([title_id] { return NextendoByamlDownload(title_id); });
     while (!future.isFinished()) {
         QCoreApplication::processEvents();
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -7884,11 +8224,14 @@ void GMainWindow::RunNextendoByamlDownloadWithProgress(u64 title_id) {
     progress.close();
 
     if (future.result()) {
-        QMessageBox::information(this, tr("Nextendo Network"), tr("Online schedule installed."));
+        QMessageBox::information(setup_wizard_window ? setup_wizard_window : this,
+                                 tr("Nextendo Network"), tr("This game's BCAT data is up to date."));
     } else {
-        QMessageBox::warning(this, tr("Nextendo Network"),
-                             tr("Failed to download the online schedule. You can try again later "
-                                "via right-click on the game."));
+        QMessageBox::warning(setup_wizard_window ? setup_wizard_window : this,
+                             tr("Nextendo Network"),
+                             tr("No BCAT package was installed. The server may not provide a package "
+                                "for this game, or the download/installation failed. Existing data "
+                                "was preserved. You can retry from the game's context menu."));
     }
 #endif
 }
@@ -8259,7 +8602,7 @@ void GMainWindow::SilentlyDownloadNextendoByaml(u64 title_id) {
     if (title_id == Nextendo::Splatoon3Bcat::TitleId) {
         return;
     }
-    std::thread{[this, title_id] {
+    std::thread{[title_id] {
         const bool ok = NextendoByamlDownload(title_id);
         if (ok) {
             LOG_INFO(Frontend, "Nextendo BCAT: auto-download succeeded for {:016X}", title_id);
@@ -8279,7 +8622,7 @@ void GMainWindow::OfferNextendoByamlDownload(u64 title_id) {
     // Refresh Splatoon 3 even with festival events disabled or an existing cache.
     // Finish before boot so the game cannot open files during replacement.
     if (IsNextendoPackageBcatTitle(title_id) || title_id == Nextendo::Splatoon3Bcat::TitleId) {
-        auto future = QtConcurrent::run([this, title_id] { return NextendoByamlDownload(title_id); });
+        auto future = QtConcurrent::run([title_id] { return NextendoByamlDownload(title_id); });
         while (!future.isFinished()) {
             QCoreApplication::processEvents();
             std::this_thread::sleep_for(std::chrono::milliseconds(1));

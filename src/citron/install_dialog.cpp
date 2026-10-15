@@ -16,6 +16,7 @@ InstallDialog::InstallDialog(QWidget* parent, const QStringList& files) : QDialo
     for (const QString& file : files) {
         QListWidgetItem* item = new QListWidgetItem(QFileInfo(file).fileName(), file_list);
         item->setData(Qt::UserRole, file);
+        item->setToolTip(QFileInfo(file).absoluteFilePath());
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         item->setCheckState(Qt::Checked);
     }

@@ -105,6 +105,16 @@ NvResult nvhost_ctrl::IocCtrlEventWait(IocCtrlEventWaitParams& params, bool is_a
         return NvResult::BadParameter;
     }
 
+    if (std::getenv("CITRON_HOMEBREW_ALBUM") && homebrew_diag_waits++ < 32 &&
+        syncpoint_manager.IsSyncpointAllocated(fence_id)) {
+        LOG_INFO(Service_VI,
+                 "HOME fence wait id={} target={} cached_min={} max={} timeout={} allocation={}",
+                 fence_id, params.fence.value,
+                 syncpoint_manager.ReadSyncpointMinValue(fence_id),
+                 syncpoint_manager.GetSyncpointFence(fence_id).value,
+                 static_cast<u32>(params.timeout), is_allocation);
+    }
+
     if (params.fence.value == 0) {
         if (!syncpoint_manager.IsSyncpointAllocated(params.fence.id)) {
             LOG_WARNING(Service_NVDRV,

@@ -729,6 +729,7 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::string& dir_pa
         }
 
         if (dir_entry.is_directory()) {
+            watch_list.append(QString::fromStdString(Common::FS::PathToUTF8String(dir_entry.path())));
             return true;
         }
 
@@ -747,6 +748,9 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::string& dir_pa
         }
 
         // Cache Check
+        // Watch growth/replacement too: a directory notification can arrive before
+        // a large NSP/XCI has finished copying.
+        watch_list.append(QString::fromStdString(physical_name));
         const auto* cached = GetCachedGameMetadata(physical_name);
         if (cached && cached->IsValid() &&
             (target == ScanTarget::PopulateGameList || target == ScanTarget::Both)) {
@@ -769,7 +773,10 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::string& dir_pa
                                 for (const auto& entry : title.second) {
                                     if (entry.second) {
                                         provider->AddEntry(entry.first.first, entry.first.second,
-                                                           title.first, entry.second->GetBaseFile());
+                                                           title.first, entry.second->GetBaseFile(),
+                                                           cached->file_type == Loader::FileType::XCI
+                                                               ? FileSys::ContentOrigin::GameCardImage
+                                                               : FileSys::ContentOrigin::DigitalPackage);
                                     }
                                 }
                             }
@@ -835,6 +842,26 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::string& dir_pa
         const auto res2 = loader->ReadProgramId(program_id);
         const auto file_type = loader->GetFileType();
 
+        // DLC packages can be valid without a launchable Program NCA. They
+        // still belong in the content catalog, associated with their base game.
+        if ((res2 != Loader::ResultStatus::Success || program_id == 0) &&
+            file_type == Loader::FileType::NSP &&
+            (target == ScanTarget::FillManualContentProvider || target == ScanTarget::Both)) {
+            const FileSys::NSP package{file};
+            if (package.GetStatus() == Loader::ResultStatus::Success) {
+                size_t registered = 0;
+                for (const auto& [title, contents] : package.GetNCAs()) {
+                    for (const auto& [kind, nca] : contents) {
+                        if (!nca) continue;
+                        provider->AddEntry(kind.first, kind.second, title, nca->GetBaseFile(),
+                                           FileSys::ContentOrigin::DigitalPackage);
+                        ++registered;
+                    }
+                }
+                LOG_INFO(Frontend, "Library non-launchable NSP: registered {} content records", registered);
+            }
+        }
+
         if (res2 == Loader::ResultStatus::Success && program_id != 0) {
 
             if (target == ScanTarget::FillManualContentProvider || target == ScanTarget::Both) {
@@ -852,7 +879,10 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::string& dir_pa
                             for (const auto& entry : title.second) {
                                 if (entry.second) {
                                     provider->AddEntry(entry.first.first, entry.first.second, title.first,
-                                                       entry.second->GetBaseFile());
+                                                       entry.second->GetBaseFile(),
+                                                       file_type == Loader::FileType::XCI
+                                                           ? FileSys::ContentOrigin::GameCardImage
+                                                           : FileSys::ContentOrigin::DigitalPackage);
                                 }
                             }
                         }
@@ -917,6 +947,10 @@ void GameListWorker::run() {
         return;
     }
     LoadGameMetadataCache();
+
+    auto* live_provider = provider;
+    FileSys::ManualContentProvider scanned_provider;
+    provider = &scanned_provider;
 
     std::map<u64, std::pair<int, int>> online_stats;
     // if (session) {
@@ -1010,6 +1044,12 @@ void GameListWorker::run() {
         }
     }
 
+    provider = live_provider;
+    if (!stop_requested) {
+        live_provider->ReplaceEntriesFrom(scanned_provider);
+        LOG_INFO(Frontend, "Library content snapshot published atomically");
+    }
+    watch_list.removeDuplicates();
     emit Finished(watch_list);
     SaveGameMetadataCache();
     processing_completed.Set();

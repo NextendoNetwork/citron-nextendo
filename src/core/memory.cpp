@@ -95,6 +95,7 @@ struct Memory::Impl {
     }
 
     void SetCurrentPageTable(Kernel::KProcess& process) {
+        std::scoped_lock lock{page_table_lifetime_mutex};
         current_page_table = &process.GetPageTable().GetImpl();
 
         if (process.IsApplication() && Settings::IsFastmemEnabled()) {
@@ -519,6 +520,7 @@ struct Memory::Impl {
     }
 
     void RasterizerMarkRegionCached(VAddr vaddr, u64 size, bool cached) {
+        std::scoped_lock lock{page_table_lifetime_mutex};
         if (vaddr < 0x1000) {
             return;
         }
@@ -693,6 +695,10 @@ struct Memory::Impl {
     }
 
     [[nodiscard]] u8* GetPointerSilent(const Common::ProcessAddress vaddr) const {
+        std::scoped_lock lock{page_table_lifetime_mutex};
+        if (!current_page_table) {
+            return nullptr;
+        }
         return GetPointerImpl(
             GetInteger(vaddr), []() {}, []() {});
     }
@@ -942,6 +948,7 @@ struct Memory::Impl {
     Core::System& system;
     Tegra::MaxwellDeviceMemoryManager* gpu_device_memory{};
     Common::PageTable* current_page_table = nullptr;
+    mutable std::mutex page_table_lifetime_mutex;
 
     // Number of threads to use for parallel memory operations
     unsigned int thread_count = 2;
@@ -969,6 +976,11 @@ void Memory::Reset() {
 
 void Memory::SetCurrentPageTable(Kernel::KProcess& process) {
     impl->SetCurrentPageTable(process);
+}
+
+void Memory::DetachPageTable() {
+    std::scoped_lock lock{impl->page_table_lifetime_mutex};
+    impl->current_page_table = nullptr;
 }
 
 void Memory::MapMemoryRegion(Common::PageTable& page_table, Common::ProcessAddress base, u64 size,

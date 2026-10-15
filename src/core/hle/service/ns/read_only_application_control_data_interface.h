@@ -10,6 +10,9 @@
 
 namespace Service::NS {
 
+// Discard control metadata after publishing a new library snapshot.
+void InvalidateApplicationControlCache();
+
 class IReadOnlyApplicationControlDataInterface final
     : public ServiceFramework<IReadOnlyApplicationControlDataInterface> {
 public:

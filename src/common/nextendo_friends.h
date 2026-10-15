@@ -4,6 +4,7 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,10 +23,29 @@ struct Entry {
     u64 account_id = 0;       // BAAS account id; 0 if the server omits it
     bool is_console = false;  // consoles advertise by account id, emulators by pid
     u64 app_id = 0;           // application the friend is running; 0 if none
+    std::string app_name;
+    std::string platform;
+    std::string app_detail;
+    s64 member_since = 0; // Unix seconds; account creation, not friendship acceptance.
 };
 
 void Set(std::vector<Entry> entries);
 std::vector<Entry> Get();
+
+struct PlayHistoryEntry {
+    u64 application_id = 0;
+    u64 seconds = 0;
+    s64 last_played = 0; // Unix seconds, as expected by MyPage's time service.
+    std::string name;
+    std::vector<u8> icon;
+};
+using PlayHistory = std::vector<PlayHistoryEntry>;
+void SetPlayHistoryResolver(std::function<std::optional<PlayHistory>(u64)> resolver);
+// Returns a snapshot immediately. Missing/stale snapshots refresh off the IPC thread.
+PlayHistory GetPlayHistory(u64 pid);
+void PrefetchPlayHistory(std::vector<u64> pids);
+// Metadata already obtained from presence/history, including titles not installed locally.
+std::optional<PlayHistoryEntry> GetApplicationMetadata(u64 application_id);
 
 // [Nextendo] Get() never blocks -- essential for NEX titles, which poll this in a loop from
 // their own online thread; blocking there would stall PRUDP acks and the server would declare a
@@ -56,6 +76,9 @@ void SetLocalPresence(s32 status, std::string app_field);
 // blob must survive an emulator-driven status change.
 void SetLocalStatus(s32 status);
 s32 GetLocalStatus();
+// Authenticated service reachability, separate from the game's desired presence.
+void SetAccountConnectionAvailable(bool available);
+bool IsAccountConnectionCurrent();
 std::string GetLocalAppField();
 
 // Hands out the local presence when it changed, or periodically regardless of change to keep the

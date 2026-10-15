@@ -109,7 +109,7 @@ ISelfController::~ISelfController() {
 Result ISelfController::Exit() {
     LOG_DEBUG(Service_AM, "called");
 
-    m_applet->process->Terminate();
+    m_applet->process->Terminate(true);
 
     R_SUCCEED();
 }
@@ -121,7 +121,7 @@ Result ISelfController::LockExit() {
 
     if (m_applet->lifecycle_manager.GetExitRequested()) {
         // With exit already requested, ignore and terminate immediately.
-        m_applet->process->Terminate();
+        m_applet->process->Terminate(true);
     } else {
         // Otherwise, set exit lock state.
         m_applet->exit_locked = true;
@@ -140,7 +140,7 @@ Result ISelfController::UnlockExit() {
     system.SetExitLocked(false);
 
     if (m_applet->lifecycle_manager.GetExitRequested()) {
-        m_applet->process->Terminate();
+        m_applet->process->Terminate(true);
     }
 
     R_SUCCEED();

@@ -542,7 +542,7 @@ u64 FileSystemController::GetFreeSpaceSize(FileSys::StorageId id) const {
     case FileSys::StorageId::Host:
         if (bis_factory == nullptr)
             return 0;
-        return bis_factory->GetSystemNANDFreeSpace() + bis_factory->GetUserNANDFreeSpace();
+        return bis_factory->GetUserNANDFreeSpace();
     case FileSys::StorageId::NandSystem:
         if (bis_factory == nullptr)
             return 0;

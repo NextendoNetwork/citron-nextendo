@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -19,6 +20,7 @@
 #include "core/hle/ipc.h"
 #include "core/hle/kernel/k_handle_table.h"
 #include "core/hle/kernel/svc_common.h"
+#include "core/hle/service/domain_object_table.h"
 
 union Result;
 
@@ -97,7 +99,7 @@ public:
     }
 
     void ConvertToDomain() {
-        domain_handlers = {session_handler};
+        domain_handlers.Initialize(session_handler);
         is_domain = true;
     }
 
@@ -106,7 +108,7 @@ public:
     }
 
     std::size_t DomainHandlerCount() const {
-        return domain_handlers.size();
+        return domain_handlers.Size();
     }
 
     bool HasSessionHandler() const {
@@ -121,21 +123,16 @@ public:
         return *session_handler;
     }
 
-    void CloseDomainHandler(std::size_t index) {
-        if (index < DomainHandlerCount()) {
-            domain_handlers[index] = nullptr;
-        } else {
-            ASSERT_MSG(false, "Unexpected handler index {}", index);
-        }
+    bool CloseDomainHandler(std::size_t index) {
+        return domain_handlers.Close(index);
     }
 
     SessionRequestHandlerWeakPtr DomainHandler(std::size_t index) const {
-        ASSERT_MSG(index < DomainHandlerCount(), "Unexpected handler index {}", index);
-        return domain_handlers.at(index);
+        return domain_handlers.Get(index);
     }
 
-    void AppendDomainHandler(SessionRequestHandlerPtr&& handler) {
-        domain_handlers.emplace_back(std::move(handler));
+    std::size_t AppendDomainHandler(SessionRequestHandlerPtr&& handler) {
+        return domain_handlers.Append(std::move(handler));
     }
 
     void SetSessionHandler(SessionRequestHandlerPtr&& handler) {
@@ -164,11 +161,11 @@ public:
     }
 
 private:
-    bool convert_to_domain{};
-    bool is_domain{};
+    std::atomic<bool> convert_to_domain{};
+    std::atomic<bool> is_domain{};
     bool is_initialized_for_sm{};
     SessionRequestHandlerPtr session_handler;
-    std::vector<SessionRequestHandlerPtr> domain_handlers;
+    DomainObjectTable<SessionRequestHandler> domain_handlers;
 
 private:
     Kernel::KernelCore& kernel;
@@ -184,6 +181,8 @@ public:
     explicit HLERequestContext(Kernel::KernelCore& kernel, Core::Memory::Memory& memory,
                                Kernel::KServerSession* session, Kernel::KThread* thread);
     ~HLERequestContext();
+    HLERequestContext(const HLERequestContext&) = delete;
+    HLERequestContext& operator=(const HLERequestContext&) = delete;
 
     /// Returns a pointer to the IPC command buffer for this request.
     [[nodiscard]] u32* CommandBuffer() {
@@ -397,7 +396,7 @@ private:
     std::array<u32, IPC::COMMAND_BUFFER_LENGTH> cmd_buf;
     Kernel::KServerSession* server_session{};
     Kernel::KHandleTable* client_handle_table{};
-    Kernel::KThread* thread{};
+    Kernel::KThread* thread{}; // Owning reference held until this request is destroyed.
 
     std::vector<Handle> incoming_move_handles;
     std::vector<Handle> incoming_copy_handles;

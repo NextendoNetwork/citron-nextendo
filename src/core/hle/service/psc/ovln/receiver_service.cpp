@@ -7,7 +7,8 @@
 
 namespace Service::PSC {
 
-IReceiverService::IReceiverService(Core::System& system_) : ServiceFramework{system_, "ovln:rcv"} {
+IReceiverService::IReceiverService(Core::System& system_, std::shared_ptr<NotificationBus> bus_)
+    : ServiceFramework{system_, "ovln:rcv"}, bus{std::move(bus_)} {
     // clang-format off
     static const FunctionInfo functions[] = {
         {0, D<&IReceiverService::OpenReceiver>, "OpenReceiver"},
@@ -21,7 +22,7 @@ IReceiverService::~IReceiverService() = default;
 
 Result IReceiverService::OpenReceiver(Out<SharedPointer<IReceiver>> out_receiver) {
     LOG_DEBUG(Service_PSC, "called");
-    *out_receiver = std::make_shared<IReceiver>(system);
+    *out_receiver = std::make_shared<IReceiver>(system, bus);
     R_SUCCEED();
 }
 

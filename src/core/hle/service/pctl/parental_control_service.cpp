@@ -14,7 +14,7 @@ IParentalControlService::IParentalControlService(Core::System& system_, Capabili
     : ServiceFramework{system_, "IParentalControlService"}, capability{capability_},
       service_context{system_, "IParentalControlService"}, synchronization_event{service_context},
       unlinked_event{service_context}, request_suspension_event{service_context},
-      extended_play_timer_event{service_context} {
+      extended_play_timer_event{service_context}, pin_code_changed_event{service_context} {
     // clang-format off
     static const FunctionInfo functions[] = {
         {1, D<&IParentalControlService::Initialize>, "Initialize"},
@@ -22,7 +22,7 @@ IParentalControlService::IParentalControlService(Core::System& system_, Capabili
         {1002, D<&IParentalControlService::ConfirmLaunchApplicationPermission>, "ConfirmLaunchApplicationPermission"},
         {1003, D<&IParentalControlService::ConfirmResumeApplicationPermission>, "ConfirmResumeApplicationPermission"},
         {1004, D<&IParentalControlService::ConfirmSnsPostPermission>, "ConfirmSnsPostPermission"},
-        {1005, nullptr, "ConfirmSystemSettingsPermission"},
+        {1005, D<&IParentalControlService::ConfirmSystemSettingsPermission>, "ConfirmSystemSettingsPermission"},
         {1006, D<&IParentalControlService::IsRestrictionTemporaryUnlocked>, "IsRestrictionTemporaryUnlocked"},
         {1007, nullptr, "RevertRestrictionTemporaryUnlocked"},
         {1008, nullptr, "EnterRestrictedSystemSettings"},
@@ -65,7 +65,7 @@ IParentalControlService::IParentalControlService(Core::System& system_, Capabili
         {1204, nullptr, "GenerateInquiryCode"},
         {1205, nullptr, "CheckMasterKey"},
         {1206, D<&IParentalControlService::GetPinCodeLength>, "GetPinCodeLength"},
-        {1207, nullptr, "GetPinCodeChangedEvent"},
+        {1207, D<&IParentalControlService::GetPinCodeChangedEvent>, "GetPinCodeChangedEvent"},
         {1208, nullptr, "GetPinCode"},
         {1403, D<&IParentalControlService::IsPairingActive>, "IsPairingActive"},
         {1406, nullptr, "GetSettingsLastUpdated"},
@@ -245,6 +245,13 @@ Result IParentalControlService::ConfirmSnsPostPermission() {
     R_THROW(PCTL::ResultNoFreeCommunication);
 }
 
+Result IParentalControlService::ConfirmSystemSettingsPermission() {
+    // This HLE service has no configured PIN (SetPinCode is unsupported), as
+    // reported by GetPinCodeLength and IsRestrictionEnabled. No unlock occurs.
+    LOG_INFO(Service_PCTL, "called, no parental PIN configured in HLE");
+    R_SUCCEED();
+}
+
 Result IParentalControlService::IsRestrictionTemporaryUnlocked(
     Out<bool> out_is_temporary_unlocked) {
     *out_is_temporary_unlocked = false;
@@ -343,6 +350,14 @@ Result IParentalControlService::IsStereoVisionPermitted(Out<bool> out_is_permitt
 Result IParentalControlService::GetPinCodeLength(Out<s32> out_length) {
     *out_length = 0;
     LOG_WARNING(Service_PCTL, "(STUBBED) called, length={}", *out_length);
+    R_SUCCEED();
+}
+
+Result IParentalControlService::GetPinCodeChangedEvent(
+    OutCopyHandle<Kernel::KReadableEvent> out_event) {
+    LOG_INFO(Service_PCTL, "called");
+    // Merely subscribing is not a PIN change. Keep this event unsignalled.
+    *out_event = pin_code_changed_event.GetHandle();
     R_SUCCEED();
 }
 

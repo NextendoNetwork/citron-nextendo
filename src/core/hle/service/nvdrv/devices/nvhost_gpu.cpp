@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cstring>
+#include <cstdlib>
 #include "common/assert.h"
 #include "common/logging.h"
 #include "core/core.h"
@@ -325,6 +326,11 @@ NvResult nvhost_gpu::SubmitGPFIFOImpl(IoctlSubmitGpfifo& params, Tegra::CommandL
     }
 
     const auto bind_id = channel_state->bind_id;
+    const bool trace_submit = std::getenv("CITRON_HOMEBREW_ALBUM") && homebrew_diag_submits++ < 4;
+    if (trace_submit) {
+        LOG_INFO(Service_VI, "HOME GPU submit begin channel={} initialized={} count={}",
+                 bind_id, channel_state->initialized, homebrew_diag_submits);
+    }
 
     auto& flags = params.flags;
 
@@ -356,6 +362,11 @@ NvResult nvhost_gpu::SubmitGPFIFOImpl(IoctlSubmitGpfifo& params, Tegra::CommandL
     }
 
     flags.raw = 0;
+    if (trace_submit) {
+        LOG_INFO(Service_VI, "HOME GPU submit end channel={} fence_id={} target={} cached_min={}",
+                 bind_id, params.fence.id, params.fence.value,
+                 syncpoint_manager.ReadSyncpointMinValue(channel_syncpoint));
+    }
 
     return NvResult::Success;
 }

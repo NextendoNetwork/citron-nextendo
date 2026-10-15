@@ -3,11 +3,19 @@
 
 #pragma once
 
+#include <array>
+
 #include "core/hle/service/cmif_types.h"
 #include "core/hle/service/service.h"
+#include "core/hle/service/kernel_helpers.h"
 
 namespace Core {
 class System;
+}
+
+namespace Kernel {
+class KReadableEvent;
+class KEvent;
 }
 
 namespace Service::News {
@@ -18,7 +26,14 @@ public:
     ~IDownloadContext() override;
 
 private:
-    Result Unknown4(); // [20.0.0+]
+    Result GetEvent(OutCopyHandle<Kernel::KReadableEvent> out_event);
+    Result Cancel();
+    Result GetResult();
+    Result GetSize(Out<u64> out_size);
+    Result Unknown4(Out<std::array<u8, 0x48>> out_progress); // [20.0.0+]
+
+    KernelHelpers::ServiceContext service_context;
+    Kernel::KEvent* completion_event{};
 };
 
 } // namespace Service::News

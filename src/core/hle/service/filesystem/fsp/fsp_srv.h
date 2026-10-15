@@ -56,6 +56,7 @@ private:
     Result OpenFileSystemWithPatch(OutInterface<IFileSystem> out_interface,
                                    FileSystemProxyType type, u64 open_program_id);
     Result OpenSdCardFileSystem(OutInterface<IFileSystem> out_interface);
+    Result IsSdCardAccessible(Out<bool> out_is_accessible);
     Result CreateSaveDataFileSystem(FileSys::SaveDataCreationInfo save_create_struct,
                                     FileSys::SaveDataAttribute save_struct, u128 uid);
     Result CreateSaveDataFileSystemBySystemSaveDataId(
@@ -120,6 +121,8 @@ private:
         OutInterface<ISaveDataTransferManager> out_interface);
     Result OpenBisWiper(OutInterface<IWiper> out_interface);
     Result OpenBisStorage(OutInterface<IStorage> out_interface, u32 partition_id);
+    Result OpenBisFileSystem(OutInterface<IFileSystem> out_interface, u32 partition_id,
+                             InBuffer<BufferAttr_HipcPointer> partition_name);
     Result DeleteSaveDataFileSystem(u64 save_data_id);
     Result OpenGameCardStorage(OutInterface<IStorage> out_interface, u32 handle, u32 partition_id);
     Result OpenGameCardFileSystem(OutInterface<IFileSystem> out_interface, u32 handle,

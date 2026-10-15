@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -29,6 +30,8 @@ namespace Service::Set {
 Result GetFirmwareVersionImpl(FirmwareVersionFormat& out_firmware, Core::System& system, GetFirmwareVersionType type);
 
 class ISystemSettingsServer final : public ServiceFramework<ISystemSettingsServer> {
+    std::mutex m_nat_cache_mutex;
+    std::optional<u64> m_nat_test_network;
 public:
     explicit ISystemSettingsServer(Core::System& system_);
     ~ISystemSettingsServer() override;

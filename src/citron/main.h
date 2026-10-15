@@ -159,9 +159,9 @@ public:
     void OfferNextendoByamlDownload(u64 title_id);
     void NextendoByamlDownloadFromMenu(u64 title_id);
     bool NextendoByamlRequired(u64 title_id) const;
-    bool NextendoByamlInstalled(u64 title_id) const;
+    static bool NextendoByamlInstalled(u64 title_id);
     bool NextendoByamlSkipped(u64 title_id) const;
-    bool NextendoByamlDownloadEnabled() const;
+    static bool NextendoByamlDownloadEnabled();
     void InstallSsbuSkylineMods(u64 program_id);
     void InstallMk8dCountryFlag(u64 program_id);
     bool IsConfiguring() const {
@@ -324,6 +324,7 @@ private slots:
                                   GameListShortcutTarget target);
     void OnGameListOpenDirectory(const QString& directory);
     void OnGameListAddDirectory();
+    void AddGameDirectory(bool deep_scan);
     void OnGameListShowList(bool show);
     void OnGameListOpenPerGameProperties(const std::string& file, u64 program_id = 0);
     void OnMenuLoadFile();
@@ -332,6 +333,7 @@ private slots:
     void OnMenuTrimXCI();
     void OnMenuRecentFile();
     void OnConfigure();
+    void OnSetupWizard();
     void OnConfigureTas();
     void OnDecreaseVolume();
     void OnIncreaseVolume();
@@ -350,7 +352,7 @@ private slots:
     void OnVerifyInstalledContents();
     void OnInstallFirmware();
     void OnInstallFirmwareFromZip();
-    bool ExtractZipToDirectory(const std::filesystem::path& zip_path,
+    static bool ExtractZipToDirectory(const std::filesystem::path& zip_path,
                                const std::filesystem::path& extract_path);
     void OnInstallDecryptionKeys();
     void OnAbout();
@@ -382,6 +384,8 @@ private slots:
     void ResetWindowSize720();
     void ResetWindowSize900();
     void ResetWindowSize1080();
+    void OnPrepareHomebrewTools();
+    void OnHomebrewMenu();
     void OnAlbum();
     void OnCabinet(Service::NFP::CabinetMode mode);
     void OnMiiEdit();
@@ -460,7 +464,14 @@ private:
     QTimer shutdown_timer;
     QTimer nextendo_presence_timer;
     std::string nextendo_last_pushed_app_id;
+    std::string nextendo_presence_app_name;
     NextendoController* nextendo_controller = nullptr;
+    bool setup_open_input = false;
+    bool setup_open_network = false;
+    QWidget* setup_wizard_window = nullptr;
+    QAction* setup_discord_action = nullptr;
+    u64 active_window_title_program = ~u64{0};
+    bool active_window_title_home = false;
     NextendoToast* nextendo_toast = nullptr;
     QDialog* nextendo_signin_dialog = nullptr;
     NextendoAccountDialog* nextendo_account_dialog_instance = nullptr;
@@ -503,13 +514,14 @@ private:
     bool main_window_is_closing = false;
     std::unique_ptr<EmuThread> emu_thread;
     QString current_game_path;
+    std::unique_ptr<Service::AM::FrontendAppletParameters> current_boot_parameters;
     std::string current_game_name;
     std::string current_game_icon_base64;
 
     void SyncNextendoHistory();
 
     void NextendoByamlMarkSkipped(u64 title_id) const;
-    bool NextendoByamlDownload(u64 title_id);
+    static bool NextendoByamlDownload(u64 title_id);
     void RunNextendoByamlDownloadWithProgress(u64 title_id);
 
     struct SsbuModInstallFailure {

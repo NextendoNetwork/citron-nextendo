@@ -39,6 +39,7 @@ struct LoginResult {
     std::string username;
     std::string friend_code;
     std::string token;
+    std::string api_token;
 };
 
 // Reason a NEX login was refused, as evaluated by the account server's gates.
@@ -84,6 +85,9 @@ struct Friend {
     std::string image_base64; // profile picture, base64 JPEG; empty if none set
     std::string account_hex;  // BAAS account id, 16 hex digits; empty if the server omits it
     bool is_console = false;  // true when the friend plays on hardware ("plateforme":"switch")
+    std::string platform;     // server-reported platform; empty means unknown
+    std::string app_detail;
+    std::string member_since; // Account creation date from Nextendo, RFC3339.
 };
 
 struct FriendList {
@@ -155,7 +159,7 @@ std::string ReportPlayer(u64 pid, const std::string& reason, const std::string& 
 // display name already resolved locally (e.g. from NACP) so a friend can show it even without
 // that title in their own library; empty when nothing is running or the name couldn't be resolved.
 void PushPresence(s32 status, const std::string& app_field, const std::string& app_id,
-                  const std::string& app_name);
+                  const std::string& app_name, const std::string& app_detail = {});
 
 // Downloads the BCAT schedule seed (a zip of vsdata/coopdata/fesdata) for titles that need one
 // locally to go online (Splatoon 2). title_id_hex is 16 uppercase hex digits. Empty on failure.
@@ -227,6 +231,8 @@ struct HistoryList {
 };
 
 HistoryList GetHistory();
+// The server applies the friend's activity visibility settings to this endpoint.
+HistoryList GetFriendHistory(u64 pid);
 
 // Round-trip time to the backend's /api/health in milliseconds, or nullopt on failure.
 std::optional<int> PingBackend();

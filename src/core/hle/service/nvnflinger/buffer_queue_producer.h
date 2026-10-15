@@ -85,6 +85,7 @@ private:
     std::mutex callback_mutex;
     s32 next_callback_ticket{};
     s32 current_callback_ticket{};
+    u32 homebrew_diag_queues{};
     std::condition_variable_any callback_condition;
     std::unique_ptr<Common::WallClock> clock;
 

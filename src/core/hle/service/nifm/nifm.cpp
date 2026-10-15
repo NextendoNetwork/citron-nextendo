@@ -60,9 +60,9 @@ enum class InternetConnectionStatus : u8 {
 
 // This is nn::nifm::NetworkProfileType
 enum class NetworkProfileType : u32 {
-    User,
-    SsidList,
-    Temporary,
+    User = 1,
+    SsidList = 2,
+    Temporary = 4,
 };
 
 // This is nn::nifm::ConnectionConfirmationOption
@@ -130,6 +130,47 @@ struct SfWirelessSettingData {
     std::array<char, 0x41> passphrase{};
 };
 static_assert(sizeof(SfWirelessSettingData) == 0x65, "SfWirelessSettingData has incorrect size.");
+
+// Verified against the local HOME SDK: command 36 writes 0x34 bytes;
+// 0x2c is converted to the signal enum and 0x2e to a signed channel.
+struct SfAccessPointData {
+    u8 ssid_length{};
+    std::array<char, 32> ssid{};
+    std::array<u8, 6> bssid{};
+    u8 padding{};
+    s32 rssi{};
+    u8 signal_level{};
+    u8 padding_2{};
+    u16 channel{};
+    std::array<u8, 4> reserved{};
+};
+static_assert(sizeof(SfAccessPointData) == 0x34);
+static_assert(offsetof(SfAccessPointData, signal_level) == 0x2c);
+static_assert(offsetof(SfAccessPointData, channel) == 0x2e);
+
+// Windows DOT11 enum -> NIFM values observed in HOME's security selector.
+// Unsupported enterprise/WPA3 modes stay unknown rather than claiming WPA2.
+static void SetHostWirelessSecurity(SfWirelessSettingData& data,
+                                    const Network::NetworkInterface& iface) {
+    if (!iface.wireless_connection_available) {
+        return;
+    }
+    switch (iface.wireless_authentication) {
+    case 1: data.unknown_2 = 1; break; // Open
+    case 2: data.unknown_2 = 2; break; // Shared-key
+    case 4: data.unknown_2 = 4; break; // WPA-PSK
+    case 7: data.unknown_2 = 6; break; // RSNA-PSK (WPA2)
+    default: break;
+    }
+    switch (iface.wireless_cipher) {
+    case 0: data.unknown_3 = 1; break; // None
+    case 1:
+    case 5:
+    case 0x101: data.unknown_3 = 2; break; // WEP
+    case 4: data.unknown_3 = 4; break; // CCMP/AES
+    default: break;
+    }
+}
 
 struct NifmWirelessSettingData {
     u8 ssid_length{};
@@ -602,7 +643,7 @@ void IGeneralService::GetCurrentNetworkProfile(HLERequestContext& ctx) {
         }
 
         const u64 name_hash = Common::CityHash64(net_iface->name.data(), net_iface->name.size());
-        const std::string ssid = "citron-" + net_iface->name;
+        const std::string& ssid = net_iface->ssid;
 
         const auto to_array = [](auto& array, const std::string& value) {
             const size_t count = std::min(value.size(), array.size());
@@ -619,8 +660,8 @@ void IGeneralService::GetCurrentNetworkProfile(HLERequestContext& ctx) {
                 },
                 .dns_setting{
                     .is_automatic{true},
-                    .primary_dns{1, 1, 1, 1},
-                    .secondary_dns{1, 0, 0, 1},
+                    .primary_dns{Network::TranslateIPv4(net_iface->dns_servers[0])},
+                    .secondary_dns{Network::TranslateIPv4(net_iface->dns_servers[1])},
                 },
                 .proxy_setting{
                     .is_enabled{false},
@@ -636,10 +677,13 @@ void IGeneralService::GetCurrentNetworkProfile(HLERequestContext& ctx) {
             },
             .uuid{name_hash, name_hash},
         };
-        to_array(data.network_name, ssid);
+        to_array(data.network_name, ssid.empty() ? net_iface->name : ssid);
+        data.unknown_1 = static_cast<u8>(NetworkProfileType::User);
+        data.unknown_2 = static_cast<u8>(net_iface->wireless ? NetworkInterfaceType::WiFi_Ieee80211 : NetworkInterfaceType::Ethernet);
+        data.unknown_3 = 1;
         data.wireless_setting_data.ssid_length = static_cast<u8>(std::min(ssid.size(), size_t{32}));
         to_array(data.wireless_setting_data.ssid, ssid);
-        to_array(data.wireless_setting_data.passphrase, std::string{"citron00000000"});
+        SetHostWirelessSecurity(data.wireless_setting_data, *net_iface);
         return data;
     }();
 
@@ -658,40 +702,40 @@ void IGeneralService::GetCurrentNetworkProfile(HLERequestContext& ctx) {
 }
 
 void IGeneralService::EnumerateNetworkInterfaces(HLERequestContext& ctx) {
-    LOG_WARNING(Service_NIFM, "(STUBBED) called");
-
-    const auto adapters = Network::GetAvailableNetworkInterfaces();
-    constexpr size_t kEntrySize = 0x3F0; // From official
-
-    std::vector<u8> blob(adapters.size() * kEntrySize, 0);
-
-    for (size_t i = 0; i < adapters.size(); ++i) {
-        const auto& host = adapters[i];
-        u8* const base = blob.data() + i * kEntrySize;
-
-        // Match expected structure
-        // Citron NetworkInterface doesn't have type/kind, so we use 2u (Ethernet) as a safe default
-        *reinterpret_cast<u32*>(base + 0x0) = 2u;
-        *reinterpret_cast<u32*>(base + 0x4) = 1u; // Status?
-
-        std::memcpy(base + 0x18, &host.ip_address, sizeof(host.ip_address));
-        std::memcpy(base + 0x1C, &host.subnet_mask, sizeof(host.subnet_mask));
-        std::memcpy(base + 0x20, &host.gateway, sizeof(host.gateway));
-
-        std::string name_utf8 = host.name;
-        name_utf8.resize(0x110, '\0');
-        std::memcpy(base + 0x2E0, name_utf8.data(), 0x110);
+    IPC::RequestParser rp{ctx};
+    const auto type_filter = rp.Pop<u32>();
+    // The local SDK command 6 consumes 8-byte entries, then expands them to
+    // 12-byte NetworkInterfaceInfo objects: type, MAC[6], is_mac_valid.
+    struct SfNetworkInterfaceInfo {
+        u8 type{};
+        std::array<u8, 6> mac{};
+        u8 is_mac_valid{};
+    };
+    static_assert(sizeof(SfNetworkInterfaceInfo) == 8);
+    const size_t capacity = ctx.GetWriteBufferSize() / sizeof(SfNetworkInterfaceInfo);
+    std::vector<SfNetworkInterfaceInfo> entries;
+    for (const auto& adapter : Network::GetAvailableNetworkInterfaces()) {
+        const auto type = static_cast<u8>(adapter.wireless
+            ? NetworkInterfaceType::WiFi_Ieee80211 : NetworkInterfaceType::Ethernet);
+        if (type_filter != 0 && (type_filter & type) == 0) {
+            continue;
+        }
+        if (entries.size() >= capacity) {
+            break;
+        }
+        entries.push_back({type, adapter.mac_address,
+            static_cast<u8>(std::ranges::any_of(adapter.mac_address,
+                                               [](u8 byte) { return byte != 0; }))});
     }
-
-    if (ctx.GetWriteBufferSize() > 0 && !blob.empty()) {
-        ctx.WriteBuffer(blob.data(), std::min(ctx.GetWriteBufferSize(), blob.size()));
+    if (!entries.empty()) {
+        ctx.WriteBuffer(entries);
     }
-
+    LOG_INFO(Service_NIFM, "Host interfaces: filter={} entries={} capacity={}; addresses omitted",
+             type_filter, entries.size(), capacity);
     IPC::ResponseBuilder rb{ctx, 3};
     rb.Push(ResultSuccess);
-    rb.Push<u32>(static_cast<u32>(adapters.size()));
+    rb.Push<u32>(static_cast<u32>(entries.size()));
 }
-
 void IGeneralService::RemoveNetworkProfile(HLERequestContext& ctx) {
     LOG_WARNING(Service_NIFM, "(STUBBED) called");
 
@@ -761,8 +805,8 @@ void IGeneralService::GetCurrentIpConfigInfo(HLERequestContext& ctx) {
             },
             .dns_setting{
                 .is_automatic{true},
-                .primary_dns{1, 1, 1, 1},
-                .secondary_dns{1, 0, 0, 1},
+                .primary_dns{Network::TranslateIPv4(net_iface->dns_servers[0])},
+                .secondary_dns{Network::TranslateIPv4(net_iface->dns_servers[1])},
             },
         };
     }();
@@ -780,14 +824,37 @@ void IGeneralService::GetCurrentIpConfigInfo(HLERequestContext& ctx) {
 }
 
 void IGeneralService::EnumerateNetworkProfiles(HLERequestContext& ctx) {
-    LOG_WARNING(Service_NIFM, "(STUBBED) called");
-
-    // Return 0 profiles for now (stub)
-    ctx.WriteBuffer(std::span<u8>{});
-
+    IPC::RequestParser rp{ctx};
+    const auto filter = rp.Pop<u8>();
+    // nn::nifm::detail::sf::NetworkProfileBasicInfo uses byte alignment.
+    struct BasicInfo {
+        std::array<u8, 16> uuid{};
+        std::array<char, 64> name{};
+        u8 profile_type{1};
+        u8 connection_type{};
+        u8 ssid_length{};
+        std::array<char, 32> ssid{};
+        u8 authentication{};
+        u8 encryption{};
+    };
+    static_assert(sizeof(BasicInfo) == 0x75);
+    const auto iface = Network::GetSelectedNetworkInterface();
+    const bool available = iface && (filter & 1) != 0;
+    if (available && ctx.GetWriteBufferSize() >= sizeof(BasicInfo)) {
+        BasicInfo info{};
+        const u64 hash = Common::CityHash64(iface->name.data(), iface->name.size());
+        const u128 uuid{hash, hash};
+        std::memcpy(info.uuid.data(), &uuid, sizeof(uuid));
+        const auto& name = iface->ssid.empty() ? iface->name : iface->ssid;
+        std::memcpy(info.name.data(), name.data(), std::min(name.size(), info.name.size() - 1));
+        info.connection_type = iface->wireless ? 1 : 2;
+        info.ssid_length = static_cast<u8>(std::min(iface->ssid.size(), info.ssid.size()));
+        std::memcpy(info.ssid.data(), iface->ssid.data(), info.ssid_length);
+        ctx.WriteBuffer(info);
+    }
     IPC::ResponseBuilder rb{ctx, 3};
     rb.Push(ResultSuccess);
-    rb.Push<u32>(0); // Number of profiles
+    rb.Push<u32>(available ? 1 : 0);
 }
 
 void IGeneralService::ConfirmSystemAvailability(HLERequestContext& ctx) {
@@ -813,40 +880,36 @@ void IGeneralService::IsWirelessCommunicationEnabled(HLERequestContext& ctx) {
 }
 
 void IGeneralService::GetInternetConnectionStatus(HLERequestContext& ctx) {
-    LOG_WARNING(Service_NIFM, "(STUBBED) called");
-
+    const auto iface = Network::GetSelectedNetworkInterface();
+    if (!iface) {
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(Result{ErrorModule::NIFM, 1699});
+        return;
+    }
     struct Output {
-        u8 type{static_cast<u8>(NetworkInterfaceType::WiFi_Ieee80211)};
-        u8 wifi_strength{3};
-        InternetConnectionStatus state{InternetConnectionStatus::Connected};
+        u8 type;
+        u8 wifi_strength;
+        InternetConnectionStatus state;
     };
-    static_assert(sizeof(Output) == 0x3, "Output has incorrect size.");
-
-    constexpr Output out{};
-
+    static_assert(sizeof(Output) == 3);
+    const Output out{static_cast<u8>(iface->wireless ? NetworkInterfaceType::WiFi_Ieee80211 : NetworkInterfaceType::Ethernet),
+                     iface->wireless ? iface->signal_bars : u8{0}, InternetConnectionStatus::Connected};
     IPC::ResponseBuilder rb{ctx, 3};
     rb.Push(ResultSuccess);
     rb.PushRaw(out);
 }
 
 void IGeneralService::IsEthernetCommunicationEnabled(HLERequestContext& ctx) {
-    LOG_WARNING(Service_NIFM, "(STUBBED) called");
-
+    const auto iface = Network::GetSelectedNetworkInterface();
     IPC::ResponseBuilder rb{ctx, 3};
     rb.Push(ResultSuccess);
-    if (Network::GetHostIPv4Address().has_value()) {
-        rb.Push<u8>(1);
-    } else {
-        rb.Push<u8>(0);
-    }
+    rb.Push<u8>(iface && !iface->wireless ? 1 : 0);
 }
 
 void IGeneralService::IsAnyInternetRequestAccepted(HLERequestContext& ctx) {
-    LOG_DEBUG(Service_NIFM, "called");
-
     IPC::ResponseBuilder rb{ctx, 3};
     rb.Push(ResultSuccess);
-    rb.Push<u8>(1);
+    rb.Push<u8>(Network::GetHostIPv4Address().has_value() ? 1 : 0);
 }
 
 void IGeneralService::IsAnyForegroundRequestAccepted(HLERequestContext& ctx) {
@@ -870,10 +933,7 @@ void IGeneralService::GetSsidListVersion(HLERequestContext& ctx) {
 }
 
 void IGeneralService::GetNetworkProfile(HLERequestContext& ctx) {
-    LOG_WARNING(Service_NIFM, "(STUBBED) called");
-
-    IPC::ResponseBuilder rb{ctx, 2};
-    rb.Push(ResultSuccess);
+    GetCurrentNetworkProfile(ctx);
 }
 
 void IGeneralService::SetNetworkProfile(HLERequestContext& ctx) {
@@ -891,8 +951,26 @@ void IGeneralService::GetScanData(HLERequestContext& ctx) {
 }
 
 void IGeneralService::GetCurrentAccessPoint(HLERequestContext& ctx) {
-    LOG_WARNING(Service_NIFM, "(STUBBED) called");
-
+    const auto iface = Network::GetSelectedNetworkInterface();
+    if (!iface || !iface->wireless || !iface->wireless_connection_available) {
+        LOG_INFO(Service_NIFM, "Current access point unavailable on selected host interface");
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(ResultNetworkCommunicationDisabled);
+        return;
+    }
+    SfAccessPointData data{};
+    data.ssid_length = static_cast<u8>(std::min(iface->ssid.size(), data.ssid.size()));
+    std::copy_n(iface->ssid.begin(), data.ssid_length, data.ssid.begin());
+    data.bssid = iface->access_point_mac;
+    data.rssi = iface->rssi_dbm;
+    data.signal_level = iface->signal_bars;
+    data.channel = iface->wireless_channel;
+    ctx.WriteBuffer(data);
+    LOG_INFO(Service_NIFM,
+             "Host access point: frequency_khz={} channel={} signal_level={} auth={} cipher={}; "
+             "SSID and addresses omitted",
+             iface->frequency_khz, data.channel, data.signal_level,
+             iface->wireless_authentication, iface->wireless_cipher);
     IPC::ResponseBuilder rb{ctx, 2};
     rb.Push(ResultSuccess);
 }

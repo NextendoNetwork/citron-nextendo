@@ -24,8 +24,8 @@ static u64 GetCurrentBuildID(const Core::System::CurrentBuildProcessID& id) {
     return out;
 }
 
-IBcatService::IBcatService(Core::System& system_, BcatBackend& backend_)
-    : ServiceFramework{system_, "IBcatService"}, backend{backend_},
+IBcatService::IBcatService(Core::System& system_, BcatBackend& backend_, u64 client_program_id_)
+    : ServiceFramework{system_, "IBcatService"}, backend{backend_}, client_program_id{client_program_id_},
       progress{{
           ProgressServiceBackend{system_, "Normal"},
           ProgressServiceBackend{system_, "Directory"},
@@ -70,8 +70,9 @@ Result IBcatService::RequestSyncDeliveryCache(
     LOG_DEBUG(Service_BCAT, "called");
 
     auto& progress_backend{GetProgressBackend(SyncType::Normal)};
-    backend.Synchronize({system.GetApplicationProcessProgramID(),
-                         GetCurrentBuildID(system.GetApplicationProcessBuildID())},
+    backend.Synchronize({client_program_id,
+                         client_program_id == system.GetApplicationProcessProgramID()
+                             ? GetCurrentBuildID(system.GetApplicationProcessBuildID()) : 0},
                         GetProgressBackend(SyncType::Normal));
 
     *out_interface = std::make_shared<IDeliveryCacheProgressService>(
@@ -86,8 +87,9 @@ Result IBcatService::RequestSyncDeliveryCacheWithDirectoryName(
     LOG_DEBUG(Service_BCAT, "called, name={}", name);
 
     auto& progress_backend{GetProgressBackend(SyncType::Directory)};
-    backend.SynchronizeDirectory({system.GetApplicationProcessProgramID(),
-                                  GetCurrentBuildID(system.GetApplicationProcessBuildID())},
+    backend.SynchronizeDirectory({client_program_id,
+                                  client_program_id == system.GetApplicationProcessProgramID()
+                                      ? GetCurrentBuildID(system.GetApplicationProcessBuildID()) : 0},
                                  name, progress_backend);
 
     *out_interface = std::make_shared<IDeliveryCacheProgressService>(
@@ -97,8 +99,7 @@ Result IBcatService::RequestSyncDeliveryCacheWithDirectoryName(
 
 Result IBcatService::SetPassphrase(u64 application_id,
                                    InBuffer<BufferAttr_HipcPointer> passphrase_buffer) {
-    LOG_DEBUG(Service_BCAT, "called, application_id={:016X}, passphrase={}", application_id,
-              Common::HexToString(passphrase_buffer));
+    LOG_DEBUG(Service_BCAT, "called, application_id={:016X}", application_id);
 
     R_UNLESS(application_id != 0, ResultInvalidArgument);
     R_UNLESS(passphrase_buffer.size() <= 0x40, ResultInvalidArgument);

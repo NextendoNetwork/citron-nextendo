@@ -21,6 +21,7 @@
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/k_thread.h"
 #include "core/loader/nextendo_dungeons2_patch.h"
+#include "core/loader/home_nat_patch.h"
 #include "core/loader/nextendo_pvzbfn_patch.h"
 #include "core/loader/nextendo_s3_patches.h"
 #include "core/loader/nso.h"
@@ -203,6 +204,15 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
         }
 
         std::copy(pi_header.begin() + sizeof(NSOHeader), pi_header.end(), patchable_section.data());
+    }
+
+    // The optional HOME extension is all-or-nothing and checks both build and original
+    // instructions after mod patches. No firmware files or theme resources are rewritten.
+    if (pm && nso_file.GetName() == "main") {
+        if (Loader::HomeNatPatch::Apply(pm->GetTitleID(), nso_header.build_id,
+            std::span<u8>{program_image.data() + module_start, program_image.size() - module_start})) {
+            LOG_INFO(Loader, "HOME last NAT: native cache/status bridge applied for verified build");
+        }
     }
 
     // Apply the launch-fixed signed catalog entry independently of user mod patches.

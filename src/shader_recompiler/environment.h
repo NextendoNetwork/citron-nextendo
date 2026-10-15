@@ -66,6 +66,10 @@ public:
         return start_address;
     }
 
+    [[nodiscard]] u32 ProgramCodeAddress() const noexcept {
+        return start_address + (stage == Stage::Compute ? 0U : static_cast<u32>(sizeof(ProgramHeader)));
+    }
+
     [[nodiscard]] bool IsProprietaryDriver() const noexcept {
         return is_proprietary_driver;
     }

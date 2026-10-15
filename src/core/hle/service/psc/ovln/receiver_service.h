@@ -9,13 +9,15 @@
 namespace Service::PSC {
 
 class IReceiver;
+class NotificationBus;
 
 class IReceiverService final : public ServiceFramework<IReceiverService> {
 public:
-    explicit IReceiverService(Core::System& system_);
+    explicit IReceiverService(Core::System& system_, std::shared_ptr<NotificationBus> bus_);
     ~IReceiverService() override;
 
 private:
+    std::shared_ptr<NotificationBus> bus;
     Result OpenReceiver(Out<SharedPointer<IReceiver>> out_receiver);
 };
 

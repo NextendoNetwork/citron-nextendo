@@ -23,6 +23,7 @@
 #include "common/settings.h"
 #include "common/slot_vector.h"
 #include "video_core/buffer_cache/buffer_base.h"
+#include "video_core/buffer_cache/device_address_page_table.h"
 #include "video_core/control/channel_state_cache.h"
 #include "video_core/delayed_destruction_ring.h"
 #include "video_core/dirty_flags.h"
@@ -563,7 +564,7 @@ public:
     u32 buffer_count = 0;
     u32 large_buffer_count = 0;
 
-    std::array<BufferId, ((1ULL << 34) >> CACHING_PAGEBITS)> page_table;
+    DeviceAddressPageTable<BufferId, CACHING_PAGEBITS> page_table;
     Common::ScratchBuffer<u8> tmp_buffer;
 };
 

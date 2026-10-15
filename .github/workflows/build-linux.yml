@@ -5,7 +5,18 @@ concurrency:
   cancel-in-progress: true
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: Architecture to build (all preserves the nightly matrix)
+        required: true
+        default: all
+        type: choice
+        options: [all, x86_64, x86_64_v3, aarch64]
+      public_desktop_client_id:
+        description: Public desktop OAuth client identifier for beta sign-in (not an account token)
+        required: false
+        type: string
 
 jobs:
   check-version:
@@ -13,12 +24,31 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should_build: ${{ steps.compare.outputs.should_build }}
+      matrix: ${{ steps.plan.outputs.matrix }}
       new_hash: ${{ steps.head.outputs.hash_short }}
       new_hash_full: ${{ steps.head.outputs.hash_full }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Select build architectures
+        id: plan
+        env:
+          REQUESTED_ARCH: ${{ inputs.architecture || 'all' }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          rows = {
+              "x86_64": {"name": "Citron Build (Normal x86_64)", "os": "ubuntu-latest", "artifact_suffix": "_x86_64", "script_suffix": "", "arch_arg": ""},
+              "x86_64_v3": {"name": "Citron Build (Optimized x86_64)", "os": "ubuntu-latest", "artifact_suffix": "_v3", "script_suffix": "_v3", "arch_arg": "--arch v3"},
+              "aarch64": {"name": "Citron Build (aarch64)", "os": "ubuntu-24.04-arm", "artifact_suffix": "_aarch64", "script_suffix": "", "arch_arg": ""},
+          }
+          requested = os.environ["REQUESTED_ARCH"]
+          selected = list(rows.values()) if requested == "all" else [rows[requested]]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("matrix=" + json.dumps({"include": selected}) + "\n")
+          PY
 
       - name: Get current commit hash
         id: head
@@ -73,23 +103,7 @@ jobs:
 
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: "Citron Build (Normal x86_64)"
-            os: ubuntu-latest
-            artifact_suffix: "_x86_64"
-            script_suffix: ""
-            arch_arg: ""
-          - name: "Citron Build (Optimized x86_64)"
-            os: ubuntu-latest
-            artifact_suffix: "_v3"
-            script_suffix: "_v3"
-            arch_arg: "--arch v3"
-          - name: "Citron Build (aarch64)"
-            os: ubuntu-24.04-arm
-            artifact_suffix: "_aarch64"
-            script_suffix: ""
-            arch_arg: ""
+      matrix: ${{ fromJSON(needs.check-version.outputs.matrix) }}
 
     steps:
       - name: Install Git
@@ -140,6 +154,7 @@ jobs:
         env:
           APP_VERSION: ${{ steps.version.outputs.sha }}
           ARCH_SUFFIX: ${{ matrix.script_suffix }}
+          CITRON_NEXTENDO_DESKTOP_CLIENT_ID: ${{ inputs.public_desktop_client_id }}
         run: |
           NPROC_VAL=$(nproc --all)
           JOBS_VAL=$((NPROC_VAL > 4 ? 4 : NPROC_VAL))

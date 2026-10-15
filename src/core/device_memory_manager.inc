@@ -549,9 +549,11 @@ Asid DeviceMemoryManager<Traits>::RegisterProcess(Memory::Memory* memory_device_
 }
 
 template <typename Traits>
-void DeviceMemoryManager<Traits>::UnregisterProcess(Asid asid) {
+void DeviceMemoryManager<Traits>::UnregisterProcess(Asid asid, bool reuse_id) {
     registered_processes[asid.id] = nullptr;
-    id_pool.push_front(asid.id);
+    if (reuse_id) {
+        id_pool.push_front(asid.id);
+    }
 }
 
 template <typename Traits>
@@ -571,9 +573,6 @@ void DeviceMemoryManager<Traits>::UpdatePagesCachedCount(DAddr addr, size_t size
     size_t page = addr >> Memory::CITRON_PAGEBITS;
     auto [asid, base_vaddress] = ExtractCPUBacking(page);
     auto* memory_device_inter = registered_processes[asid.id];
-    if (memory_device_inter == nullptr) {
-        return;
-    }
 
     const auto release_pending = [&] {
         if (uncache_bytes > 0) {
@@ -605,6 +604,7 @@ void DeviceMemoryManager<Traits>::UpdatePagesCachedCount(DAddr addr, size_t size
         if (asid.id != asid_2.id) [[unlikely]] {
             release_pending();
             memory_device_inter = registered_processes[asid_2.id];
+            asid = asid_2;
         }
 
         if (vpage != old_vpage + 1) [[unlikely]] {
@@ -623,8 +623,10 @@ void DeviceMemoryManager<Traits>::UpdatePagesCachedCount(DAddr addr, size_t size
             }
             uncache_bytes += Memory::CITRON_PAGESIZE;
         } else if (uncache_bytes > 0) {
-            MarkRegionCaching(memory_device_inter, uncache_begin << Memory::CITRON_PAGEBITS,
-                              uncache_bytes, false);
+            if (memory_device_inter != nullptr) {
+                MarkRegionCaching(memory_device_inter, uncache_begin << Memory::CITRON_PAGEBITS,
+                                  uncache_bytes, false);
+            }
             uncache_bytes = 0;
         }
         if (count.load(std::memory_order::relaxed) == 1 && delta > 0) {
@@ -633,8 +635,10 @@ void DeviceMemoryManager<Traits>::UpdatePagesCachedCount(DAddr addr, size_t size
             }
             cache_bytes += Memory::CITRON_PAGESIZE;
         } else if (cache_bytes > 0) {
-            MarkRegionCaching(memory_device_inter, cache_begin << Memory::CITRON_PAGEBITS,
-                              cache_bytes, true);
+            if (memory_device_inter != nullptr) {
+                MarkRegionCaching(memory_device_inter, cache_begin << Memory::CITRON_PAGEBITS,
+                                  cache_bytes, true);
+            }
             cache_bytes = 0;
         }
     }

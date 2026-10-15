@@ -10,6 +10,7 @@
 #include "common/common_types.h"
 #include "common/logging.h"
 #include "core/core.h"
+#include "core/hle/kernel/k_process.h"
 #include "core/hle/service/nvdrv/core/container.h"
 #include "core/hle/service/nvdrv/core/heap_mapper.h"
 #include "core/hle/service/nvdrv/core/nvmap.h"
@@ -337,6 +338,17 @@ std::optional<NvMap::FreeInfo> NvMap::FreeHandle(Handle::Id handle, bool interna
         // Try to remove the shared ptr to the handle from the map, if nothing else is using the
         // handle then it will now be freed when `handle_description` goes out of scope
         if (TryRemoveHandle(*handle_description)) {
+            // A graphic buffer may hold the final internal reference after the
+            // guest frees its handle. Release the page-table device lock here,
+            // whichever caller drops that final reference.
+            if (handle_description->allocated) {
+                auto* session = core.GetSession(handle_description->session_id);
+                ASSERT(session && session->process);
+                ASSERT(session->process->GetPageTable()
+                           .UnlockForDeviceAddressSpace(handle_description->address,
+                                                        handle_description->size)
+                           .IsSuccess());
+            }
             LOG_DEBUG(Service_NVDRV, "Removed nvmap handle: {}", handle);
         } else {
             LOG_DEBUG(Service_NVDRV,
@@ -348,7 +360,7 @@ std::optional<NvMap::FreeInfo> NvMap::FreeHandle(Handle::Id handle, bool interna
             .address = handle_description->address,
             .size = handle_description->size,
             .was_uncached = handle_description->flags.map_uncached.Value() != 0,
-            .can_unlock = true,
+            .can_unlock = false, // The final release owns unlocking in this core path.
         };
     } else {
         return std::nullopt;

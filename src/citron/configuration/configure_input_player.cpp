@@ -32,6 +32,7 @@
 #include "ui_configure_input_player.h"
 #include "citron/bootmanager.h"
 #include "citron/configuration/configure_input_player.h"
+#include "citron/configuration/configure_dialog.h"
 #include "citron/configuration/configure_input_player_widget.h"
 #include "citron/configuration/configure_mouse_panning.h"
 #include "citron/configuration/input_profiles.h"
@@ -331,6 +332,13 @@ ConfigureInputPlayer::ConfigureInputPlayer(QWidget* parent, std::size_t player_i
     ui->setupUi(this);
 
     setFocusPolicy(Qt::ClickFocus);
+    auto* homebrew_shortcut = new QPushButton(tr("Homebrew Menu..."), this);
+    homebrew_shortcut->setToolTip(tr("Configure the separate Homebrew Menu shortcut. Default: Ctrl+H or L+R+Minus on Player 1. Open HOME first."));
+    ui->buttonMiscHomeVerticalLayout->addWidget(homebrew_shortcut);
+    homebrew_shortcut->setVisible(player_index == 0 && !debug);
+    connect(homebrew_shortcut, &QPushButton::clicked, this, [this] {
+        if (auto* dialog = qobject_cast<ConfigureDialog*>(window())) dialog->SelectHomebrewShortcut();
+    });
 
     button_map = {
         ui->buttonA,        ui->buttonB,       ui->buttonX,         ui->buttonY,

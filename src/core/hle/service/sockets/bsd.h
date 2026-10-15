@@ -75,6 +75,10 @@ private:
         // matching Ryujinx-Nextendo's own _feignedSockOpts behavior for the same option.
         std::optional<std::array<u8, 8>> vendor_linger_feigned;
         bool connected = false;
+        bool connection_speed_test{};
+        u64 speed_received_bytes{};
+        u64 speed_logged_bytes{};
+        s32 speed_last_error{-1};
         // [Nextendo][DIAG] Set on a successful ConnectImpl -- lets ShutdownImpl log how long
         // this specific connection actually lived before the guest gave up on it, to check for
         // a correlation with a round-number wall-clock deadline (grpc-core's own deadline_filter
@@ -274,6 +278,7 @@ private:
     Errno SetSockOptImpl(s32 fd, u32 level, OptName optname, std::span<const u8> optval);
     Errno ShutdownImpl(s32 fd, s32 how);
     std::pair<s32, Errno> RecvImpl(s32 fd, u32 flags, std::vector<u8>& message);
+    void RecordSpeedTestRead(s32 fd, s32 received, Errno error);
     std::pair<s32, Errno> RecvFromImpl(s32 fd, u32 flags, std::vector<u8>& message,
                                        std::vector<u8>& addr);
     std::pair<s32, Errno> SendImpl(s32 fd, u32 flags, std::span<const u8> message);

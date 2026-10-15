@@ -134,6 +134,22 @@ ConfigureHotkeys::ConfigureHotkeys(HotkeyRegistry& registry_, Core::HID::HIDCore
 
 ConfigureHotkeys::~ConfigureHotkeys() = default;
 
+void ConfigureHotkeys::SelectHomebrewShortcut() {
+    for (int group = 0; group < model->rowCount(); ++group) {
+        auto* parent = model->item(group);
+        for (int row = 0; row < parent->rowCount(); ++row) {
+            if (parent->child(row, 0)->data(Qt::UserRole).toString() == QStringLiteral("Open Homebrew Menu") ||
+                parent->child(row, 0)->text() == QStringLiteral("Open Homebrew Menu")) {
+                const auto index = parent->child(row, 0)->index();
+                ui->hotkey_list->expand(parent->index());
+                ui->hotkey_list->setCurrentIndex(index);
+                ui->hotkey_list->scrollTo(index);
+                return;
+            }
+        }
+    }
+}
+
 void ConfigureHotkeys::Populate(const std::string& profile_name) {
     const auto& profiles = profile_manager.GetProfiles();
     std::string target_profile = profile_name;

@@ -8,6 +8,8 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include "common/fs/path_util.h"
 #include <map>
 #include <mutex>
 #include <optional>
@@ -26,6 +28,7 @@
 #include "common/hex_util.h"
 #include "common/logging.h"
 #include "common/nextendo_account.h"
+#include "common/nextendo_friends.h"
 #include "common/string_util.h"
 #include "web_service/nextendo_api.h"
 
@@ -44,6 +47,29 @@ namespace {
 constexpr const char* CanonicalUrl = "https://nextendo.network";
 constexpr const char* ClientId = AppClientId;
 constexpr int TimeoutSeconds = 15;
+
+// Desktop client identifiers are public application metadata, never account credentials.
+std::string PublicDesktopClientId() {
+    if (const char* configured = std::getenv("CITRON_NEXTENDO_CLIENT_ID"); configured && *configured) {
+        return configured;
+    }
+    static const std::string bundled = [] {
+        std::string id;
+#ifdef _WIN32
+        std::ifstream file(Common::FS::GetExeDirectory() / "nextendo-public-client-id.txt");
+        std::getline(file, id);
+        while (!id.empty() && std::isspace(static_cast<unsigned char>(id.back()))) id.pop_back();
+        if (id.size() > 128 || !std::all_of(id.begin(), id.end(), [](unsigned char character) {
+                return std::isalnum(character) || character == '-' || character == '_';
+            })) id.clear();
+#endif
+#ifdef CITRON_NEXTENDO_DESKTOP_CLIENT_ID
+        if (id.empty()) id = CITRON_NEXTENDO_DESKTOP_CLIENT_ID;
+#endif
+        return id;
+    }();
+    return bundled;
+}
 
 struct Callback {
     std::mutex mutex;
@@ -277,8 +303,10 @@ httplib::Client& SharedClient() {
 // header and send nothing, which the server answers with 401.
 httplib::Headers BaseHeaders() {
     httplib::Headers headers{{"User-Agent", "citron"}};
-    if (*ClientId != '\0') {
-        headers.emplace("X-Nextendo-Client-Id", ClientId);
+    const auto desktop_id = PublicDesktopClientId();
+    const std::string effective_id = desktop_id.empty() ? ClientId : desktop_id;
+    if (!effective_id.empty()) {
+        headers.emplace("X-Nextendo-Client-Id", effective_id);
     }
     return headers;
 }
@@ -305,19 +333,31 @@ httplib::Result Send(const std::string& method, const std::string& path, const s
         LOG_ERROR(WebService, "Send {} {}: httplib error={}, openssl verify_result={} ({})",
                   method, path, httplib::to_string(result.error()), verify_result,
                   X509_verify_cert_error_string(verify_result));
+    } else if (result->status == 401) {
+        LOG_WARNING(WebService, "Nextendo HTTP 401: {} {}", method,
+                    path.substr(0, path.find('?')));
     }
     return result;
 }
 
-// A 401 on an authenticated call means the stored token is expired or revoked. Left in place it
-// keeps presenting an identity that is no longer ours, so drop the session and fall back to the
-// anonymous stub. Only a real 401 counts: network errors and 5xx must never clear a good session.
-bool ClearSessionIfRejected(const httplib::Result& result) {
+// An endpoint failure must not delete persistent credentials. Some deployed
+// endpoints reject OAuth despite userinfo accepting the very same credential.
+bool SessionAuthorizationRejected(const httplib::Result& result) {
     if (!result || result->status != 401) {
         return false;
     }
-    LOG_WARNING(WebService, "Nextendo rejected the stored account token; signing out");
-    Common::NextendoAccount::Clear();
+    const auto api_token = Common::NextendoAccount::GetApiToken();
+    if (!api_token.empty()) {
+        const auto identity = Send("GET", "/api/oauth/userinfo", {}, api_token);
+        if (!identity || identity->status != 401) {
+            LOG_WARNING(WebService,
+                        "Nextendo endpoint rejected request; OAuth session not revoked "
+                        "(userinfo HTTP {})", identity ? identity->status : 0);
+            return false;
+        }
+    }
+    LOG_WARNING(WebService,
+                "Nextendo authorization rejected; saved session retained for reauthorization");
     return true;
 }
 
@@ -356,6 +396,20 @@ std::string BaseUrl() {
 LoginResult SignInWithBrowser(const std::function<void(const std::string&)>& open_url) {
     LoginResult out;
 
+    // Public desktop application identity for an isolated developer build.
+    // PKCE remains mandatory; this is not a client secret or an account token.
+    const auto desktop_id = PublicDesktopClientId();
+    const bool developer_app = !desktop_id.empty();
+    const std::string client_id = developer_app ? desktop_id : ClientId;
+    if (client_id.empty()) {
+        out.error = "Nextendo sign-in configuration is missing. Please contact the distributor of this build.";
+        return out;
+    }
+    const std::string scopes = developer_app ? "identity+friends+presence+game.matchmaking" :
+        "identity+friends+sauvegardes+history+presence";
+    const char* authorize_path = developer_app ? "/oauth/authorize" : "/api/oauth/authorize";
+    const char* token_path = developer_app ? "/oauth/token" : "/api/oauth/token";
+
     const std::string verifier = RandomUrlSafe(32);
     const std::string challenge = Base64Url(Sha256(verifier));
     const std::string state = RandomUrlSafe(24);
@@ -387,12 +441,13 @@ LoginResult SignInWithBrowser(const std::function<void(const std::string&)>& ope
     const std::string redirect_uri = fmt::format("http://127.0.0.1:{}/callback", port);
 
     const std::string auth_url =
-        fmt::format("{}/api/oauth/authorize?response_type=code&client_id={}"
-                    "&redirect_uri={}&scope=identity+friends+sauvegardes+history+presence"
+        fmt::format("{}{}?response_type=code&client_id={}"
+                    "&redirect_uri={}&scope={}"
                     "&app=citron&state={}"
                     "&code_challenge={}&code_challenge_method=S256",
-                    BaseUrl(), ClientId, PercentEncode(redirect_uri), state, challenge);
-    LOG_INFO(WebService, "SignInWithBrowser: opening {}", auth_url);
+                    BaseUrl(), authorize_path, client_id, PercentEncode(redirect_uri), scopes,
+                    state, challenge);
+    LOG_INFO(WebService, "SignInWithBrowser: opening authorization (developer_app={})", developer_app);
     open_url(auth_url);
 
     {
@@ -421,15 +476,14 @@ LoginResult SignInWithBrowser(const std::function<void(const std::string&)>& ope
     }
     if (callback.state != state) {
         out.error = "Anti-CSRF check failed; the sign-in was not completed.";
-        LOG_ERROR(WebService, "SignInWithBrowser: state mismatch, expected={} got={}", state,
-                  callback.state);
+        LOG_ERROR(WebService, "SignInWithBrowser: state mismatch");
         return out;
     }
     LOG_INFO(WebService, "SignInWithBrowser: callback received, exchanging code for token");
 
     const httplib::Params form{
         {"grant_type", "authorization_code"}, {"code", callback.code},
-        {"client_id", ClientId},              {"redirect_uri", redirect_uri},
+        {"client_id", client_id},             {"redirect_uri", redirect_uri},
         {"code_verifier", verifier},
     };
 
@@ -439,7 +493,7 @@ LoginResult SignInWithBrowser(const std::function<void(const std::string&)>& ope
     client.set_follow_location(true);
     ApplyCaCertPath(client);
 
-    const auto result = client.Post("/api/oauth/token", BaseHeaders(), form);
+    const auto result = client.Post(token_path, BaseHeaders(), form);
     if (!result) {
         out.error = "Could not reach the Nextendo account server.";
         const long verify_result = client.get_openssl_verify_result();
@@ -452,19 +506,44 @@ LoginResult SignInWithBrowser(const std::function<void(const std::string&)>& ope
     }
     if (result->status != 200) {
         out.error = ErrorFrom(result->body, "Could not exchange the authorization code.");
-        LOG_ERROR(WebService, "SignInWithBrowser: token exchange failed (HTTP {}): {}",
-                  result->status, result->body);
+        LOG_ERROR(WebService, "SignInWithBrowser: token exchange failed (HTTP {})", result->status);
         return out;
     }
 
     try {
         const auto json = nlohmann::json::parse(result->body);
-        const auto& account = json.at("account");
+        // Developer OAuth returns a web access token, not the emulator's legacy
+        // account/nex_token response. Exchange it for the documented game token;
+        // an OAuth access token must never be placed in the BAAS nnex claim.
+        nlohmann::json game_login;
+        if (developer_app) {
+            const auto access_token = json.at("access_token").get<std::string>();
+            out.api_token = access_token;
+            if (access_token.empty()) {
+                out.error = "Nextendo returned an empty OAuth access token.";
+                return out;
+            }
+            auto headers = BaseHeaders();
+            headers.emplace("Authorization", "Bearer " + access_token);
+            const auto game_result = client.Get("/api/nex-token", headers);
+            if (!game_result || game_result->status != 200) {
+                const int status = game_result ? game_result->status : 0;
+                out.error = status == 403
+                    ? "Nextendo denied game access. Enable game.matchmaking for this developer "
+                      "application and authorize it again."
+                    : "Could not obtain the Nextendo game sign-in token. Sign in again.";
+                LOG_ERROR(WebService, "SignInWithBrowser: game-token exchange failed (HTTP {})",
+                          status);
+                return out;
+            }
+            game_login = nlohmann::json::parse(game_result->body);
+        }
+        const auto& account = developer_app ? game_login : json.at("account");
 
         out.pid = account.at("pid").get<u64>();
         out.username = account.value("username", std::string{});
         out.friend_code = account.value("friend_code", std::string{});
-        out.token = json.value("nex_token", std::string{});
+        out.token = (developer_app ? game_login : json).value("nex_token", std::string{});
 
         if (out.pid == 0 || out.token.empty()) {
             out.error = "The account server returned an incomplete sign-in.";
@@ -475,10 +554,9 @@ LoginResult SignInWithBrowser(const std::function<void(const std::string&)>& ope
         out.ok = true;
         LOG_INFO(WebService, "SignInWithBrowser: signed in as pid={} username={}", out.pid,
                  out.username);
-    } catch (const nlohmann::json::exception& e) {
-        out.error = fmt::format("Unexpected sign-in response: {}", e.what());
-        LOG_ERROR(WebService, "SignInWithBrowser: failed to parse token response: {} (body={})",
-                  e.what(), result->body);
+    } catch (const nlohmann::json::exception&) {
+        out.error = "Nextendo returned an unexpected sign-in response.";
+        LOG_ERROR(WebService, "SignInWithBrowser: unexpected token response schema");
     }
 
     return out;
@@ -487,13 +565,13 @@ LoginResult SignInWithBrowser(const std::function<void(const std::string&)>& ope
 OnlineStatus GetOnlineStatus() {
     OnlineStatus out;
 
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     if (token.empty()) {
         return out;
     }
 
     const auto result = Send("GET", "/api/online-status", {}, token);
-    if (ClearSessionIfRejected(result) || !result || result->status != 200) {
+    if (SessionAuthorizationRejected(result) || !result || result->status != 200) {
         return out;
     }
 
@@ -512,10 +590,10 @@ OnlineStatus GetOnlineStatus() {
 
 
 std::vector<u8> DownloadBcatSeed(const std::string& title_id_hex) {
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     const auto result = Send("GET", "/api/bcat/" + title_id_hex, {}, token);
 
-    if (ClearSessionIfRejected(result)) {
+    if (SessionAuthorizationRejected(result)) {
         return {};
     }
     if (!result || result->status != 200) {
@@ -534,10 +612,10 @@ std::string HashBcatSeedHex(const std::vector<u8>& data) {
 }
 
 std::optional<std::vector<u8>> PullSave(const std::string& title_id_hex) {
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     const auto result = Send("GET", "/api/save/" + title_id_hex, {}, token);
 
-    if (ClearSessionIfRejected(result)) {
+    if (SessionAuthorizationRejected(result)) {
         return std::nullopt;
     }
     if (!result || result->status == 204) {
@@ -552,11 +630,11 @@ std::optional<std::vector<u8>> PullSave(const std::string& title_id_hex) {
 }
 
 std::string PushSave(const std::string& title_id_hex, std::span<const u8> data) {
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     const std::string body(reinterpret_cast<const char*>(data.data()), data.size());
     const auto result = Send("POST", "/api/save/" + title_id_hex, body, token);
 
-    if (ClearSessionIfRejected(result)) {
+    if (SessionAuthorizationRejected(result)) {
         return "Session expired.";
     }
     if (!result) {
@@ -618,14 +696,14 @@ int GetNzpOnlineCount() {
 Profile GetProfile() {
     Profile out;
 
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     if (token.empty()) {
         out.error = "Not signed in.";
         return out;
     }
 
     const auto result = Send("GET", "/api/profile", {}, token);
-    if (ClearSessionIfRejected(result)) {
+    if (SessionAuthorizationRejected(result)) {
         out.error = "Your session expired. Sign in again.";
         return out;
     }
@@ -658,7 +736,7 @@ Profile GetProfile() {
 }
 
 std::string PushProfilePicture(const std::string& image_base64) {
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     if (token.empty()) {
         return "Not signed in.";
     }
@@ -683,7 +761,7 @@ std::string PushProfilePicture(const std::string& image_base64) {
     }
 
     const auto result = Send("POST", "/api/profile", body.dump(), token);
-    if (ClearSessionIfRejected(result)) {
+    if (SessionAuthorizationRejected(result)) {
         return "Your session expired. Sign in again.";
     }
     if (!result || result->status != 200) {
@@ -695,14 +773,14 @@ std::string PushProfilePicture(const std::string& image_base64) {
 }
 
 std::string SetUsername(const std::string& username) {
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     if (token.empty()) {
         return "Not signed in.";
     }
 
     const nlohmann::json body{{"Username", username}};
     const auto result = Send("PUT", "/api/username", body.dump(), token);
-    if (ClearSessionIfRejected(result)) {
+    if (SessionAuthorizationRejected(result)) {
         return "Your session expired. Sign in again.";
     }
     if (!result || result->status != 200) {
@@ -713,17 +791,17 @@ std::string SetUsername(const std::string& username) {
     return {};
 }
 
-HistoryList GetHistory() {
+static HistoryList FetchHistory(const std::string& path) {
     HistoryList out;
 
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     if (token.empty()) {
         out.error = "Not signed in.";
         return out;
     }
 
-    const auto result = Send("GET", "/api/history", {}, token);
-    if (ClearSessionIfRejected(result)) {
+    const auto result = Send("GET", path, {}, token);
+    if (SessionAuthorizationRejected(result)) {
         out.error = "Your session expired. Sign in again.";
         return out;
     }
@@ -759,8 +837,16 @@ HistoryList GetHistory() {
     return out;
 }
 
+HistoryList GetHistory() {
+    return FetchHistory("/api/history");
+}
+
+HistoryList GetFriendHistory(u64 pid) {
+    return FetchHistory(fmt::format("/api/friends/history?pid={}", pid));
+}
+
 void SyncHistory(const std::vector<HistoryEntry>& entries) {
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     if (token.empty() || entries.empty()) {
         return;
     }
@@ -792,7 +878,7 @@ void SyncHistory(const std::vector<HistoryEntry>& entries) {
     const auto result = client.Put("/api/history", headers,
                                    nlohmann::json{{"history", history}}.dump(), "application/json");
 
-    if (ClearSessionIfRejected(result)) {
+    if (SessionAuthorizationRejected(result)) {
         return;
     }
     if (!result || result->status != 200) {
@@ -813,12 +899,16 @@ Friend ParseFriend(const nlohmann::json& json) {
         out.name = json.value("username", std::string{});
     }
     out.friend_code = json.value("friend_code", std::string{});
+    if (const auto date = json.find("created_at"); date != json.end() && date->is_string()) {
+        out.member_since = date->get<std::string>();
+    }
     out.image_base64 = json.value("image", std::string{});
     out.account_hex = json.value("nsa", std::string{});
     if (out.account_hex.empty()) {
         out.account_hex = json.value("account_hex", std::string{});
     }
     out.is_console = json.value("plateforme", std::string{}) == "switch" || json.value("pf", 0) == 1;
+    out.platform = json.value("plateforme", std::string{});
     if (const auto presence = json.find("presence"); presence != json.end()) {
         out.presence_status = presence->value("status", s32{0});
         // The server hands back what the host published: base64 text wrapping the raw
@@ -829,6 +919,14 @@ Friend ParseFriend(const nlohmann::json& json) {
         out.app_field = std::string{reinterpret_cast<const char*>(decoded.data()), decoded.size()};
         out.app_id = presence->value("app_id", std::string{});
         out.app_name = presence->value("app_name", std::string{});
+        if (out.app_name.empty()) {
+            out.app_name = presence->value("jeu", std::string{});
+        }
+        // Production supplies the platform inside presence, alongside status
+        // and app_id. Looking only at the profile root loses console identity.
+        out.platform = presence->value("plateforme", out.platform);
+        out.app_detail = presence->value("app_detail", std::string{});
+        out.is_console = out.platform == "switch" || presence->value("pf", 0) == 1;
     }
     // [Nextendo] TEMP: unconditional (not gated on "presence" being present) so we can see
     // whether name/username ever actually comes back non-empty from the account server, or
@@ -855,12 +953,12 @@ LobbyPlayer ParseLobbyPlayer(const nlohmann::json& json) {
 
 // Shared shape for the mutation endpoints: POST {pid}, empty string means success.
 std::string PostPid(const std::string& path, u64 pid) {
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     if (token.empty()) {
         return "Not signed in.";
     }
     const auto result = Send("POST", path, nlohmann::json{{"pid", pid}}.dump(), token);
-    if (ClearSessionIfRejected(result)) {
+    if (SessionAuthorizationRejected(result)) {
         return "Your session expired. Sign in again.";
     }
     if (!result) {
@@ -876,6 +974,8 @@ std::string PostPid(const std::string& path, u64 pid) {
 
 std::string SendGameInvitation(u64 title_id, const std::vector<u64>& recipients,
                                std::span<const u8> data, std::span<const u8> description) {
+    // The deployed invitation service authenticates the signed game credential.
+    // OAuth is accepted by friends/userinfo but rejected here, even with matchmaking scope.
     const auto token = Common::NextendoAccount::GetToken();
     if (token.empty()) return "Sign in to Nextendo first.";
     if (recipients.empty() || recipients.size() > 15 || data.size() > 1024 ||
@@ -935,24 +1035,28 @@ std::string DismissGameInvitation(const std::string& id) {
 FriendList GetFriends() {
     FriendList out;
 
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     if (token.empty()) {
+        Common::NextendoFriends::SetAccountConnectionAvailable(false);
         out.error = "Not signed in.";
         return out;
     }
 
     const auto result = Send("GET", "/api/friends", {}, token);
-    if (ClearSessionIfRejected(result)) {
+    if (SessionAuthorizationRejected(result)) {
+        Common::NextendoFriends::SetAccountConnectionAvailable(false);
         out.error = "Your session expired. Sign in again.";
         LOG_WARNING(WebService, "GetFriends: {}", out.error);
         return out;
     }
     if (!result) {
+        Common::NextendoFriends::SetAccountConnectionAvailable(false);
         out.error = "Could not reach the Nextendo account server.";
         LOG_WARNING(WebService, "GetFriends: {}", out.error);
         return out;
     }
     if (result->status != 200) {
+        Common::NextendoFriends::SetAccountConnectionAvailable(false);
         out.error = ErrorFrom(result->body, fmt::format("Could not load friends (HTTP {}).",
                                                        result->status));
         LOG_WARNING(WebService, "GetFriends: {}", out.error);
@@ -975,17 +1079,18 @@ FriendList GetFriends() {
         LOG_WARNING(WebService, "GetFriends: {}", out.error);
     }
 
+    Common::NextendoFriends::SetAccountConnectionAvailable(out.ok);
     return out;
 }
 
 std::string AddFriendByCode(const std::string& friend_code) {
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     if (token.empty()) {
         return "Not signed in.";
     }
     const auto result =
         Send("POST", "/api/friends", nlohmann::json{{"friend_code", friend_code}}.dump(), token);
-    if (ClearSessionIfRejected(result)) {
+    if (SessionAuthorizationRejected(result)) {
         return "Your session expired. Sign in again.";
     }
     if (!result) {
@@ -1010,13 +1115,13 @@ std::string RemoveFriend(u64 pid) {
 }
 
 void PushProfileName(const std::string& name) {
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     if (token.empty() || name.empty()) {
         return;
     }
     const auto result =
         Send("POST", "/api/profile", nlohmann::json{{"name", name}}.dump(), token);
-    if (ClearSessionIfRejected(result)) {
+    if (SessionAuthorizationRejected(result)) {
         return;
     }
     if (!result || result->status != 200) {
@@ -1026,8 +1131,8 @@ void PushProfileName(const std::string& name) {
 }
 
 void PushPresence(s32 status, const std::string& app_field, const std::string& app_id,
-                  const std::string& app_name) {
-    const std::string token = Common::NextendoAccount::GetToken();
+                  const std::string& app_name, const std::string& app_detail) {
+    const std::string token = Common::NextendoAccount::GetApiToken();
     if (token.empty()) {
         return;
     }
@@ -1042,10 +1147,12 @@ void PushPresence(s32 status, const std::string& app_field, const std::string& a
                                             {"app_field", encoded_app_field},
                                             {"app_id", app_id},
                                             {"app_name", app_name},
-                                            {"app_detail", ""}}
+                                            {"plateforme", "citron"},
+                                            {"pf", 4},
+                                            {"app_detail", app_detail}}
                                  .dump();
     const auto result = Send("POST", "/api/presence", body, token);
-    if (ClearSessionIfRejected(result)) {
+    if (SessionAuthorizationRejected(result)) {
         return;
     }
     if (!result || result->status != 200) {
@@ -1059,13 +1166,13 @@ void PushPresence(s32 status, const std::string& app_field, const std::string& a
 Lobby GetMyLobby() {
     Lobby out;
 
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     if (token.empty()) {
         return out;
     }
 
     const auto result = Send("GET", "/api/my-lobby", {}, token);
-    if (ClearSessionIfRejected(result) || !result || result->status != 200) {
+    if (SessionAuthorizationRejected(result) || !result || result->status != 200) {
         return out;
     }
 
@@ -1098,13 +1205,13 @@ Lobby GetMyLobby() {
 std::vector<LobbyPlayer> GetRecentPlayers() {
     std::vector<LobbyPlayer> out;
 
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     if (token.empty()) {
         return out;
     }
 
     const auto result = Send("GET", "/api/recent-players", {}, token);
-    if (ClearSessionIfRejected(result) || !result || result->status != 200) {
+    if (SessionAuthorizationRejected(result) || !result || result->status != 200) {
         return out;
     }
 
@@ -1152,14 +1259,14 @@ std::string GetNameByPid(u64 pid) {
 }
 
 std::string ReportPlayer(u64 pid, const std::string& reason, const std::string& comment) {
-    const std::string token = Common::NextendoAccount::GetToken();
+    const std::string token = Common::NextendoAccount::GetApiToken();
     if (token.empty()) {
         return "Not signed in.";
     }
     const std::string body =
         nlohmann::json{{"target_pid", pid}, {"reason", reason}, {"comment", comment}}.dump();
     const auto result = Send("POST", "/api/report-player", body, token);
-    if (ClearSessionIfRejected(result)) {
+    if (SessionAuthorizationRejected(result)) {
         return "Your session expired. Sign in again.";
     }
     if (!result) {

@@ -1,0 +1,37 @@
+name: Beta54.3 focused regressions
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/beta54_3/**'
+      - '.github/workflows/beta54-3-regressions.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  focused-regressions:
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizers: [OFF, ON]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the same fmt revision as Citron
+        uses: actions/checkout@v4
+        with:
+          repository: fmtlib/fmt
+          ref: e8244777ee1c32df8233c215ac9ff626b2dd2c38
+          path: build/fmt-reference
+          persist-credentials: false
+      - name: Install JSON headers
+        run: sudo apt-get update && sudo apt-get install -y nlohmann-json3-dev qt6-base-dev
+      - name: Configure
+        run: cmake -S tests/beta54_3 -B build/beta54_3-tests -DCMAKE_BUILD_TYPE=Debug -DBETA54_3_SANITIZERS=${{ matrix.sanitizers }} -DFMT_INCLUDE_DIR=${{ github.workspace }}/build/fmt-reference/include
+      - name: Build
+        run: cmake --build build/beta54_3-tests --parallel 2
+      - name: Test
+        run: ctest --test-dir build/beta54_3-tests --output-on-failure
+      - name: Repeat concurrent lifecycle checks
+        run: ctest --test-dir build/beta54_3-tests -R domain-object-table --repeat until-fail:20 --output-on-failure

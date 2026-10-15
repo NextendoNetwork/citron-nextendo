@@ -15,6 +15,8 @@ set(CMAKE_JOB_POOL_LINK link_pool)
 add_executable(citron
     Info.plist
     about_dialog.cpp
+    discord_presence.cpp
+    discord_presence.h
     about_dialog.h
     aboutdialog.ui
     spinning_logo.cpp

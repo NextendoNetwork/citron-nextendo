@@ -13,8 +13,9 @@
 
 namespace Service::PSC {
 
-IReceiver::IReceiver(Core::System& system_)
-    : ServiceFramework{system_, "IReceiver"}, service_context{system_, "IReceiver"} {
+IReceiver::IReceiver(Core::System& system_, std::shared_ptr<NotificationBus> bus_)
+    : ServiceFramework{system_, "IReceiver"}, service_context{system_, "IReceiver"},
+      bus{std::move(bus_)}, receiver{} {
     // clang-format off
         static const FunctionInfo functions[] = {
             {0, D<&IReceiver::AddSource>, "AddSource"},
@@ -28,30 +29,40 @@ IReceiver::IReceiver(Core::System& system_)
     RegisterHandlers(functions);
 
     receive_event = service_context.CreateEvent("IReceiver::ReceiveEvent");
+    receiver.event = receive_event;
+    std::scoped_lock lock{bus->mutex};
+    bus->receivers.push_back(&receiver);
 }
 
 IReceiver::~IReceiver() {
+    std::scoped_lock lock{bus->mutex};
+    std::erase(bus->receivers, &receiver);
     service_context.CloseEvent(receive_event);
 }
 
 Result IReceiver::AddSource(SourceName source_name) {
+    std::scoped_lock lock{bus->mutex};
     const std::string name = source_name.GetString();
     LOG_INFO(Service_PSC, "called: source_name={}", name);
 
     // Add source if it doesn't already exist
-    if (message_sources.find(name) == message_sources.end()) {
-        message_sources[name] = {};
+    if (receiver.sources.find(name) == receiver.sources.end()) {
+        receiver.sources[name] = {};
     }
 
     R_SUCCEED();
 }
 
 Result IReceiver::RemoveSource(SourceName source_name) {
+    std::scoped_lock lock{bus->mutex};
     const std::string name = source_name.GetString();
     LOG_INFO(Service_PSC, "called: source_name={}", name);
 
     // Remove source if it exists
-    message_sources.erase(name);
+    receiver.sources.erase(name);
+    if (std::ranges::all_of(receiver.sources, [](const auto& item) { return item.second.empty(); })) {
+        receive_event->Clear();
+    }
 
     R_SUCCEED();
 }
@@ -62,61 +73,33 @@ Result IReceiver::GetReceiveEventHandle(OutCopyHandle<Kernel::KReadableEvent> ou
     R_SUCCEED();
 }
 
-Result IReceiver::Receive(Out<OverlayNotification> out_notification, Out<MessageFlags> out_flags) {
+Result IReceiver::Receive(Out<OverlayNotification> out_notification) {
     u64 tick;
-    return ReceiveWithTick(out_notification, out_flags, Out<u64>(&tick));
+    return ReceiveWithTick(out_notification, Out<u64>(&tick));
 }
 
-Result IReceiver::ReceiveWithTick(Out<OverlayNotification> out_notification,
-                                  Out<MessageFlags> out_flags, Out<u64> out_tick) {
-    LOG_DEBUG(Service_PSC, "called");
-
-    // Find the message with the lowest ID across all sources
-    const std::string* target_source = nullptr;
-    size_t target_index = 0;
-
-    for (const auto& [source_name, messages] : message_sources) {
-        if (!messages.empty()) {
-            if (target_source == nullptr) {
-                target_source = &source_name;
-                target_index = 0;
-            }
-            // Note: In the real implementation, we would track message IDs
-            // For now, just use FIFO order
+Result IReceiver::ReceiveWithTick(Out<OverlayNotification> out_notification, Out<u64> out_tick) {
+    std::scoped_lock lock{bus->mutex};
+    std::deque<NotificationBus::Message>* oldest = nullptr;
+    for (auto& [name, queue] : receiver.sources) {
+        if (!queue.empty() && (!oldest || queue.front().tick < oldest->front().tick)) {
+            oldest = &queue;
         }
     }
-
-    if (target_source != nullptr) {
-        auto& messages = message_sources[*target_source];
-        *out_notification = messages[target_index].first;
-        *out_flags = messages[target_index].second;
-        *out_tick = 0; // TODO: Implement tick tracking
-
-        // Remove the message
-        messages.erase(messages.begin() + target_index);
-
-        // Clear event if no more messages
-        bool has_messages = false;
-        for (const auto& [_, msgs] : message_sources) {
-            if (!msgs.empty()) {
-                has_messages = true;
-                break;
-            }
-        }
-        if (!has_messages) {
-            receive_event->Clear();
-        }
-
-        R_SUCCEED();
+    if (!oldest) {
+        *out_notification = {};
+        *out_tick = 0;
+        receive_event->Clear();
+        // The firmware receiver treats 25-12 as an empty queue.
+        R_THROW(Result{0x1819});
     }
-
-    // No messages available
-    *out_notification = {};
-    *out_flags = {};
-    *out_tick = 0;
-
-    LOG_WARNING(Service_PSC, "No messages available");
-    R_THROW(ResultUnknown); // TODO: Use proper OvlnResult::NoMessages when available
+    *out_notification = oldest->front().data;
+    *out_tick = oldest->front().tick;
+    oldest->pop_front();
+    if (std::ranges::all_of(receiver.sources, [](const auto& item) { return item.second.empty(); })) {
+        receive_event->Clear();
+    }
+    R_SUCCEED();
 }
 
 } // namespace Service::PSC

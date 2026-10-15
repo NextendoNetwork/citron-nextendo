@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <utility>
+#include <vector>
 #include <boost/container/flat_map.hpp>
 
 #include "core/hle/service/nvnflinger/buffer_item.h"
@@ -44,6 +46,7 @@ private:
     };
 
     boost::container::flat_map<ConsumerId, Framebuffer> m_framebuffers{};
+    boost::container::flat_map<u64, std::vector<std::pair<ConsumerId, s32>>> m_visible_stacks{};
 
 private:
     bool TryAcquireFramebufferLocked(Layer& layer, Framebuffer& framebuffer);

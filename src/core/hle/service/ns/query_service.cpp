@@ -33,7 +33,7 @@ IQueryService::IQueryService(Core::System& system_) : ServiceFramework{system_, 
         {14, D<&IQueryService::QueryRecentlyPlayedApplication>, "QueryRecentlyPlayedApplication"},
         {15, nullptr, "GetRecentlyPlayedApplicationUpdateEvent"},
         {16, nullptr, "QueryApplicationPlayStatisticsByUserAccountIdForSystemV0"},
-        {17, nullptr, "QueryLastPlayTime"},
+        {17, D<&IQueryService::QueryLastPlayTime>, "QueryLastPlayTime"},
         {18, D<&IQueryService::QueryApplicationPlayStatisticsForSystem>, "QueryApplicationPlayStatisticsForSystem"},
         {19, D<&IQueryService::QueryApplicationPlayStatisticsByUserAccountIdForSystem>, "QueryApplicationPlayStatisticsByUserAccountIdForSystem"},
     };
@@ -43,6 +43,18 @@ IQueryService::IQueryService(Core::System& system_) : ServiceFramework{system_, 
 }
 
 IQueryService::~IQueryService() = default;
+
+Result IQueryService::QueryLastPlayTime(
+    Out<s32> out_count, bool flag,
+    OutArray<LastPlayTime, BufferAttr_HipcMapAlias> out_times,
+    InArray<u64, BufferAttr_HipcMapAlias> application_ids) {
+    // No local timestamp database is available yet. Return an empty result rather
+    // than fabricating dates or aborting the native Data Management applet.
+    std::fill(out_times.begin(), out_times.end(), LastPlayTime{});
+    *out_count = 0;
+    LOG_INFO(Service_NS, "called, requested={} flag={} returned=0", application_ids.size(), flag);
+    R_SUCCEED();
+}
 
 Result IQueryService::QueryPlayStatisticsByApplicationIdAndUserAccountId(
     Out<PlayStatistics> out_play_statistics, bool unknown, u64 application_id, Uid account_id) {

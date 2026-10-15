@@ -6,6 +6,7 @@
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/frontend/emu_window.h"
+#include "core/hle/kernel/k_process.h"
 #include "core/memory.h"
 #include "hid_core/frontend/emulated_console.h"
 #include "hid_core/frontend/emulated_devices.h"
@@ -24,9 +25,16 @@ void SevenSixAxis::OnInit() {}
 void SevenSixAxis::OnRelease() {}
 
 void SevenSixAxis::OnUpdate(const Core::Timing::CoreTiming& core_timing) {
-    if (!IsControllerActivated() || transfer_memory == 0) {
+    std::scoped_lock lock{transfer_memory_mutex};
+    if (!IsControllerActivated() || transfer_memory.IsNull()) {
         seven_sixaxis_lifo.buffer_count = 0;
         seven_sixaxis_lifo.buffer_tail = 0;
+        return;
+    }
+
+    auto* owner = transfer_memory->GetOwner();
+    if (owner == nullptr || owner->IsTerminated()) {
+        transfer_memory.Reset(nullptr);
         return;
     }
 
@@ -51,12 +59,15 @@ void SevenSixAxis::OnUpdate(const Core::Timing::CoreTiming& core_timing) {
     };
 
     seven_sixaxis_lifo.WriteNextEntry(next_seven_sixaxis_state);
-    system.ApplicationMemory().WriteBlock(transfer_memory, &seven_sixaxis_lifo,
-                                          sizeof(seven_sixaxis_lifo));
+    // qlaunch and its application have separate address spaces. The transfer memory
+    // belongs to the game, even when HOME remains the system's main process.
+    owner->GetMemory().WriteBlock(transfer_memory->GetSourceAddress(), &seven_sixaxis_lifo,
+                                 sizeof(seven_sixaxis_lifo));
 }
 
-void SevenSixAxis::SetTransferMemoryAddress(Common::ProcessAddress t_mem) {
-    transfer_memory = t_mem;
+void SevenSixAxis::SetTransferMemory(Kernel::KTransferMemory* t_mem) {
+    std::scoped_lock lock{transfer_memory_mutex};
+    transfer_memory.Reset(t_mem);
 }
 
 void SevenSixAxis::ResetTimestamp() {

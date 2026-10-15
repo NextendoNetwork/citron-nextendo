@@ -7,6 +7,7 @@
 
 #include "common/hex_util.h"
 #include "common/string_util.h"
+#include "common/uch_account_transport.h"
 
 #include "core/core.h"
 #include "core/hle/result.h"
@@ -17,6 +18,7 @@
 #include "core/hle/service/sm/sm.h"
 #include "core/hle/service/sockets/bsd.h"
 #include "core/hle/service/ssl/cert_store.h"
+#include "core/hle/service/ssl/ctest_response.h"
 #include "core/hle/service/ssl/nextendo_nat_rewrite.h"
 #include "core/hle/service/ssl/ssl.h"
 #include "core/hle/service/ssl/ssl_backend.h"
@@ -125,6 +127,7 @@ public:
     }
 
     ~ISslConnection() {
+        Common::UchAccountTransport::Wipe(uch_account_pending);
         shared_data->connection_count--;
         if (socket) {
             UnregisterPendingCheck(socket.get());
@@ -153,6 +156,8 @@ private:
     bool get_server_cert_chain = false;
     std::shared_ptr<Network::SocketBase> socket;
     bool did_handshake = false;
+    bool connection_test_host{};
+    bool connection_test_ip_request{};
     u32 verify_option = 0;
     std::vector<std::string> requested_alpn_protos; // set via SetNextAlpnProto, see DoHandshakeImpl
 
@@ -209,6 +214,13 @@ private:
     }
 
     Result SetHostNameImpl(const std::string& hostname) {
+        connection_test_host = hostname == "api.hac.lp1.ctest.srv.nintendo.net";
+    Common::UchAccountTransport::Wipe(uch_account_pending);
+    uch_account_host = hostname == "api.braincloudservers.com";
+        const auto verification = backend->SetUchAccountVerification(Common::UchAccountTransport::Enabled(system.GetApplicationProcessProgramID()) &&
+            (uch_account_host || hostname == "na.ultimatechickenhorseserver.com" ||
+             hostname == "eu.ultimatechickenhorseserver.com" || hostname == "ap.ultimatechickenhorseserver.com"));
+        if (verification != ResultSuccess) return verification;
         LOG_DEBUG(Service_SSL, "called. hostname={}", hostname);
         ASSERT(!did_handshake);
         return backend->SetHostName(hostname);
@@ -243,6 +255,9 @@ private:
     Result DoHandshakeImpl() {
         ASSERT_OR_EXECUTE(!did_handshake && socket, { return ResultNoSocket; });
         Result res = backend->DoHandshake(requested_alpn_protos);
+        if (connection_test_host) {
+            LOG_INFO(Service_SSL, "Connection test TLS handshake result={}", res.raw);
+        }
         did_handshake = res.IsSuccess();
         return res;
     }
@@ -279,15 +294,87 @@ private:
         return ret;
     }
 
+    bool IsUnoDiagnostic() const {
+        const char* enabled = std::getenv("NEXTENDO_UNO_PROBE");
+        return enabled && std::string_view(enabled) == "1" &&
+               system.GetApplicationProcessProgramID() == 0x0100B6E012EBE000ULL;
+    }
+
+    u32 uno_previous_read_result{};
+    bool uch_account_host{};
+    std::vector<u8> uch_account_pending;
+    bool uno_eof_reported{};
+
     Result ReadImpl(std::vector<u8>* out_data) {
         ASSERT_OR_EXECUTE(did_handshake, { return ResultInternalError; });
+        const size_t read_capacity = out_data->size();
         size_t actual_size{};
         Result res = backend->Read(&actual_size, *out_data);
+        if (connection_test_host && res.IsSuccess()) {
+            unsigned status{};
+            if (actual_size >= 12 && std::memcmp(out_data->data(), "HTTP/1.", 7) == 0) {
+                for (size_t i = 9; i < 12; ++i) {
+                    const auto digit = (*out_data)[i];
+                    if (digit < '0' || digit > '9') {
+                        status = 0;
+                        break;
+                    }
+                    status = status * 10 + digit - '0';
+                }
+            }
+            LOG_INFO(Service_SSL, "Connection test TLS read bytes={} http_status={}; payload omitted",
+                     actual_size, status);
+            if (status != 0) {
+                const std::string_view response(reinterpret_cast<const char*>(out_data->data()),
+                                                actual_size);
+                const auto split = response.find("\r\n\r\n");
+                const auto headers = response.substr(0, split);
+                const auto body = split == std::string_view::npos ? std::string_view{} :
+                                  response.substr(split + 4);
+                LOG_INFO(Service_SSL,
+                         "Connection test HTTP shape: complete_headers={} body_bytes={} "
+                         "json_object={} date_header={} json_content_type={}; values omitted",
+                         split != std::string_view::npos, body.size(),
+                         body.starts_with("{"), headers.find("Date:") != std::string_view::npos ||
+                         headers.find("date:") != std::string_view::npos,
+                         headers.find("application/json") != std::string_view::npos);
+            }
+        }
+        if (IsUnoDiagnostic()) {
+            if (res.IsSuccess() && (actual_size > 0 || !uno_eof_reported)) {
+                LOG_INFO(Service_SSL, "[UNO diagnostic] TLS read bytes={} result={} eof={}",
+                         actual_size, res.raw, actual_size == 0);
+                uno_eof_reported = actual_size == 0;
+            } else if (!res.IsSuccess() && res.raw != uno_previous_read_result) {
+                LOG_INFO(Service_SSL, "[UNO diagnostic] TLS read result={}", res.raw);
+            }
+            uno_previous_read_result = res.raw;
+        }
         if (res != ResultSuccess) {
             LOG_DEBUG(Service_SSL, "Read failed, res={}", res.raw);
             return res;
         }
         out_data->resize(actual_size);
+        if (connection_test_host) {
+            if (connection_test_ip_request) {
+                const auto normalized = NormalizeCtestIpResponse(std::string_view{
+                    reinterpret_cast<const char*>(out_data->data()), out_data->size()});
+                if (normalized && normalized->size() <= read_capacity) {
+                    out_data->assign(normalized->begin(), normalized->end());
+                    LOG_INFO(Service_SSL,
+                             "Connection test IP response normalized: ip -> global_ip; "
+                             "Content-Length updated; address omitted");
+                } else if (normalized) {
+                    LOG_WARNING(Service_SSL,
+                                "Connection test response normalization exceeds read buffer");
+                }
+            }
+            return res;
+        }
+    if (uch_account_host && Common::UchAccountTransport::Enabled(system.GetApplicationProcessProgramID())) {
+        Common::UchAccountTransport::Observe(*out_data, uch_account_pending);
+        return res;
+    }
         LOG_DEBUG(Service_SSL, "Read {} bytes: {}", actual_size,
                   Common::HexToString(*out_data, false));
         return res;
@@ -301,9 +388,24 @@ private:
         const std::span<const u8> send_data = did_rewrite ? std::span<const u8>(rewritten) : data;
 
         const Result res = backend->Write(out_size, send_data);
+        if (connection_test_host) {
+            const std::string_view request(reinterpret_cast<const char*>(send_data.data()),
+                                           send_data.size());
+            const auto route = request.starts_with("GET /v1/time ") ? "time" :
+                               request.starts_with("GET /v1/ip ") ? "ip" : "other";
+            connection_test_ip_request = request.starts_with("GET /v1/ip ");
+            LOG_INFO(Service_SSL, "Connection test TLS write route={} bytes={} result={}; payload omitted",
+                     route, *out_size, res.raw);
+            return res;
+        }
+        if (IsUnoDiagnostic()) {
+            LOG_INFO(Service_SSL, "[UNO diagnostic] TLS write requested={} written={} result={}",
+                     send_data.size(), *out_size, res.raw);
+        }
         if (did_rewrite && res.IsSuccess()) {
             *out_size = data.size();
         }
+    if (uch_account_host && Common::UchAccountTransport::Enabled(system.GetApplicationProcessProgramID())) return res;
         LOG_DEBUG(Service_SSL, "Write {} bytes, res={}: {}", *out_size, res.raw,
                   Common::HexToString(send_data.subspan(0, send_data.size()), false));
         return res;
@@ -366,12 +468,22 @@ private:
             res = backend->GetServerCerts(&certs);
             if (res == ResultSuccess) {
                 const std::vector<u8> certs_buf = SerializeServerCerts(certs);
-                // A caller may pass no buffer just to size the chain.
-                if (ctx.CanWriteBuffer() && ctx.GetWriteBufferSize() >= certs_buf.size()) {
+                // Preserve main's size-query contract for every caller. The beta's
+                // UNO diagnostics must not add an unconditional second write.
+                const size_t capacity = ctx.CanWriteBuffer() ? ctx.GetWriteBufferSize() : 0;
+                if (capacity >= certs_buf.size() && ctx.CanWriteBuffer()) {
                     ctx.WriteBuffer(certs_buf);
                 }
                 out.certs_count = static_cast<u32>(certs.size());
                 out.certs_size = static_cast<u32>(certs_buf.size());
+                const char* uno_probe = std::getenv("NEXTENDO_UNO_PROBE");
+                const bool uno_diagnostic = uno_probe && std::string_view{uno_probe} == "1" &&
+                    system.GetApplicationProcessProgramID() == 0x0100B6E012EBE000ULL;
+                if (uno_diagnostic && capacity == 0) {
+                    LOG_INFO(Service_SSL, "[UNO diagnostic] Certificate size query; no output write");
+                } else if (uno_diagnostic && capacity < certs_buf.size()) {
+                    res = ResultInternalError;
+                }
             }
         }
         IPC::ResponseBuilder rb{ctx, 4};

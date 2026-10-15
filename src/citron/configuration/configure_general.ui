@@ -76,7 +76,7 @@
      <item>
       <widget class="QGroupBox" name="ExternalContentGroupBox">
        <property name="title">
-        <string>External Content Directories</string>
+        <string>Updates / DLC folders</string>
        </property>
        <layout class="QVBoxLayout" name="ExternalContentVerticalLayout">
         <item>

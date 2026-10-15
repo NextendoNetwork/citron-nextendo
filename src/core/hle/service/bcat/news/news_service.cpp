@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "core/hle/service/bcat/news/news_service.h"
+#include "core/hle/kernel/k_auto_object.h"
+#include "core/hle/service/bcat/news/download_context.h"
+#include "core/hle/service/bcat/news/newly_arrived_event_holder.h"
+#include "core/hle/service/bcat/news/news_data_service.h"
+#include "core/hle/service/bcat/news/news_database_service.h"
 #include "core/hle/service/cmif_serialization.h"
 
 namespace Service::News {
@@ -95,23 +100,36 @@ Result INewsService::DecodeArchiveFile(InBuffer<BufferAttr_HipcPointer> archive_
     R_SUCCEED();
 }
 
-Result INewsService::Unknown30500() {
-    LOG_WARNING(Service_BCAT, "(STUBBED) called");
+Result INewsService::Unknown30500(OutInterface<IDownloadContext> out_context,
+                                 InBuffer<BufferAttr_HipcPointer> filter,
+                                 InCopyHandle<Kernel::KAutoObject> transfer_handle,
+                                 u64 transfer_size) {
+    // Firmware's INewsService returns an IDownloadContext domain object.
+    // Returning success without it makes the client use an invalid object id.
+    LOG_INFO(Service_BCAT, "Create download context: filter_bytes={} transfer_size={} handle={}",
+             filter.size(), transfer_size, transfer_handle.Get() != nullptr);
+    *out_context = std::make_shared<IDownloadContext>(system);
     R_SUCCEED();
 }
 
-Result INewsService::Unknown30900() {
-    LOG_WARNING(Service_BCAT, "(STUBBED) called");
+Result INewsService::Unknown30900(OutInterface<INewlyArrivedEventHolder> out_interface) {
+    // Legacy (1.0.0) INewsService factory: success must include the domain object.
+    LOG_INFO(Service_BCAT, "called");
+    *out_interface = std::make_shared<INewlyArrivedEventHolder>(system);
     R_SUCCEED();
 }
 
-Result INewsService::Unknown30901() {
-    LOG_WARNING(Service_BCAT, "(STUBBED) called");
+Result INewsService::Unknown30901(OutInterface<INewsDataService> out_interface) {
+    // Legacy (1.0.0) INewsService factory: success must include the domain object.
+    LOG_INFO(Service_BCAT, "called");
+    *out_interface = std::make_shared<INewsDataService>(system);
     R_SUCCEED();
 }
 
-Result INewsService::Unknown30902() {
-    LOG_WARNING(Service_BCAT, "(STUBBED) called");
+Result INewsService::Unknown30902(OutInterface<INewsDatabaseService> out_interface) {
+    // Legacy (1.0.0) INewsService factory: success must include the domain object.
+    LOG_INFO(Service_BCAT, "called");
+    *out_interface = std::make_shared<INewsDatabaseService>(system);
     R_SUCCEED();
 }
 

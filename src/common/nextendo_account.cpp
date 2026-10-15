@@ -6,10 +6,14 @@
 #include <vector>
 
 #include <fmt/format.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include "common/fs/file.h"
 #include "common/fs/fs.h"
 #include "common/fs/path_util.h"
+#include "common/logging.h"
 #include "common/nextendo_account.h"
 #include "common/settings.h"
 #include "common/string_util.h"
@@ -25,6 +29,7 @@ u64 g_pid = 0;
 std::string g_username;
 std::string g_friend_code;
 std::string g_token;
+std::string g_api_token;
 u64 g_generation = 0;
 
 std::filesystem::path FilePath() {
@@ -88,6 +93,8 @@ void EnsureLoaded() {
             g_friend_code = value;
         } else if (key == "token") {
             g_token = value;
+        } else if (key == "api_token") {
+            g_api_token = value;
         }
     }
 }
@@ -96,9 +103,30 @@ void EnsureLoaded() {
 void WriteFile() {
     void(FS::CreateParentDirs(FilePath()));
     const std::string contents =
-        fmt::format("pid={}\nusername={}\nfriend_code={}\ntoken={}\n", g_pid, g_username,
-                    g_friend_code, g_token);
-    void(FS::WriteStringToFile(FilePath(), FS::FileType::TextFile, contents));
+        fmt::format("pid={}\nusername={}\nfriend_code={}\ntoken={}\napi_token={}\n", g_pid, g_username,
+                    g_friend_code, g_token, g_api_token);
+    // Never truncate the saved login before the replacement has been written.
+    // A crash or failed write must leave the previous session usable.
+    auto temporary = FilePath();
+    temporary += ".tmp";
+    {
+        FS::IOFile file{temporary, FS::FileAccessMode::Write, FS::FileType::TextFile};
+        if (file.WriteString(contents) != contents.size() || !file.Flush()) {
+            LOG_ERROR(WebService, "Could not write Nextendo session; previous file retained");
+            return;
+        }
+    }
+#ifdef _WIN32
+    const bool replaced = MoveFileExW(temporary.c_str(), FilePath().c_str(),
+                                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+    std::error_code error;
+    std::filesystem::rename(temporary, FilePath(), error);
+    const bool replaced = !error;
+#endif
+    if (!replaced) {
+        LOG_ERROR(WebService, "Could not replace Nextendo session; previous file retained");
+    }
 }
 
 } // Anonymous namespace
@@ -133,6 +161,12 @@ std::string GetToken() {
     return g_token;
 }
 
+std::string GetApiToken() {
+    std::lock_guard lock{g_mutex};
+    EnsureLoaded();
+    return g_api_token.empty() ? g_token : g_api_token;
+}
+
 u64 GetGeneration() {
     std::lock_guard lock{g_mutex};
     EnsureLoaded();
@@ -140,13 +174,14 @@ u64 GetGeneration() {
 }
 
 void Save(u64 pid, std::string_view username, std::string_view friend_code,
-          std::string_view token) {
+          std::string_view token, std::string_view api_token) {
     std::lock_guard lock{g_mutex};
     g_loaded = true;
     g_pid = pid;
     g_username = username;
     g_friend_code = friend_code;
     g_token = token;
+    g_api_token = api_token;
     ++g_generation;
     WriteFile();
 }
@@ -158,6 +193,7 @@ void Clear() {
     g_username.clear();
     g_friend_code.clear();
     g_token.clear();
+    g_api_token.clear();
     ++g_generation;
     void(FS::RemoveFile(FilePath()));
 }

@@ -1963,6 +1963,8 @@ build_common_cmake_args() {
         "-DCITRON_USE_PRECOMPILED_HEADERS=OFF"
         "-DCITRON_USE_CPM=ON"
         "-DCITRON_CHECK_SUBMODULES=OFF"
+        "-DFETCHCONTENT_BASE_DIR=${CMAKE_BUILD_ROOT}/_deps"
+        "-DCMAKE_OBJECT_PATH_MAX=250"
         "-DCPM_SOURCE_CACHE=${CMAKE_CPM_CACHE}"
         "-Wno-dev"
     )
@@ -2611,7 +2613,7 @@ stage_use() {
 
         info "Configuring CMake (no-PGO Windows PE, LTO=${LTO_MODE})..."
         cd "${nopgo_dir}"
-        rm -f CMakeCache.txt; rm -rf CMakeFiles
+        # Local diagnostic retry: retain configure probes and compiled dependencies.
 
         # shellcheck disable=SC2034  # _CMAKE_ARGS used via array expansion below
         build_common_cmake_args
@@ -3280,7 +3282,7 @@ XBYAK_PATCH_EOF
         warn "ELF cmake configure failed — re-running with --trace-expand to find silent FATAL_ERROR..."
         echo ""
         # Wipe cache so trace run starts fresh
-        rm -f CMakeCache.txt; rm -rf CMakeFiles
+        # Local diagnostic retry: retain configure probes and compiled dependencies.
         local _trace_log="${BUILD_USE_ELF}/cmake-trace.log"
         set +e
         cmake "${_elf_cmake_args[@]}" --trace-expand 2>&1 | tee "${_trace_log}"

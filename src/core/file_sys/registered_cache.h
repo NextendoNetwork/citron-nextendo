@@ -49,6 +49,9 @@ enum class InstallResult {
     ErrorBaseInstall,
 };
 
+// Container provenance is independent of the host drive (including a microSD).
+enum class ContentOrigin : u8 { Unknown, DigitalPackage, GameCardImage };
+
 struct ContentProviderEntry {
     u64 title_id;
     ContentRecordType type;
@@ -81,6 +84,9 @@ public:
     virtual ~ContentProvider();
 
     virtual bool IsUnionProvider() const { return false; }
+    virtual ContentOrigin GetEntryOrigin(u64 title_id, ContentRecordType type) const {
+        return ContentOrigin::Unknown;
+    }
 
     virtual void Refresh() = 0;
 
@@ -235,6 +241,7 @@ public:
     ~ContentProviderUnion() override;
 
     bool IsUnionProvider() const override { return true; }
+    ContentOrigin GetEntryOrigin(u64 title_id, ContentRecordType type) const override;
     
     void SetSlot(ContentProviderUnionSlot slot, ContentProvider* provider);
     void SetSlots(
@@ -276,10 +283,12 @@ public:
     ~ManualContentProvider() override;
 
     void AddEntry(TitleType title_type, ContentRecordType content_type, u64 title_id,
-                  VirtualFile file);
+                  VirtualFile file, ContentOrigin origin = ContentOrigin::Unknown);
+    ContentOrigin GetEntryOrigin(u64 title_id, ContentRecordType type) const override;
     void AddEntryWithVersion(TitleType title_type, ContentRecordType content_type, u64 title_id,
                              u32 version, const std::string& version_string, VirtualFile file);
     void ClearAllEntries();
+    void ReplaceEntriesFrom(ManualContentProvider& snapshot);
 
     void Refresh() override;
     bool HasEntry(u64 title_id, ContentRecordType type) const override;
@@ -296,7 +305,9 @@ public:
     bool HasMultipleVersions(u64 title_id, ContentRecordType type) const;
 
 private:
+    mutable std::shared_mutex entries_mutex;
     std::map<std::tuple<TitleType, ContentRecordType, u64>, VirtualFile> entries;
+    std::map<std::tuple<TitleType, ContentRecordType, u64>, ContentOrigin> origins;
     std::vector<ExternalUpdateEntry> multi_version_entries;
 };
 

@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <cstring>
+
 #include "common/common_funcs.h"
 #include "common/uuid.h"
 #include "core/file_sys/romfs_factory.h"
@@ -61,17 +63,34 @@ struct ApplicationRecord {
 };
 static_assert(sizeof(ApplicationRecord) == 0x18, "ApplicationRecord has incorrect size.");
 
+struct ApplicationContentMetaStatus {
+    u8 type;
+    FileSys::StorageId storage_id;
+    u8 rights_check; // NotChecked: inventory does not grant rights.
+    u8 reserved;
+    u32 version;
+    u64 title_id;
+};
+static_assert(sizeof(ApplicationContentMetaStatus) == 0x10);
+
 /// ApplicationDownloadProgress
 struct ApplicationDownloadProgress {
     u64 downloaded_size;
     u64 total_size;
     u32 last_result;
     ApplicationDownloadState state;
-    bool is_running;
-    INSERT_PADDING_BYTES_NOINIT(0x2);
-    u64 time;
+    INSERT_PADDING_BYTES(0x3);
 };
-static_assert(sizeof(ApplicationDownloadProgress) == 0x20, "ApplicationDownloadProgress has incorrect size.");
+static_assert(sizeof(ApplicationDownloadProgress) == 0x18);
+
+struct ApplicationApplyDeltaProgress {
+    u64 applied_size;
+    u64 total_size;
+    u32 last_result;
+    u8 state = 4; // NoTask; zero would mean Applying.
+    INSERT_PADDING_BYTES(0x3);
+};
+static_assert(sizeof(ApplicationApplyDeltaProgress) == 0x18);
 
 struct ApplicationRightsOnClient {
     u64 application_id;
@@ -101,27 +120,42 @@ struct ApplicationViewV19 {
     u32 version;
     u32 flags;
     ApplicationDownloadProgress download_state;
-    ApplicationDownloadProgress download_progress;
+    ApplicationApplyDeltaProgress download_progress;
 };
-static_assert(sizeof(ApplicationViewV19) == 0x50, "ApplicationViewV19 has incorrect size.");
+static_assert(sizeof(ApplicationViewV19) == 0x40);
+static_assert(offsetof(ApplicationViewV19, download_progress) == 0x28);
+
+struct ApplicationViewLegacy {
+    u64 application_id;
+    u32 version;
+    u32 flags;
+    ApplicationDownloadProgress download_state;
+    INSERT_PADDING_BYTES(0x8);
+    ApplicationApplyDeltaProgress download_progress;
+    INSERT_PADDING_BYTES(0x8);
+};
+static_assert(sizeof(ApplicationViewLegacy) == 0x50);
 
 struct ApplicationViewV20 {
     u64 application_id;
     u32 version;
     u32 flags;
-    u32 unk;
+    INSERT_PADDING_BYTES(0x8);
     ApplicationDownloadProgress download_state;
-    ApplicationDownloadProgress download_progress;
+    INSERT_PADDING_BYTES(0x8);
+    ApplicationApplyDeltaProgress download_progress;
+    INSERT_PADDING_BYTES(0x8);
 };
-static_assert(sizeof(ApplicationViewV20) == 0x58, "ApplicationViewV20 has incorrect size.");
+static_assert(sizeof(ApplicationViewV20) == 0x58);
+static_assert(offsetof(ApplicationViewV20, download_state) == 0x18);
+static_assert(offsetof(ApplicationViewV20, download_progress) == 0x38);
 
 struct ApplicationViewData {
     u64 application_id{};
     u32 version{};
     u32 flags{};
-    u32 unk{};
     ApplicationDownloadProgress download_state{};
-    ApplicationDownloadProgress download_progress{};
+    ApplicationApplyDeltaProgress download_progress{};
 };
 
 inline size_t WriteApplicationView(void* dst, size_t dst_size, const ApplicationViewData& data,
@@ -129,16 +163,17 @@ inline size_t WriteApplicationView(void* dst, size_t dst_size, const Application
     if (is_fw20) {
         if (dst_size < sizeof(ApplicationViewV20)) return 0;
         auto* out = reinterpret_cast<ApplicationViewV20*>(dst);
+        *out = {};
         out->application_id = data.application_id;
         out->version = data.version;
         out->flags = data.flags;
-        out->unk = data.unk;
         out->download_state = data.download_state;
         out->download_progress = data.download_progress;
         return sizeof(ApplicationViewV20);
     } else {
         if (dst_size < sizeof(ApplicationViewV19)) return 0;
         auto* out = reinterpret_cast<ApplicationViewV19*>(dst);
+        *out = {};
         out->application_id = data.application_id;
         out->version = data.version;
         out->flags = data.flags;
@@ -155,14 +190,33 @@ struct ApplicationViewWithPromotionData {
 
 inline size_t WriteApplicationViewWithPromotion(void* dst, size_t dst_size,
                                                 const ApplicationViewWithPromotionData& data,
-                                                bool sdk20_plus) {
-    const size_t view_written = WriteApplicationView(dst, dst_size, data.view, sdk20_plus);
+                                                bool extended_view, size_t entry_size) {
+    const bool legacy_view = extended_view && entry_size == 0x70;
+    const size_t view_size = legacy_view ? sizeof(ApplicationViewLegacy)
+        : extended_view ? sizeof(ApplicationViewV20) : sizeof(ApplicationViewV19);
+    if (entry_size < view_size + sizeof(PromotionInfo) || dst_size < entry_size) return 0;
+    // Firmware 20 extends ApplicationView itself to 0x58; the promotion follows
+    // at 0x58, giving the 0x78 stride requested by HOME's SDK.
+    std::memset(dst, 0, entry_size);
+    size_t view_written{};
+    if (legacy_view) {
+        ApplicationViewLegacy view{};
+        view.application_id = data.view.application_id;
+        view.version = data.view.version;
+        view.flags = data.view.flags;
+        view.download_state = data.view.download_state;
+        view.download_progress = data.view.download_progress;
+        std::memcpy(dst, &view, sizeof(view));
+        view_written = sizeof(view);
+    } else {
+        view_written = WriteApplicationView(dst, dst_size, data.view, extended_view);
+    }
     if (view_written == 0) return 0;
     const size_t remaining = dst_size - view_written;
     if (remaining < sizeof(PromotionInfo)) return 0;
     auto* promo_dst = reinterpret_cast<u8*>(dst) + view_written;
     std::memcpy(promo_dst, &data.promotion, sizeof(PromotionInfo));
-    return view_written + sizeof(PromotionInfo);
+    return entry_size;
 }
 
 struct ApplicationOccupiedSizeEntity {

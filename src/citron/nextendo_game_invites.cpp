@@ -8,8 +8,11 @@
 #include <QtConcurrent/QtConcurrent>
 #include "citron/nextendo_game_invites.h"
 #include "common/nextendo_account.h"
+#include "common/logging.h"
 #include "common/settings.h"
 #include "core/core.h"
+#include "core/file_sys/registered_cache.h"
+#include "core/file_sys/nca_metadata.h"
 #include "core/hle/service/acc/profile_manager.h"
 #include "core/hle/service/am/applet.h"
 #include "core/hle/service/am/applet_manager.h"
@@ -39,6 +42,21 @@ NextendoGameInvites::NextendoGameInvites(Core::System& system_, QObject* parent)
     poll_timer.setInterval(10000);
     // Outside a game only the Friends page asks, so idle clients don't poll.
     connect(&poll_timer, &QTimer::timeout, this, [this] {
+        if (!launching_invitation.isEmpty()) {
+            if (!system.IsPoweredOn() || launching_generation != Common::NextendoAccount::GetGeneration()) {
+                launching_invitation.clear();
+            } else {
+                auto* windows = system.GetAppletManager().GetWindowSystem();
+                const auto app = windows ? const_cast<Service::AM::WindowSystem*>(windows)->GetMainApplet() : nullptr;
+                const auto pending = std::find_if(invites.begin(), invites.end(), [this](const Invite& invite) {
+                    return invite.id == launching_invitation.toStdString();
+                });
+                if (app && pending != invites.end() && app->program_id == pending->title_id) {
+                    Decline(launching_invitation);
+                    launching_invitation.clear();
+                }
+            }
+        }
         if (system.IsPoweredOn()) {
             Refresh();
         } else if (PruneExpired()) {
@@ -82,11 +100,12 @@ void NextendoGameInvites::Refresh() {
         std::erase_if(invites, Expired);
         std::sort(invites.begin(), invites.end(),
                   [](const Invite& a, const Invite& b) { return a.expires_at > b.expires_at; });
-        const u64 running = system.IsPoweredOn() ? system.GetApplicationProcessProgramID() : 0;
         std::set<std::string> current;
         for (const auto& invite : invites) {
             current.insert(invite.id);
-            if (!seen.contains(invite.id) && invite.title_id == running) {
+            // HOME must receive invitations too, before the invited game starts.
+            if (!seen.contains(invite.id)) {
+                LOG_INFO(Frontend, "Nextendo invitation received: title={:016X}", invite.title_id);
                 emit Received(QString::fromStdString(invite.id),
                               QString::fromStdString(invite.sender_name), invite.sender_pid);
             }
@@ -118,9 +137,7 @@ QString NextendoGameInvites::Accept(const QString& id) {
         system.IsPoweredOn() ? system.GetAppletManager().GetWindowSystem() : nullptr;
     const auto app =
         windows ? const_cast<Service::AM::WindowSystem*>(windows)->GetMainApplet() : nullptr;
-    if (!app || system.GetApplicationProcessProgramID() != it->title_id) {
-        return tr("Start the game you were invited to, then accept the invitation.");
-    }
+    if (!app) return tr("Open HOME before accepting this invitation.");
     const auto user =
         system.GetProfileManager().GetUser(Settings::values.current_user.GetValue());
     if (!user) {
@@ -129,6 +146,21 @@ QString NextendoGameInvites::Accept(const QString& id) {
     std::vector<u8> storage(sizeof(*user) + it->user_data.size());
     std::memcpy(storage.data(), &*user, sizeof(*user));
     std::copy(it->user_data.begin(), it->user_data.end(), storage.begin() + sizeof(*user));
+    if (app->program_id != it->title_id) {
+        if (app->applet_id != Service::AM::AppletId::QLaunch) {
+            return tr("Close the current game from HOME before accepting this invitation.");
+        }
+        if (!system.GetContentProviderUnion().GetEntryRaw(it->title_id, FileSys::ContentRecordType::Program)) {
+            return tr("Install the invited game before accepting this invitation.");
+        }
+        if (!const_cast<Service::AM::WindowSystem*>(windows)->RequestInvitationLaunch(it->title_id, std::move(storage))) {
+            return tr("HOME already has a pending game launch.");
+        }
+        launching_invitation = id;
+        launching_generation = Common::NextendoAccount::GetGeneration();
+        LOG_INFO(Frontend, "Accepted invitation queued for HOME: title={:016X}", it->title_id);
+        return {};
+    }
     {
         std::scoped_lock lock{app->lock};
         if (app->friend_invitation_storage_channel.size() >= 32) {
@@ -137,13 +169,14 @@ QString NextendoGameInvites::Accept(const QString& id) {
         app->friend_invitation_storage_channel.push_back(std::move(storage));
         app->friend_invitation_storage_channel_event.Signal();
     }
+    const_cast<Service::AM::WindowSystem*>(windows)->RequestApplicationToGetForeground();
     Decline(id);
     return {};
 }
 
 void NextendoGameInvites::Decline(const QString& id) {
-    (void)QtConcurrent::run([id = id.toStdString()] {
-        return WebService::NextendoApi::DismissGameInvitation(id);
+    (void)QtConcurrent::run([invitation_id = id.toStdString()] {
+        return WebService::NextendoApi::DismissGameInvitation(invitation_id);
     });
     Remove(id);
 }

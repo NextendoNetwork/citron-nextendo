@@ -41,6 +41,8 @@ struct Applet {
     std::unique_ptr<Process> process;
     std::optional<ProcessHolder> process_holder;
     bool is_process_running{};
+    // Album override and the frontend shortcut share the same HOME return path.
+    bool is_homebrew_applet{};
 
     // Creation state
     AppletId applet_id{};

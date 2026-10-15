@@ -11,10 +11,17 @@
 
 namespace Service::NS {
 
+class IVirtualCardRequestResult;
+void NotifyApplicationContentChanged(Core::System& system);
+
+std::vector<ApplicationContentMetaStatus> GetApplicationContentMetaInventory(
+    Core::System& system, u64 application_id);
+
 class IApplicationManagerInterface final : public ServiceFramework<IApplicationManagerInterface> {
 public:
     explicit IApplicationManagerInterface(Core::System& system_);
     ~IApplicationManagerInterface() override;
+    void NotifyContentChanged();
 
     Result GetApplicationControlData(OutBuffer<BufferAttr_HipcMapAlias> out_buffer,
                                      Out<u32> out_actual_size,
@@ -30,14 +37,18 @@ public:
     Result GetApplicationRecordUpdateSystemEvent(OutCopyHandle<Kernel::KReadableEvent> out_event);
     Result GetGameCardMountFailureEvent(OutCopyHandle<Kernel::KReadableEvent> out_event);
     Result IsAnyApplicationEntityInstalled(Out<bool> out_is_any_application_entity_installed);
+    Result UnregisterNetworkServiceAccountWithUserSaveDataDeletion(Uid account_id);
     Result GetApplicationView(
         OutArray<ApplicationViewV20, BufferAttr_HipcMapAlias> out_application_views,
+        InArray<u64, BufferAttr_HipcMapAlias> application_ids);
+    Result GetApplicationViewLegacy(
+        OutArray<ApplicationViewLegacy, BufferAttr_HipcMapAlias> out_application_views,
         InArray<u64, BufferAttr_HipcMapAlias> application_ids);
     Result GetApplicationViewDeprecated(
         OutArray<ApplicationViewV19, BufferAttr_HipcMapAlias> out_application_views,
         InArray<u64, BufferAttr_HipcMapAlias> application_ids);
     Result GetApplicationViewWithPromotionInfo(
-        OutBuffer<BufferAttr_HipcMapAlias> out_buffer, Out<u32> out_count,
+        OutBuffer<BufferAttr_HipcMapAlias> out_buffer,
         InArray<u64, BufferAttr_HipcMapAlias> application_ids);
     Result RequestDownloadApplicationControlDataInBackground(u64 control_source,
                                                              u64 application_id);
@@ -65,11 +76,15 @@ public:
     // [20.0.0+] Stub functions for QLaunch compatibility
     Result Cmd4022(OutCopyHandle<Kernel::KReadableEvent> out_event);
     Result Cmd4023(Out<u64> out_result);
-    Result Cmd4042(Out<u64> out_result);
+    Result Cmd4042(OutCopyHandle<Kernel::KReadableEvent> out_event,
+                   Out<SharedPointer<IVirtualCardRequestResult>> out_result, Uid account_id);
     Result Cmd4053();
     Result Cmd4088(Out<u64> out_result);
     // [1.0.0+]
     Result CountApplicationContentMeta(Out<u32> out_count, u64 application_id);
+    Result ListApplicationContentMetaStatus(
+        OutArray<ApplicationContentMetaStatus, BufferAttr_HipcMapAlias> out_entries,
+        Out<s32> out_count, s32 offset, u64 application_id);
     Result ListAvailableAddOnContent(OutArray<u32, BufferAttr_HipcMapAlias> out_addons,
                                      Out<u32> out_count, u32 offset, u64 application_id);
 

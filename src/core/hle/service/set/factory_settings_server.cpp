@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "core/hle/service/set/factory_settings_server.h"
+#include "core/hle/service/ipc_helpers.h"
+#include "core/internal_network/network_interface.h"
 
 namespace Service::Set {
 
@@ -15,7 +17,7 @@ IFactorySettingsServer::IFactorySettingsServer(Core::System& system_)
         {3, nullptr, "GetAccelerometerScale"},
         {4, nullptr, "GetGyroscopeOffset"},
         {5, nullptr, "GetGyroscopeScale"},
-        {6, nullptr, "GetWirelessLanMacAddress"},
+        {6, &IFactorySettingsServer::GetWirelessLanMacAddress, "GetWirelessLanMacAddress"},
         {7, nullptr, "GetWirelessLanCountryCodeCount"},
         {8, nullptr, "GetWirelessLanCountryCodes"},
         {9, nullptr, "GetSerialNumber"},
@@ -60,5 +62,12 @@ IFactorySettingsServer::IFactorySettingsServer(Core::System& system_)
 }
 
 IFactorySettingsServer::~IFactorySettingsServer() = default;
+
+void IFactorySettingsServer::GetWirelessLanMacAddress(HLERequestContext& ctx) {
+    const auto iface = Network::GetSelectedNetworkInterface();
+    IPC::ResponseBuilder rb{ctx, 4};
+    rb.Push(ResultSuccess);
+    rb.PushRaw(iface ? iface->mac_address : std::array<u8, 6>{});
+}
 
 } // namespace Service::Set

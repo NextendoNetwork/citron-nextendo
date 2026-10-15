@@ -31,11 +31,11 @@ IApplicationAccessor::IApplicationAccessor(Core::System& system_, std::shared_pt
         {110, nullptr, "TerminateAllLibraryApplets"},
         {111, nullptr, "AreAnyLibraryAppletsLeft"},
         {112, D<&IApplicationAccessor::GetCurrentLibraryApplet>, "GetCurrentLibraryApplet"},
-        {120, nullptr, "GetApplicationId"},
+        {120, D<&IApplicationAccessor::GetApplicationId>, "GetApplicationId"},
         {121, D<&IApplicationAccessor::PushLaunchParameter>, "PushLaunchParameter"},
         {122, D<&IApplicationAccessor::GetApplicationControlProperty>, "GetApplicationControlProperty"},
         {123, nullptr, "GetApplicationLaunchProperty"},
-        {124, nullptr, "GetApplicationLaunchRequestInfo"},
+        {124, D<&IApplicationAccessor::GetApplicationLaunchRequestInfo>, "GetApplicationLaunchRequestInfo"},
         {130, D<&IApplicationAccessor::SetUsers>, "SetUsers"},
         {131, D<&IApplicationAccessor::CheckRightsEnvironmentAvailable>, "CheckRightsEnvironmentAvailable"},
         {132, D<&IApplicationAccessor::GetNsRightsEnvironmentHandle>, "GetNsRightsEnvironmentHandle"},
@@ -57,6 +57,20 @@ IApplicationAccessor::IApplicationAccessor(Core::System& system_, std::shared_pt
 
 IApplicationAccessor::~IApplicationAccessor() = default;
 
+Result IApplicationAccessor::GetApplicationId(Out<u64> out_application_id) {
+    *out_application_id = m_applet->program_id;
+    R_SUCCEED();
+}
+
+Result IApplicationAccessor::GetApplicationLaunchRequestInfo(Out<std::array<u32, 4>> out_info) {
+    // HOME's application-accessor SDK reads a fixed 0x10-byte inline result.
+    // These accessors represent ordinary applications created by CreateApplication.
+    *out_info = {3, 3, 0, 0};
+    LOG_INFO(Service_AM, "Application launch request info: application={:016X}",
+             m_applet->program_id);
+    R_SUCCEED();
+}
+
 Result IApplicationAccessor::Start() {
     LOG_INFO(Service_AM, "called");
     m_applet->process->Run();
@@ -71,7 +85,7 @@ Result IApplicationAccessor::RequestExit() {
         m_applet->lifecycle_manager.RequestExit();
         m_applet->UpdateSuspensionStateLocked(true);
     } else {
-        m_applet->process->Terminate();
+        m_applet->process->Terminate(true);
     }
 
     R_SUCCEED();
@@ -79,7 +93,7 @@ Result IApplicationAccessor::RequestExit() {
 
 Result IApplicationAccessor::Terminate() {
     LOG_INFO(Service_AM, "called");
-    m_applet->process->Terminate();
+    m_applet->process->Terminate(true);
     R_SUCCEED();
 }
 

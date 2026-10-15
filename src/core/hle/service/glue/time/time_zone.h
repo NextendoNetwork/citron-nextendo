@@ -76,6 +76,8 @@ public:
                                  const Service::PSC::Time::CalendarTime& calendar_time);
 
 private:
+    void TraceProfileCalendarTime(HLERequestContext& ctx);
+    u32 m_profile_date_traces = 0;
     Core::System& m_system;
     std::shared_ptr<Service::Set::ISystemSettingsServer> m_set_sys;
 

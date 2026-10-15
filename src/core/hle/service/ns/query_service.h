@@ -24,8 +24,14 @@ struct PlayStatistics {
 static_assert(sizeof(PlayStatistics) == 0x28, "PlayStatistics is an invalid size");
 
 struct LastPlayTime {
-    INSERT_PADDING_BYTES_NOINIT(0x8); // Likely needs padding for buffer alignment if used
+    u64 application_id{};
+    u32 timestamp_user{};
+    u32 timestamp_network{};
+    u32 last_played_minutes{};
+    u8 flag{};
+    INSERT_PADDING_BYTES(3);
 };
+static_assert(sizeof(LastPlayTime) == 0x18);
 
 struct ApplicationPlayStatistics {
     u64 application_id{};
@@ -41,6 +47,9 @@ public:
     ~IQueryService() override;
 
 private:
+    Result QueryLastPlayTime(Out<s32> out_count, bool flag,
+                            OutArray<LastPlayTime, BufferAttr_HipcMapAlias> out_times,
+                            InArray<u64, BufferAttr_HipcMapAlias> application_ids);
     Result QueryPlayStatisticsByApplicationIdAndUserAccountId(
         Out<PlayStatistics> out_play_statistics, bool unknown, u64 application_id, Uid account_id);
 

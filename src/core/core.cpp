@@ -648,6 +648,8 @@ struct System::Impl {
 
     ExecuteProgramCallback execute_program_callback;
     ExitCallback exit_callback;
+    ExitCallback reboot_callback;
+    std::atomic_bool reboot_requested{};
     std::stop_source stop_event;
 
     std::array<u64, Core::Hardware::NUM_CPU_CORES> dynarmic_ticks{};
@@ -1141,6 +1143,23 @@ void System::RegisterExitCallback(ExitCallback&& callback) {
     impl->exit_callback = std::move(callback);
 }
 
+void System::RegisterRebootCallback(ExitCallback&& callback) {
+    impl->reboot_callback = std::move(callback);
+    impl->reboot_requested = false;
+}
+
+bool System::Reboot() {
+    if (!impl->reboot_callback || IsShuttingDown()) {
+        LOG_ERROR(Core, "Guest reboot rejected: frontend unavailable or shutting down");
+        return false;
+    }
+    if (!impl->reboot_requested.exchange(true)) {
+        LOG_INFO(Core, "Guest reboot queued for frontend");
+        impl->reboot_callback();
+    }
+    return true;
+}
+
 void System::Exit() {
     if (impl->exit_callback) {
         impl->exit_callback();
@@ -1175,9 +1194,7 @@ void System::RefreshExternalContent() {
 
 u64 System::GetMainApplicationAruid() const {
     if (auto* window_system = impl->applet_manager.GetWindowSystem()) {
-        if (auto main_applet = window_system->GetMainApplet()) {
-            return main_applet->aruid.pid;
-        }
+        return window_system->GetMainAppletResourceUserId();
     }
     return 0;
 }

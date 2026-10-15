@@ -14,11 +14,16 @@ public:
                       ConfigType config_type = ConfigType::GlobalConfig);
     ~QtConfig() override;
 
+    bool HadConfigurationAtStartup() const { return configuration_existed_at_startup; }
+
     void ReloadAllValues() override;
     void SaveAllValues() override;
 
     void ReadQtControlPlayerValues(std::size_t player_index);
     void SaveQtControlPlayerValues(std::size_t player_index);
+
+private:
+    bool configuration_existed_at_startup{};
 
 protected:
     void ReadQtValues();

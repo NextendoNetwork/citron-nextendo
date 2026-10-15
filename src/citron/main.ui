@@ -187,6 +187,7 @@
     <addaction name="action_Verify_installed_contents"/>
     <addaction name="separator"/>
     <addaction name="action_Load_Home_Menu"/>
+    <addaction name="action_Create_Home_Shortcut"/>
     <addaction name="menu_cabinet_applet"/>
     <addaction name="action_Load_Album"/>
     <addaction name="action_Load_Mii_Edit"/>
@@ -527,6 +528,14 @@
   <action name="action_Load_Mii_Edit">
    <property name="text">
     <string>Open &amp;Mii Editor</string>
+   </property>
+  </action>
+  <action name="action_Create_Home_Shortcut">
+   <property name="text">
+    <string>Create HOME Desktop Shortcut...</string>
+   </property>
+   <property name="toolTip">
+    <string>Create a shortcut that starts Citron directly in the HOME Menu.</string>
    </property>
   </action>
   <action name="action_Load_Home_Menu">

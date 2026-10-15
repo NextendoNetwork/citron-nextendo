@@ -220,12 +220,16 @@ Result Container::CreateLayerLocked(u64* out_layer_id, u64 display_id, u64 owner
     m_surface_flinger->CreateLayer(consumer_binder_id, owner_aruid);
 
     *out_layer_id = layer->GetId();
+    LOG_INFO(Service_VI, "Created display layer id={} owner={} consumer={}",
+             *out_layer_id, owner_aruid, consumer_binder_id);
     R_SUCCEED();
 }
 
 Result Container::DestroyLayerLocked(u64 layer_id) {
     auto* const layer = m_layers.GetLayerById(layer_id);
     R_UNLESS(layer != nullptr, VI::ResultNotFound);
+    LOG_INFO(Service_VI, "Destroy display layer id={} consumer={}",
+             layer_id, layer->GetConsumerBinderId());
 
     m_surface_flinger->DestroyLayer(layer->GetConsumerBinderId());
     m_surface_flinger->DestroyBufferQueue(layer->GetConsumerBinderId(),
@@ -250,6 +254,8 @@ Result Container::OpenLayerLocked(s32* out_producer_binder_id, u64 layer_id, u64
     }
 
     *out_producer_binder_id = layer->GetProducerBinderId();
+    LOG_INFO(Service_VI, "Opened display layer id={} owner={} producer={}",
+             layer_id, aruid, *out_producer_binder_id);
 
     R_SUCCEED();
 }
@@ -265,6 +271,7 @@ Result Container::CloseLayerLocked(u64 layer_id) {
     }
 
     layer->Close();
+    LOG_INFO(Service_VI, "Closed display layer id={}", layer_id);
 
     R_SUCCEED();
 }

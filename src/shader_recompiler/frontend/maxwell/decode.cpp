@@ -61,8 +61,10 @@ Opcode Decode(u64 insn) {
         });
         return Opcode::NOP;
     }
-    ASSERT_MSG(false, "Invalid insn 0x{:016x}", insn);
-    return Opcode::NOP;
+    // Reject the shader through the renderer's existing Shader::Exception path.
+    // Treating unknown code as NOP can produce a bogus pipeline and pass it to
+    // the host driver, especially when a homebrew applet replaces its code.
+    throw Shader::LogicError("Invalid Maxwell instruction 0x{:016x}", insn);
 }
 
 } // namespace Shader::Maxwell

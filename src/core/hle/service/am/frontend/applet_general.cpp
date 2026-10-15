@@ -22,15 +22,15 @@ static void LogCurrentStorage(std::shared_ptr<Applet> applet, std::string_view p
     while (R_SUCCEEDED(applet->caller_applet_broker->GetInData().Pop(&storage))) {
         const auto data = storage->GetData();
         LOG_INFO(Service_AM,
-                 "called (STUBBED), during {} received normal data with size={:08X}, data={}",
-                 prefix, data.size(), Common::HexToString(data));
+                 "called (STUBBED), during {} received normal data with size={:08X}",
+                 prefix, data.size());
     }
 
     while (R_SUCCEEDED(applet->caller_applet_broker->GetInteractiveInData().Pop(&storage))) {
         const auto data = storage->GetData();
         LOG_INFO(Service_AM,
-                 "called (STUBBED), during {} received interactive data with size={:08X}, data={}",
-                 prefix, data.size(), Common::HexToString(data));
+                 "called (STUBBED), during {} received interactive data with size={:08X}",
+                 prefix, data.size());
     }
 }
 

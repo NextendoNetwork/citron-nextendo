@@ -42,7 +42,7 @@ bool SessionRequestManager::HasSessionRequestHandler(const HLERequestContext& co
         const auto& message_header = context.GetDomainMessageHeader();
         const auto object_id = message_header.object_id;
 
-        if (object_id > DomainHandlerCount()) {
+        if (object_id == 0 || object_id > DomainHandlerCount()) {
             LOG_CRITICAL(IPC, "object_id {} is too big!", object_id);
             return false;
         }
@@ -57,24 +57,19 @@ Result SessionRequestManager::CompleteSyncRequest(Kernel::KServerSession* server
     Result result = ResultSuccess;
 
     // If the session has been converted to a domain, handle the domain request
-    if (this->HasSessionRequestHandler(context)) {
-        if (IsDomain() && context.HasDomainMessageHeader()) {
-            result = HandleDomainSyncRequest(server_session, context);
-            // If there is no domain header, the regular session handler is used
-        } else if (this->HasSessionHandler()) {
-            // If this manager has an associated HLE handler, forward the request to it.
-            result = this->SessionHandler().HandleSyncRequest(*server_session, context);
-        }
+    if (IsDomain() && context.HasDomainMessageHeader()) {
+        result = HandleDomainSyncRequest(server_session, context);
+    } else if (this->HasSessionHandler()) {
+        result = this->SessionHandler().HandleSyncRequest(*server_session, context);
     } else {
-        ASSERT_MSG(false, "Session handler is invalid, stubbing response!");
+        LOG_WARNING(IPC, "IPC request has no session handler; returning TargetNotFound");
         IPC::ResponseBuilder rb(context, 2);
-        rb.Push(ResultSuccess);
+        rb.Push(Result{ErrorModule::CMIF, 261});
     }
 
-    if (convert_to_domain) {
+    if (convert_to_domain.exchange(false)) {
         ASSERT_MSG(!IsDomain(), "ServerSession is already a domain instance.");
         this->ConvertToDomain();
-        convert_to_domain = false;
     }
 
     return result;
@@ -92,27 +87,26 @@ Result SessionRequestManager::HandleDomainSyncRequest(Kernel::KServerSession* se
     // If there is a DomainMessageHeader, then this is CommandType "Request"
     const auto& domain_message_header = context.GetDomainMessageHeader();
     const u32 object_id{domain_message_header.object_id};
+    const auto missing_target = [&context, object_id, this] {
+        LOG_WARNING(IPC, "Domain target unavailable: object={} entries={}; returning TargetNotFound",
+                    object_id, DomainHandlerCount());
+        IPC::ResponseBuilder rb{context, 2};
+        rb.Push(Result{ErrorModule::CMIF, 261});
+        return ResultSuccess; // Transport succeeded; service error is in the response.
+    };
     switch (domain_message_header.command) {
     case IPC::DomainMessageHeader::CommandType::SendMessage:
-        if (object_id > this->DomainHandlerCount()) {
-            LOG_CRITICAL(IPC,
-                         "object_id {} is too big! This probably means a recent service call "
-                         "needed to return a new interface!",
-                         object_id);
-            ASSERT(false);
-            return ResultSuccess; // Ignore error if asserts are off
-        }
+        if (object_id == 0) return missing_target();
         if (auto strong_ptr = this->DomainHandler(object_id - 1).lock()) {
             return strong_ptr->HandleSyncRequest(*server_session, context);
         } else {
-            ASSERT(false);
-            return ResultSuccess;
+            return missing_target();
         }
 
     case IPC::DomainMessageHeader::CommandType::CloseVirtualHandle: {
         LOG_DEBUG(IPC, "CloseVirtualHandle, object_id=0x{:08X}", object_id);
 
-        this->CloseDomainHandler(object_id - 1);
+        if (object_id == 0 || !this->CloseDomainHandler(object_id - 1)) return missing_target();
 
         IPC::ResponseBuilder rb{context, 2};
         rb.Push(ResultSuccess);
@@ -130,9 +124,14 @@ HLERequestContext::HLERequestContext(Kernel::KernelCore& kernel_, Core::Memory::
                                      Kernel::KThread* thread_)
     : server_session(server_session_), thread(thread_), kernel{kernel_}, memory{memory_} {
     cmd_buf[0] = 0;
+    // Deferred requests outlive the guest's wait and must retain its thread,
+    // which also retains the owner process and its memory/page table.
+    if (thread) thread->Open();
 }
 
-HLERequestContext::~HLERequestContext() = default;
+HLERequestContext::~HLERequestContext() {
+    if (thread) thread->Close();
+}
 
 void HLERequestContext::ParseCommandBuffer(u32_le* src_cmdbuf, bool incoming) {
     IPC::RequestParser rp(src_cmdbuf);
@@ -272,7 +271,7 @@ Result HLERequestContext::PopulateFromIncomingCommandBuffer(u32_le* src_cmdbuf) 
 
 Result HLERequestContext::WriteToOutgoingCommandBuffer() {
     auto current_offset = handles_offset;
-    R_UNLESS(thread != nullptr, ResultUnknown);
+    R_UNLESS(thread != nullptr && !thread->IsTerminationRequested(), IPC::ResultSessionClosed);
     auto* const owner_process_ptr = thread->GetOwnerProcess();
     R_UNLESS(owner_process_ptr != nullptr, ResultUnknown);
     auto& owner_process = *owner_process_ptr;
@@ -303,8 +302,8 @@ Result HLERequestContext::WriteToOutgoingCommandBuffer() {
         current_offset = domain_offset - static_cast<u32>(outgoing_domain_objects.size());
         for (auto& object : outgoing_domain_objects) {
             if (object) {
-                GetManager()->AppendDomainHandler(std::move(object));
-                cmd_buf[current_offset++] = static_cast<u32_le>(GetManager()->DomainHandlerCount());
+                const auto object_id = GetManager()->AppendDomainHandler(std::move(object));
+                cmd_buf[current_offset++] = static_cast<u32_le>(object_id);
             } else {
                 cmd_buf[current_offset++] = 0;
             }
@@ -312,7 +311,8 @@ Result HLERequestContext::WriteToOutgoingCommandBuffer() {
     }
 
     // Copy the translated command buffer back into the thread's command buffer area.
-    memory.WriteBlock(thread->GetTlsAddress(), cmd_buf.data(), write_size * sizeof(u32));
+    R_UNLESS(memory.WriteBlock(thread->GetTlsAddress(), cmd_buf.data(), write_size * sizeof(u32)),
+             IPC::ResultSessionClosed);
 
     return ResultSuccess;
 }

@@ -74,7 +74,8 @@ SessionId Container::OpenSession(Kernel::KProcess* process) {
                 */
                 session.is_active = false;
                 session.ref_count = 0;
-                // smmu_mgr.UnregisterProcess(session.asid);
+                // Residual mappings must never resolve to the reused KProcess slot.
+                impl->host1x.MemoryManager().UnregisterProcess(session.asid, false);
                 // impl->id_pool.emplace_front(session.id.id);
                 // Continue searching to clean up other stale sessions if any?
                 // Or proceed to create new one. Stale one is now inactive.
@@ -154,6 +155,10 @@ void Container::CloseSession(SessionId session_id, bool is_shutdown) {
     }
 
     if (is_shutdown) {
+        // NVDRV service destruction also occurs when a guest applet exits.
+        // Retire its interface even when full buffer cleanup is deferred. Do not
+        // recycle an ASID while those deferred mappings still carry the old ID.
+        impl->host1x.MemoryManager().UnregisterProcess(session.asid, false);
         session.is_active = false;
         return;
     }

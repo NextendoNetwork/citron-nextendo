@@ -1360,7 +1360,7 @@ Result IHidServer::InitializeSevenSixAxisSensor(ClientAppletResourceUserId aruid
     GetResourceManager()->GetConsoleSixAxis()->Activate();
     GetResourceManager()->GetSevenSixAxis()->Activate();
 
-    GetResourceManager()->GetSevenSixAxis()->SetTransferMemoryAddress(t_mem_1->GetSourceAddress());
+    GetResourceManager()->GetSevenSixAxis()->SetTransferMemory(t_mem_1.Get());
 
     R_SUCCEED();
 }
@@ -1368,6 +1368,7 @@ Result IHidServer::InitializeSevenSixAxisSensor(ClientAppletResourceUserId aruid
 Result IHidServer::FinalizeSevenSixAxisSensor(ClientAppletResourceUserId aruid) {
     LOG_WARNING(Service_HID, "(STUBBED) called, applet_resource_user_id={}", aruid.pid);
 
+    GetResourceManager()->GetSevenSixAxis()->SetTransferMemory(nullptr);
     R_SUCCEED();
 }
 

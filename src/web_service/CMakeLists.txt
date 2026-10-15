@@ -27,6 +27,19 @@ add_library(web_service STATIC
     web_result.h
 )
 
+# Public desktop application metadata, never a user credential.
+set(CITRON_NEXTENDO_DESKTOP_CLIENT_ID "$ENV{CITRON_NEXTENDO_DESKTOP_CLIENT_ID}"
+    CACHE STRING "Public Nextendo desktop OAuth application identifier")
+if (NOT CITRON_NEXTENDO_DESKTOP_CLIENT_ID STREQUAL "")
+    string(LENGTH "${CITRON_NEXTENDO_DESKTOP_CLIENT_ID}" desktop_client_id_length)
+    if (desktop_client_id_length GREATER 128 OR
+        NOT CITRON_NEXTENDO_DESKTOP_CLIENT_ID MATCHES "^[A-Za-z0-9_-]+$")
+        message(FATAL_ERROR "Invalid public Nextendo desktop OAuth application identifier")
+    endif()
+    target_compile_definitions(web_service PRIVATE
+        CITRON_NEXTENDO_DESKTOP_CLIENT_ID="${CITRON_NEXTENDO_DESKTOP_CLIENT_ID}")
+endif()
+
 create_target_directory_groups(web_service)
 target_link_libraries(web_service PRIVATE common network nlohmann_json::nlohmann_json httplib::httplib OpenSSL::Crypto)
 

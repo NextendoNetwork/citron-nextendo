@@ -34,6 +34,7 @@ public:
     VirtualDir Open(SaveDataSpaceId space, const SaveDataAttribute& meta) const;
 
     VirtualDir GetSaveDataSpaceDirectory(SaveDataSpaceId space) const;
+    Result DeleteUserSaveDataAll(u128 user_id) const;
 
     static std::string GetSaveDataSpaceIdPath(SaveDataSpaceId space);
     static std::string GetFullPath(ProgramId program_id, VirtualDir dir, SaveDataSpaceId space,

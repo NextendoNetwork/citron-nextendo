@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <boost/container/small_vector.hpp>
+#include <cstdlib>
+
+#include "common/logging.h"
 
 #include "core/hle/service/nvdrv/devices/nvdisp_disp0.h"
 #include "core/hle/service/nvnflinger/buffer_item.h"
@@ -44,6 +47,7 @@ HardwareComposer::~HardwareComposer() = default;
 u32 HardwareComposer::ComposeLocked(f32* out_speed_scale, Display& display,
                                     Nvidia::Devices::nvdisp_disp0& nvdisp) {
     boost::container::small_vector<HwcLayer, 2> composition_stack;
+    std::vector<std::pair<ConsumerId, s32>> visible_stack;
 
     // Set default speed limit to 100%.
     *out_speed_scale = 1.0f;
@@ -75,6 +79,7 @@ u32 HardwareComposer::ComposeLocked(f32* out_speed_scale, Display& display,
 
         // TODO: get proper Z-index from layer
         if (layer->visible) {
+            visible_stack.emplace_back(consumer_id, layer->z_index);
             composition_stack.emplace_back(HwcLayer{
                 .buffer_handle = igbp_buffer.BufferId(),
                 .offset = igbp_buffer.Offset(),
@@ -117,13 +122,27 @@ u32 HardwareComposer::ComposeLocked(f32* out_speed_scale, Display& display,
     }
 
     // If any new buffers were acquired, we can present.
-    if (has_acquired_buffer) {
+    if (std::getenv("CITRON_HOMEBREW_ALBUM")) {
+        static u32 ticks = 0;
+        static u32 reports = 0;
+        if ((++ticks % 120) == 0 && reports++ < 300) {
+            LOG_INFO(Service_VI, "HOME compositor display={} frame={} layers={} visible={} acquired={}",
+                     display.id, m_frame_number, display.stack.layers.size(),
+                     composition_stack.size(), has_acquired_buffer);
+        }
+    }
+    // Visibility/Z-order changes must present even when all remaining layers
+    // are static. Otherwise closing an applet leaves its last frame onscreen.
+    auto& previous_stack = m_visible_stacks[display.id];
+    const bool stack_changed = previous_stack != visible_stack;
+    if (has_acquired_buffer || stack_changed) {
         // Sort by Z-index.
         std::stable_sort(composition_stack.begin(), composition_stack.end(),
                          [&](auto& l, auto& r) { return l.z_index < r.z_index; });
 
         // Composite.
         nvdisp.Composite(composition_stack);
+        previous_stack = std::move(visible_stack);
     }
 
     // Advance by at least one frame.
@@ -179,7 +198,7 @@ bool HardwareComposer::TryAcquireFramebufferLocked(Layer& layer, Framebuffer& fr
 
     // We succeeded, so set the new release frame info.
     framebuffer.release_frame_number =
-        NormalizeSwapInterval(nullptr, framebuffer.item.swap_interval);
+        m_frame_number + NormalizeSwapInterval(nullptr, framebuffer.item.swap_interval);
     framebuffer.is_acquired = true;
 
     return true;
