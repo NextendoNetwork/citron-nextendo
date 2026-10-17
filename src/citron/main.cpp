@@ -182,6 +182,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "citron/startup_checks.h"
 #include "citron/uisettings.h"
 #include "citron/theme.h"
+#include "citron/nextendo_package_bcat.h"
 #include "citron/nextendo_splatoon3_bcat.h"
 #include "citron/util/rainbow_style.h"
 #include "common/settings.h"
@@ -7629,8 +7630,9 @@ constexpr u64 kPokemonLegendsZa = 0x0100F43008C44000ULL;
 constexpr u64 kNintendoSwitchSports = 0x0100D2F00D5C0000ULL;
 constexpr u64 kPokemonSword = 0x0100ABF008968000ULL;
 constexpr u64 kPokemonShield = 0x01008DB008C2C000ULL;
-// Super Smash Bros. Ultimate reads its main menu news ticker (line_news folder) from its
-// delivery cache; without it the ticker says "Connect to the Internet".
+// Super Smash Bros. Ultimate reads its main menu news ticker (line_news), gifts (present2)
+// and announcements (popup_news) from its delivery cache; without it the ticker says
+// "Connect to the Internet".
 constexpr u64 kSuperSmashBrosUltimate = 0x01006A800016E000ULL;
 
 // Titles whose BCAT delivery is a plain package from /api/bcat/<title>, installed as-is.
@@ -7806,6 +7808,13 @@ bool GMainWindow::NextendoByamlDownload(u64 title_id) {
     const auto fetch_title_id_hex = fmt::format(
         "{:016X}", (package || title_id == Nextendo::Splatoon3Bcat::TitleId)
                        ? title_id : kCanonicalByamlTitleId);
+    const auto dest_path =
+        Common::FS::GetCitronPath(Common::FS::CitronPath::NANDDir) /
+        fmt::format("system/save/bcat/{}", title_id_hex);
+    if (package) {
+        // Put back a cache left aside by an interrupted swap, even if the server is unreachable.
+        Nextendo::PackageBcat::RecoverInterrupted(dest_path);
+    }
 
     // Always fetch the full seed and compare its hash locally, rather than trusting the
     // server's Last-Modified/304 response as the sole freshness signal — that path could get
@@ -7843,6 +7852,24 @@ bool GMainWindow::NextendoByamlDownload(u64 title_id) {
         return true;
     }
 
+#ifdef CITRON_ENABLE_LIBARCHIVE
+    if (package) {
+        // The package is the title's whole delivery cache (every "<directory>/<file>" of the
+        // zip, e.g. Smash's line_news, present2 and popup_news). Validated in memory, then
+        // swapped in place of the previous folder; a failure keeps the previous cache.
+        try {
+            Nextendo::PackageBcat::Install(zip_bytes, dest_path, server_hash);
+            LOG_INFO(Frontend, "Nextendo BCAT: package for {} installed ({})", title_id_hex,
+                     server_hash);
+            return true;
+        } catch (const std::exception& ex) {
+            LOG_ERROR(Frontend, "Nextendo BCAT: package for {} rejected; keeping cache: {}",
+                      title_id_hex, ex.what());
+            return false;
+        }
+    }
+#endif
+
     const auto tmp_path = Common::FS::GetCitronPath(Common::FS::CitronPath::CacheDir) /
                           fmt::format("nextendo_byaml_{}.zip", title_id_hex);
     {
@@ -7853,10 +7880,6 @@ bool GMainWindow::NextendoByamlDownload(u64 title_id) {
         out.write(reinterpret_cast<const char*>(zip_bytes.data()),
                   static_cast<std::streamsize>(zip_bytes.size()));
     }
-
-    const auto dest_path =
-        Common::FS::GetCitronPath(Common::FS::CitronPath::NANDDir) /
-        fmt::format("system/save/bcat/{}", title_id_hex);
 
     if (ZipContainsPathTraversal(tmp_path)) {
         LOG_ERROR(Frontend, "Nextendo BCAT: package for {} has unsafe paths", title_id_hex);
