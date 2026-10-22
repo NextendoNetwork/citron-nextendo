@@ -178,6 +178,22 @@ static std::optional<std::string> GetNextendoRedirectIp(const std::string& host,
         return server_ip;
     }
 
+    // Guilty Gear -Strive- signs in to Epic Online Services at boot, then calls Arc System Works'
+    // API and its two match servers when the player goes online. api.epicgames.dev is shared with
+    // other Epic titles, so it is redirected only while Strive runs. NEXTENDO_GGST_IP points the
+    // four hosts at a local test server without moving the rest of Nextendo.
+    constexpr u64 GuiltyGearStrive = 0x0100AB401F136000ULL;
+    if (program_id == GuiltyGearStrive &&
+        (host == "api.epicgames.dev" || host == "switch-ggst-game.guiltygear.com" ||
+         host == "prod-switch-match-ggst-game.guiltygear.com" ||
+         host == "prod-to3match-ggst-game.guiltygear.com")) {
+        const char* ggst_ip = std::getenv("NEXTENDO_GGST_IP");
+        const std::string target = (ggst_ip && *ggst_ip) ? std::string{ggst_ip} : server_ip;
+        LOG_INFO(Service, "[Nextendo] Redirecting Guilty Gear Strive host '{}' -> '{}'", host,
+                 target);
+        return target;
+    }
+
     // UNO signs in through Ubisoft's public services endpoint before any matchmaking. The
     // redirect is limited to that exact host while UNO runs; other Ubisoft titles are untouched.
     constexpr u64 Uno = 0x0100B6E012EBE000ULL;
