@@ -182,8 +182,12 @@ static std::optional<std::string> GetNextendoRedirectIp(const std::string& host,
     // API and its two match servers when the player goes online. api.epicgames.dev is shared with
     // other Epic titles, so it is redirected only while Strive runs. NEXTENDO_GGST_IP points the
     // four hosts at a local test server without moving the rest of Nextendo.
-    constexpr u64 GuiltyGearStrive = 0x0100AB401F136000ULL;
-    if (program_id == GuiltyGearStrive &&
+    // 0100AB401F136000 is the analysed release (JP cartridge, update 1.08). The US, EU and Asian
+    // IDs come from their DLC/listing IDs and are not checked against a binary yet.
+    const bool is_guilty_gear_strive =
+        program_id == 0x0100AB401F136000ULL || program_id == 0x01002F4020718000ULL ||
+        program_id == 0x01002F402071A000ULL || program_id == 0x010034A020A5C000ULL;
+    if (is_guilty_gear_strive &&
         (host == "api.epicgames.dev" || host == "switch-ggst-game.guiltygear.com" ||
          host == "prod-switch-match-ggst-game.guiltygear.com" ||
          host == "prod-to3match-ggst-game.guiltygear.com")) {
