@@ -172,7 +172,7 @@ private:
         const Host1x::NvdecCommon::NvdecRegisters& state);
 
     /// Read and convert NVDEC provided entropy probs to Vp9EntropyProbs struct
-    void InsertEntropy(u64 offset, Vp9EntropyProbs& dst);
+    void InsertEntropy(u64 offset, Vp9PictureInfo& dst);
 
     /// Returns frame to be decoded after buffering
     [[nodiscard]] Vp9FrameContainer GetCurrentFrame(

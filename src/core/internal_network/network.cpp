@@ -1003,7 +1003,21 @@ Errno Socket::Shutdown(ShutdownHow how) {
         UNIMPLEMENTED_MSG("Unimplemented flag how={}", how);
         return Errno::SUCCESS;
     }
-    if (shutdown(fd, host_how) != SOCKET_ERROR) {
+    const int shutdown_result = shutdown(fd, host_how);
+#ifdef _WIN32
+    // POSIX wakes a thread that is blocked in recv()/recvfrom() on this socket when shutdown(SHUT_RD or SHUT_RDWR) is called on it.
+    // Winsock does not do that for datagram sockets: the blocked call simply stays blocked. A guest that stops a receiver thread
+    // with shutdown() and then joins it waits forever (Just Dance 2022's local UDP listener). Cancelling the pending I/O gives
+    // the POSIX behaviour; Recv() and RecvFrom() report the cancellation as end of input.
+    const int shutdown_error = shutdown_result != SOCKET_ERROR ? 0 : WSAGetLastError();
+    if (host_how != SD_SEND) {
+        CancelIoEx(reinterpret_cast<HANDLE>(fd), nullptr);
+    }
+    if (shutdown_result == SOCKET_ERROR) {
+        WSASetLastError(shutdown_error);
+    }
+#endif
+    if (shutdown_result != SOCKET_ERROR) {
         return Errno::SUCCESS;
     }
 
@@ -1020,6 +1034,12 @@ std::pair<s32, Errno> Socket::Recv(int flags, std::span<u8> message) {
         return {static_cast<s32>(result), Errno::SUCCESS};
     }
 
+#ifdef _WIN32
+    if (WSAGetLastError() == WSAEINTR) {
+        // Woken by Shutdown() on this socket (see there): POSIX reports end of input.
+        return {0, Errno::SUCCESS};
+    }
+#endif
     return {-1, GetAndLogLastError()};
 }
 
@@ -1041,6 +1061,12 @@ std::pair<s32, Errno> Socket::RecvFrom(int flags, std::span<u8> message, SockAdd
         return {static_cast<s32>(result), Errno::SUCCESS};
     }
 
+#ifdef _WIN32
+    if (WSAGetLastError() == WSAEINTR) {
+        // Woken by Shutdown() on this socket (see there): POSIX reports end of input.
+        return {0, Errno::SUCCESS};
+    }
+#endif
     return {-1, GetAndLogLastError()};
 }
 
