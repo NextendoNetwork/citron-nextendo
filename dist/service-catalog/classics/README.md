@@ -18,9 +18,10 @@ game image, account information, certificates or private signing material.
 
 1. Run `python test-files/npln_classics_definitions_test.py`.
 2. Verify every original instruction guard against the matching original loader
-   image before signing. GBA and SNES preimages were checked in earlier static
-   analysis; NES and Game Boy preimage verification remains a publication gate.
-   The structural test is not a substitute for checking the original images.
+   image before signing. All four sets of preimages were checked locally: GBA and SNES in earlier
+   static analysis, and NES and Game Boy against their original exact-build images
+   before this revision. The structural test is not a substitute for checking
+   the original images when updating these definitions.
 3. Merge these patches with existing catalog entries and these title-index
    additions with existing titles. Preserve other games and withdrawal records.
 4. Use the existing publisher and `npln-patches-key-1` signing workflow, a fresh
@@ -35,8 +36,8 @@ Citron binary recognizes these four titles even with the older index and can
 query their per-build manifests; it still applies no patch until authenticated
 data is available. A signed withdrawal remains authoritative.
 
-Genesis is deliberately absent from these publication inputs: its public rollout
-and new client acceptance are being prepared separately. GBA four-device joining
+Genesis is deliberately absent from these publication inputs: Switch/Ryujinx hosting and gameplay passed public testing, but Citron
+suspend/resume remains unresolved and is outside this client rollout. GBA four-device joining
 and gameplay have been exercised between Switch/Citron, but lag and intermittent
 rejoin errors remain under investigation. Do not advertise all Classics as fully
 stable on the basis of patch installation.
