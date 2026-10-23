@@ -130,13 +130,18 @@ int main(int argc, char** argv) {
 
     // JD uses the existing title-driven badge, count polling and version UI.
     constexpr u64 JustDance2022 = 0x0100ea6014bb8000;
-    assert(BuiltInTable().at(JustDance2022) == "326704.600931");
+    assert(BuiltInTable().at(JustDance2022) == "327835.644926");
+    assert(IsVersionOk(JustDance2022, "327835.644926"));
     assert(IsVersionOk(JustDance2022, "326704.600931"));
+    assert(!IsVersionOk(JustDance2022, "327835.644927"));
     assert(!IsVersionOk(JustDance2022, "326704.600930"));
     auto jd = VerifyCatalog(sign(document(json::array({
-        exact({"0100ea6014bb8000"}, {"326704.600931"})
+        exact({"0100ea6014bb8000"}, {"327835.644926", "326704.600931"}),
+        exact({"0100b3c014bda000"}, {"3.1.1"})
     }))), public_key, now);
-    assert(jd.table.at(JustDance2022) == "326704.600931");
+    assert(jd.table.at(JustDance2022) == "327835.644926");
+    assert(jd.also_accepted.at(JustDance2022) == std::vector<std::string>{"326704.600931"});
+    assert(jd.table.at(0x0100b3c014bda000) == "3.1.1");
 
     // A valid catalog decides everything once published.
     auto requirements = VerifyCatalog(sign(document(games)), public_key, now);

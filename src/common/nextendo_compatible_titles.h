@@ -59,8 +59,9 @@ inline const std::unordered_map<u64, std::string>& BuiltInTable() {
         {0x01008db008c2c000, "1.3.2"}, // Pokémon Shield
         {0x0100c9a00ece6000, "4.2.0"}, // Nintendo 64 - Nintendo Classics
         // Nintendo Switch Online Classics: the application versions the online-classics servers are
-        // written and tested for. SEGA Genesis (0100b3c014bda000, 3.1.1) is deliberately absent: it
-        // still freezes on suspend in Citron, so it is not offered as compatible yet.
+        // written and tested for. Genesis uses the exact-build signed TLS patch;
+        // its AudioOut restart fix is included in the client.
+        {0x0100b3c014bda000, "3.1.1"}, // SEGA Genesis - Nintendo Switch Online
         {0x0100d870045b6000, "9.1.0"}, // Nintendo Entertainment System - Nintendo Switch Online
         {0x01008d300c50c000, "6.0.0"}, // Super Nintendo Entertainment System - Nintendo Switch Online
         {0x0100c62011050000, "4.1.0"}, // Game Boy - Nintendo Switch Online
@@ -79,7 +80,7 @@ inline const std::unordered_map<u64, std::string>& BuiltInTable() {
         {0x010092a00c4b6000, "1.08.00"},     // Friday the 13th: The Game
         {0x010001701248c000, "1.0.4"},       // Super Monkey Ball Banana Mania
         {0x0100b0c013912000, "2026.19.0"},   // Among Us
-        {0x0100ea6014bb8000, "326704.600931"}, // Just Dance 2022 (tested display version)
+        {0x0100ea6014bb8000, "327835.644926"}, // Just Dance 2022 update v131072 display version
         {0x0100b6e012ebe000, "1.1.17"},      // UNO
         {0x0100fcf002a58000, "1.13.13.765"}, // Ultimate Chicken Horse
         {0x01006bd001e06000, "1.0.17"},      // Minecraft: Nintendo Switch Edition
@@ -96,6 +97,7 @@ inline const std::unordered_map<u64, std::string>& BuiltInTable() {
 inline const std::unordered_map<u64, std::vector<std::string>>& BuiltInAlsoAccepted() {
     static const std::unordered_map<u64, std::vector<std::string>> table{
         {0x0100b0c013912000, {"2026.18.0"}}, // Among Us
+        {0x0100ea6014bb8000, {"326704.600931"}}, // Just Dance 2022 base build remains supported
     };
     return table;
 }

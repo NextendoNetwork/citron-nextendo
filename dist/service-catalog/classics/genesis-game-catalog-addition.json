@@ -1,0 +1,18 @@
+{
+  "name": "SEGA Genesis - Nintendo Classics",
+  "enabled": true,
+  "protocol": "npln",
+  "versions": {
+    "accepted": [
+      "3.1.1"
+    ],
+    "policy": "exact",
+    "recommended": "3.1.1"
+  },
+  "required_capabilities": [
+    "versions.exact.v1"
+  ],
+  "title_ids": [
+    "0100b3c014bda000"
+  ]
+}

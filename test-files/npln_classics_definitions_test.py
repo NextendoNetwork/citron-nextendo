@@ -13,8 +13,9 @@ expected = {
     "01008d300c50c000": "FE4A4FE0C808B28795AA8D42B171F9BF6093F32C",
     "0100c62011050000": "AEDF491084F433567EA142D0F77626956798A826",
     "010012f017576000": "06980CD0757C5020C6EF73E937C5C16595964612",
+    "0100b3c014bda000": "4BF9EF5A0A2BA69427F1F0D6E5653EFD4238754A",
 }
-assert len(patches) == 5 and len(titles) == len(expected)
+assert len(patches) == 6 and len(titles) == len(expected)
 assert {t["title_id"] for t in titles if t["enabled"]} == set(expected)
 assert {p["title_id"] for p in patches} == set(expected)
 expected_builds = {(title, build.ljust(64, "0")) for title, build in expected.items()}
@@ -44,4 +45,4 @@ for patch in patches:
         assert len(original) == len(replacement) == 4 and original != replacement
         assert records.pop(guard["offset"]) == replacement
     assert not records
-print("PASS: five exact Classics builds across four titles, title index, IPS32 hashes and guards agree; original-image verification still required before signing")
+print("PASS: six exact Classics builds across five titles, title index, IPS32 hashes and guards agree; original-image verification still required before signing")
