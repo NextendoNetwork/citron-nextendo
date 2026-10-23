@@ -117,7 +117,9 @@ struct Vp9PictureInfo {
     bool show_frame;
     bool lossless;
     bool allow_high_precision_mv;
-    bool segment_enabled;
+    Segmentation segmentation;
+    std::array<u8, 7> segment_tree_probs;
+    std::array<u8, 3> segment_pred_probs;
     bool mode_ref_delta_enabled;
 };
 
@@ -182,7 +184,9 @@ struct PictureInfo {
             .show_frame = true,
             .lossless = lossless != 0,
             .allow_high_precision_mv = allow_high_precision_mv != 0,
-            .segment_enabled = segmentation.enabled != 0,
+            .segmentation = segmentation,
+            .segment_tree_probs{},
+            .segment_pred_probs{},
             .mode_ref_delta_enabled = loop_filter.mode_ref_delta_enabled != 0,
         };
     }
@@ -190,7 +194,10 @@ struct PictureInfo {
 static_assert(sizeof(PictureInfo) == 0x100, "PictureInfo is an invalid size");
 
 struct EntropyProbs {
-    INSERT_PADDING_BYTES_NOINIT(1024);                 ///< 0x0000
+    INSERT_PADDING_BYTES_NOINIT(903);                  ///< 0x0000
+    std::array<u8, 7> segment_tree_probs;              ///< 0x0387
+    std::array<u8, 3> segment_pred_probs;              ///< 0x038E
+    INSERT_PADDING_BYTES_NOINIT(111);                  ///< 0x0391
     std::array<u8, 28> inter_mode_prob;                ///< 0x0400
     std::array<u8, 4> intra_inter_prob;                ///< 0x041C
     INSERT_PADDING_BYTES_NOINIT(80);                   ///< 0x0420
@@ -259,6 +266,8 @@ struct EntropyProbs {
     }
 };
 static_assert(sizeof(EntropyProbs) == 0xEA0, "EntropyProbs is an invalid size");
+static_assert(offsetof(EntropyProbs, segment_tree_probs) == 0x387);
+static_assert(offsetof(EntropyProbs, segment_pred_probs) == 0x38e);
 
 enum class Ref { Last, Golden, AltRef };
 

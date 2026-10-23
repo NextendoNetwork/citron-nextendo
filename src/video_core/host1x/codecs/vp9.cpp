@@ -6,6 +6,7 @@
 
 #include "common/assert.h"
 #include "video_core/host1x/codecs/vp9.h"
+#include "video_core/host1x/codecs/vp9_segmentation.h"
 #include "video_core/host1x/host1x.h"
 #include "video_core/memory_manager.h"
 
@@ -362,7 +363,7 @@ Vp9PictureInfo VP9::GetVp9PictureInfo(const Host1x::NvdecCommon::NvdecRegisters&
                             VideoCommon::CacheType::All, "NVDEC.VP9.picture_info");
     Vp9PictureInfo vp9_info = picture_info.Convert();
 
-    InsertEntropy(state.vp9_entropy_probs_offset, vp9_info.entropy);
+    InsertEntropy(state.vp9_entropy_probs_offset, vp9_info);
 
     // surface_luma_offset[0:3] contains the address of the reference frame offsets in the following
     // order: last, golden, altref, current.
@@ -372,11 +373,13 @@ Vp9PictureInfo VP9::GetVp9PictureInfo(const Host1x::NvdecCommon::NvdecRegisters&
     return vp9_info;
 }
 
-void VP9::InsertEntropy(u64 offset, Vp9EntropyProbs& dst) {
+void VP9::InsertEntropy(u64 offset, Vp9PictureInfo& dst) {
     EntropyProbs entropy;
     host1x.GMMU().ReadBlock(offset, &entropy, sizeof(EntropyProbs), VideoCommon::CacheType::All,
                             "NVDEC.VP9.entropy_probs");
-    entropy.Convert(dst);
+    entropy.Convert(dst.entropy);
+    dst.segment_tree_probs = entropy.segment_tree_probs;
+    dst.segment_pred_probs = entropy.segment_pred_probs;
 }
 
 Vp9FrameContainer VP9::GetCurrentFrame(const Host1x::NvdecCommon::NvdecRegisters& state) {
@@ -745,8 +748,8 @@ VpxBitStreamWriter VP9::ComposeUncompressedHeader() {
     uncomp_writer.WriteDeltaQ(current_frame_info.uv_dc_delta_q);
     uncomp_writer.WriteDeltaQ(current_frame_info.uv_ac_delta_q);
 
-    ASSERT(!current_frame_info.segment_enabled);
-    uncomp_writer.WriteBit(false); // Segmentation enabled (TODO).
+    WriteVp9Segmentation(uncomp_writer, current_frame_info.segmentation,
+                         current_frame_info.segment_tree_probs, current_frame_info.segment_pred_probs);
 
     const s32 min_tile_cols_log2 = CalcMinLog2TileCols(current_frame_info.frame_size.width);
     const s32 max_tile_cols_log2 = CalcMaxLog2TileCols(current_frame_info.frame_size.width);

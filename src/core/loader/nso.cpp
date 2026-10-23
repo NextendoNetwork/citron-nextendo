@@ -217,7 +217,8 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
             Common::HexToString(nso_header.build_id), name);
     }
 #endif
-    if (pm && (catalog_patch || pm->GetTitleID() == CtrTitleId)) {
+    if (pm && (catalog_patch || pm->GetTitleID() == CtrTitleId ||
+               pm->GetTitleID() == 0x0100EA6014BB8000ULL)) {
         std::span<u8> patchable_section(program_image.data() + module_start,
                                         program_image.size() - module_start);
         std::vector<u8> pi_header(sizeof(NSOHeader) + patchable_section.size());
