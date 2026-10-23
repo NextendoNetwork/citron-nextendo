@@ -10,6 +10,7 @@ The loader continues to require the existing signed catalog and instruction guar
 | Game Boy | 4.1.0 | AEDF491084F433567EA142D0F77626956798A826 |
 | Game Boy Advance | 3.3.0 | 06980CD0757C5020C6EF73E937C5C16595964612 |
 | Game Boy Advance | 3.4.0 | C4744859A0EA4C05A67629274CD930ABC1B97DA2 |
+| SEGA Genesis | 3.1.1 | 4BF9EF5A0A2BA69427F1F0D6E5653EFD4238754A |
 
 The IPS32 records reproduce the three TLS compatibility instruction edits in the
 Prelude 4.0.8 patches used for the corresponding Classics builds. They contain no
@@ -37,10 +38,6 @@ Citron binary recognizes these four titles even with the older index and can
 query their per-build manifests; it still applies no patch until authenticated
 data is available. A signed withdrawal remains authoritative.
 
-Genesis is deliberately absent from these publication inputs: Switch/Ryujinx hosting and gameplay passed public testing, but Citron
-suspend/resume remains unresolved and is outside this client rollout. GBA four-device joining
-and gameplay have been exercised between Switch/Citron, but lag and intermittent
-rejoin errors remain under investigation. Do not advertise all Classics as fully
-stable on the basis of patch installation.
+Genesis 3.1.1 is now included after the AudioOut restart fix and successful Switch/Citron testing. Its exact signed patch is published at production patch-catalog revision 8. The original three instructions and patch SHA256 were verified against the original 3.1.1 image. A clean public Citron downloaded and applied the patch, then entered online and created a room.
 
 GBA 3.4.0 was inspected from the owner's original update. All three exact preimages and unique surrounding contexts match the corresponding 3.3.0 sites, shifted by 0x1AC0. NSO section hashes and simulated IPS32 application passed. Retain the 3.3.0 definition. Real 3.4.0 room/gameplay testing and signed production publication remain pending.

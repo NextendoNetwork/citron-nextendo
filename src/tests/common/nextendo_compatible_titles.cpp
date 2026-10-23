@@ -188,8 +188,18 @@ TEST_CASE("Nextendo::CompatibleTitles NSO Classics need their exact application 
     REQUIRE_FALSE(IsVersionOk(Nes, "9.1.1"));
     REQUIRE_FALSE(IsVersionOk(Snes, "5.0.0"));
     REQUIRE_FALSE(IsVersionOk(GameBoy, "1.0.0")); // the base installation is not the tested client
-    REQUIRE_FALSE(IsVersionOk(GameBoyAdvance, "3.4.0"));
+    REQUIRE_FALSE(IsVersionOk(GameBoyAdvance, "3.4.1"));
 
-    // Genesis still freezes on suspend in Citron: it is not listed as compatible.
-    REQUIRE(Table().count(Genesis) == 0);
+    REQUIRE(Table().at(Genesis) == "3.1.1");
+    REQUIRE(IsVersionOk(Genesis, "3.1.1"));
+    REQUIRE_FALSE(IsVersionOk(Genesis, "3.1.2"));
+}
+
+TEST_CASE("Nextendo::CompatibleTitles Just Dance accepts both reviewed builds",
+          "[common][nextendo]") {
+    constexpr u64 JustDance2022 = 0x0100ea6014bb8000;
+    REQUIRE(Nextendo::CompatibleTitles::Table().at(JustDance2022) == "327835.644926");
+    REQUIRE(Nextendo::CompatibleTitles::IsVersionOk(JustDance2022, "327835.644926"));
+    REQUIRE(Nextendo::CompatibleTitles::IsVersionOk(JustDance2022, "326704.600931"));
+    REQUIRE_FALSE(Nextendo::CompatibleTitles::IsVersionOk(JustDance2022, "327835.644927"));
 }
