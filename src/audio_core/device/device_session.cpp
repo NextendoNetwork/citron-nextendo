@@ -33,6 +33,7 @@ Result DeviceSession::Initialize(std::string_view name_, SampleFormat sample_for
     if (stream) {
         Finalize();
     }
+    played_sample_count = 0;
     name = fmt::format("{}-{}", name_, session_id_);
     type = type_;
     sample_format = sample_format_;
