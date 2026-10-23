@@ -341,10 +341,14 @@ bool IsCompatibleTitle(std::uint64_t title_id) {
     std::call_once(state.initialized, LoadCache);
     std::scoped_lock lock(state.mutex);
 
-    constexpr std::array<std::uint64_t, 13> supported{{
+    constexpr std::array<std::uint64_t, 17> supported{{
         0x0100C2500FC20000ULL, // Splatoon 3
         0x010015100B514000ULL, // Super Mario Bros. Wonder
         0x0100C9A00ECE6000ULL, // Nintendo 64 - Nintendo Classics
+        0x0100D870045B6000ULL, // NES 9.1.0
+        0x01008D300C50C000ULL, // SNES 6.0.0
+        0x0100C62011050000ULL, // Game Boy 4.1.0
+        0x010012F017576000ULL, // Game Boy Advance 3.3.0
         0x0100C6F01C4F8000ULL, // METAL GEAR SOLID: Peace Walker
         0x0100F9F00C696000ULL, // Crash Team Racing Nitro-Fueled
         0x01006FD0080B2000ULL, // Overcooked! 2

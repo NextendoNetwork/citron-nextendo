@@ -181,7 +181,7 @@ TEST_CASE("Nextendo::CompatibleTitles NSO Classics need their exact application 
     REQUIRE(Table().at(Nes) == "9.1.0");
     REQUIRE(Table().at(Snes) == "6.0.0");
     REQUIRE(Table().at(GameBoy) == "4.1.0");
-    REQUIRE(Table().at(GameBoyAdvance) == "3.3.0");
+    REQUIRE(Table().at(GameBoyAdvance) == "3.4.0");
     REQUIRE(Table().at(Nintendo64) == "4.2.0");
 
     REQUIRE(IsVersionOk(Nes, "9.1.0"));

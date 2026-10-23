@@ -1,0 +1,162 @@
+[
+    {
+        "id":  "nes-npln-a614ffe0",
+        "title_id":  "0100d870045b6000",
+        "build_id":  "A614FFE01A6A3CC1718C2B39E232A10ACDB2999F000000000000000000000000",
+        "module":  "main",
+        "enabled":  true,
+        "patch_version":  1,
+        "final":  false,
+        "required_capabilities":  [
+                                      "npln.ips32.v1"
+                                  ],
+        "offset_basis":  "nso_header_included",
+        "ips32_base64":  "SVBTMzIAR7zwAAT0Ax8qAEfBIAAEHyAD1QBIWpAABCoAgFJFRU9G",
+        "sha256":  "fa44524a8cc9af7f8aae874aaa230a68b57eef82b9633a1e2f25e17e87a503ff",
+        "guards":  [
+                       {
+                           "offset":  4701424,
+                           "original_hex":  "F403002A",
+                           "patched_hex":  "F4031F2A"
+                       },
+                       {
+                           "offset":  4702496,
+                           "original_hex":  "C0020034",
+                           "patched_hex":  "1F2003D5"
+                       },
+                       {
+                           "offset":  4741776,
+                           "original_hex":  "AAE24039",
+                           "patched_hex":  "2A008052"
+                       }
+                   ]
+    },
+    {
+        "id":  "snes-npln-fe4a4fe0",
+        "title_id":  "01008d300c50c000",
+        "build_id":  "FE4A4FE0C808B28795AA8D42B171F9BF6093F32C000000000000000000000000",
+        "module":  "main",
+        "enabled":  true,
+        "patch_version":  1,
+        "final":  false,
+        "required_capabilities":  [
+                                      "npln.ips32.v1"
+                                  ],
+        "offset_basis":  "nso_header_included",
+        "ips32_base64":  "SVBTMzIAKX8AAAT0Ax8qACmDMAAEHyAD1QAqHKAABCoAgFJFRU9G",
+        "sha256":  "11273ad0a845abd14156ca79f2807f33d7265f595ac4d4dc5ab0af97930abf27",
+        "guards":  [
+                       {
+                           "offset":  2719488,
+                           "original_hex":  "F403002A",
+                           "patched_hex":  "F4031F2A"
+                       },
+                       {
+                           "offset":  2720560,
+                           "original_hex":  "C0020034",
+                           "patched_hex":  "1F2003D5"
+                       },
+                       {
+                           "offset":  2759840,
+                           "original_hex":  "AAE24039",
+                           "patched_hex":  "2A008052"
+                       }
+                   ]
+    },
+    {
+        "id":  "gb-npln-aedf4910",
+        "title_id":  "0100c62011050000",
+        "build_id":  "AEDF491084F433567EA142D0F77626956798A826000000000000000000000000",
+        "module":  "main",
+        "enabled":  true,
+        "patch_version":  1,
+        "final":  false,
+        "required_capabilities":  [
+                                      "npln.ips32.v1"
+                                  ],
+        "offset_basis":  "nso_header_included",
+        "ips32_base64":  "SVBTMzIASBBAAAT0Ax8qAEgUcAAEHyAD1QBIreAABCoAgFJFRU9G",
+        "sha256":  "4b9cd320562c27079ee329289a7f140095587077500815ebb2cbf4f53b080885",
+        "guards":  [
+                       {
+                           "offset":  4722752,
+                           "original_hex":  "F403002A",
+                           "patched_hex":  "F4031F2A"
+                       },
+                       {
+                           "offset":  4723824,
+                           "original_hex":  "C0020034",
+                           "patched_hex":  "1F2003D5"
+                       },
+                       {
+                           "offset":  4763104,
+                           "original_hex":  "AAE24039",
+                           "patched_hex":  "2A008052"
+                       }
+                   ]
+    },
+    {
+        "id":  "gba-npln-06980cd0",
+        "title_id":  "010012f017576000",
+        "build_id":  "06980CD0757C5020C6EF73E937C5C16595964612000000000000000000000000",
+        "module":  "main",
+        "enabled":  true,
+        "patch_version":  1,
+        "final":  false,
+        "required_capabilities":  [
+                                      "npln.ips32.v1"
+                                  ],
+        "offset_basis":  "nso_header_included",
+        "ips32_base64":  "SVBTMzIAKOLAAAT0Ax8qACjm8AAEHyAD1QApgGAABCoAgFJFRU9G",
+        "sha256":  "9bafb62479ed014082fff29b0e1fc04300dac66b39b0bd0298f493805e818bc0",
+        "guards":  [
+                       {
+                           "offset":  2679488,
+                           "original_hex":  "F403002A",
+                           "patched_hex":  "F4031F2A"
+                       },
+                       {
+                           "offset":  2680560,
+                           "original_hex":  "C0020034",
+                           "patched_hex":  "1F2003D5"
+                       },
+                       {
+                           "offset":  2719840,
+                           "original_hex":  "AAE24039",
+                           "patched_hex":  "2A008052"
+                       }
+                   ]
+    },
+    {
+        "id": "gba-npln-c4744859",
+        "title_id": "010012f017576000",
+        "build_id": "C4744859A0EA4C05A67629274CD930ABC1B97DA2000000000000000000000000",
+        "module": "main",
+        "enabled": true,
+        "patch_version": 1,
+        "final": false,
+        "required_capabilities": [
+            "npln.ips32.v1"
+        ],
+        "offset_basis": "nso_header_included",
+        "ips32_base64": "SVBTMzIAKP2AAAT0Ax8qACkBsAAEHyAD1QApmyAABCoAgFJFRU9G",
+        "sha256": "9834d5399a4d3d64b00aa3b9d8bd5fcc73dadc49cfd151c879e2e76ef362c393",
+        "guards": [
+            {
+                "offset": 2686336,
+                "original_hex": "F403002A",
+                "patched_hex": "F4031F2A"
+            },
+            {
+                "offset": 2687408,
+                "original_hex": "C0020034",
+                "patched_hex": "1F2003D5"
+            },
+            {
+                "offset": 2726688,
+                "original_hex": "AAE24039",
+                "patched_hex": "2A008052"
+            }
+        ]
+    }
+]

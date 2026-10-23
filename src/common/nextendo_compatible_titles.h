@@ -64,7 +64,7 @@ inline const std::unordered_map<u64, std::string>& BuiltInTable() {
         {0x0100d870045b6000, "9.1.0"}, // Nintendo Entertainment System - Nintendo Switch Online
         {0x01008d300c50c000, "6.0.0"}, // Super Nintendo Entertainment System - Nintendo Switch Online
         {0x0100c62011050000, "4.1.0"}, // Game Boy - Nintendo Switch Online
-        {0x010012f017576000, "3.3.0"}, // Game Boy Advance - Nintendo Switch Online
+        {0x010012f017576000, "3.4.0"}, // Game Boy Advance - Nintendo Switch Online
         {0x010019401051c000, "1.3.2"}, // Mario Strikers: Battle League
         {0x0100f9f00c696000, "1.0.15"},      // Crash Team Racing Nitro-Fueled
         {0x01001b300b9be000, "2.7.7.92380"}, // Diablo III: Eternal Collection

@@ -10,6 +10,8 @@ on:
       - 'src/web_service/npln_patch*'
       - 'src/web_service/CMakeLists.txt'
       - 'test-files/npln_patch*'
+      - 'test-files/npln_classics*'
+      - 'dist/service-catalog/classics/**'
   workflow_dispatch: {}
 
 permissions:
@@ -34,5 +36,7 @@ jobs:
           /tmp/test-npln-catalog
       - name: Verify catalog-only loader selection
         run: /usr/bin/python3 test-files/npln_patch_loader_test.py
+      - name: Verify Classics publication inputs
+        run: /usr/bin/python3 test-files/npln_classics_definitions_test.py
       - name: Verify HTTP, discovery, persistence and offline cache
         run: /usr/bin/python3 test-files/npln_patch_runtime_test.py --include externals/cpp-httplib
