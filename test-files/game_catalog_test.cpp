@@ -128,6 +128,16 @@ int main(int argc, char** argv) {
                     {"expires_at", Utc(expires)},    {"games", entries}};
     };
 
+    // JD uses the existing title-driven badge, count polling and version UI.
+    constexpr u64 JustDance2022 = 0x0100ea6014bb8000;
+    assert(BuiltInTable().at(JustDance2022) == "326704.600931");
+    assert(IsVersionOk(JustDance2022, "326704.600931"));
+    assert(!IsVersionOk(JustDance2022, "326704.600930"));
+    auto jd = VerifyCatalog(sign(document(json::array({
+        exact({"0100ea6014bb8000"}, {"326704.600931"})
+    }))), public_key, now);
+    assert(jd.table.at(JustDance2022) == "326704.600931");
+
     // A valid catalog decides everything once published.
     auto requirements = VerifyCatalog(sign(document(games)), public_key, now);
     assert(requirements.revision == 7);

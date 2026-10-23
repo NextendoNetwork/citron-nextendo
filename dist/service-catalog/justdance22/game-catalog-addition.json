@@ -1,0 +1,18 @@
+{
+  "title_ids": [
+    "0100ea6014bb8000"
+  ],
+  "name": "Just Dance 2022",
+  "enabled": true,
+  "protocol": "ubisoft",
+  "required_capabilities": [
+    "versions.exact.v1"
+  ],
+  "versions": {
+    "policy": "exact",
+    "accepted": [
+      "326704.600931"
+    ],
+    "recommended": "326704.600931"
+  }
+}

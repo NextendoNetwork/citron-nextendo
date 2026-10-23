@@ -79,6 +79,7 @@ inline const std::unordered_map<u64, std::string>& BuiltInTable() {
         {0x010092a00c4b6000, "1.08.00"},     // Friday the 13th: The Game
         {0x010001701248c000, "1.0.4"},       // Super Monkey Ball Banana Mania
         {0x0100b0c013912000, "2026.19.0"},   // Among Us
+        {0x0100ea6014bb8000, "326704.600931"}, // Just Dance 2022 (tested display version)
         {0x0100b6e012ebe000, "1.1.17"},      // UNO
         {0x0100fcf002a58000, "1.13.13.765"}, // Ultimate Chicken Horse
         {0x01006bd001e06000, "1.0.17"},      // Minecraft: Nintendo Switch Edition
