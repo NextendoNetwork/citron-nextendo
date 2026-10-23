@@ -6,6 +6,7 @@
 #include <array>
 #include <bit>
 #include <climits>
+#include <unordered_set>
 
 #include <boost/container/static_vector.hpp>
 
@@ -297,6 +298,7 @@ void DefineConstBuffers(EmitContext& ctx, const Info& info, Id UniformDefinition
                         u32 binding, Id type, char type_char, u32 element_size) {
     const Id uniform_type{ctx.TypePointer(spv::StorageClass::Uniform, type)};
     ctx.uniform_types.*member_type = uniform_type;
+    std::unordered_set<u32> decorated_array_types;
 
     for (const ConstantBufferDescriptor& desc : info.constant_buffer_descriptors) {
         u32 actual_size = info.constant_buffer_used_sizes[desc.index];
@@ -306,7 +308,9 @@ void DefineConstBuffers(EmitContext& ctx, const Info& info, Id UniformDefinition
         actual_size = std::max((actual_size + 255U) & ~255U, 256U);
 
         const Id array_type{ctx.TypeArray(type, ctx.Const(actual_size / element_size))};
-        ctx.Decorate(array_type, spv::Decoration::ArrayStride, element_size);
+        if (decorated_array_types.insert(array_type.value).second) {
+            ctx.Decorate(array_type, spv::Decoration::ArrayStride, element_size);
+        }
 
         const Id struct_type{ctx.TypeStruct(array_type)};
         Name(ctx, struct_type, "{}_cbuf_block_{}{}_{}", ctx.stage, type_char, element_size * CHAR_BIT, desc.index);
@@ -1415,6 +1419,7 @@ void EmitContext::DefineTextures(const Info& info, u32& binding, u32& scaling_in
             .sampled_type = sampled_type,
             .pointer_type = pointer_type,
             .image_type = image_type,
+            .type = desc.type,
             .count = desc.count,
             .is_multisample = desc.is_multisample,
         });

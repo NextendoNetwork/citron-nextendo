@@ -10,6 +10,24 @@
 
 namespace Shader::Backend::SPIRV {
 namespace {
+size_t ImageQuerySizeComponents(TextureType type) {
+    switch (type) {
+    case TextureType::Buffer:
+    case TextureType::Color1D:
+        return 1;
+    case TextureType::ColorArray1D:
+    case TextureType::Color2D:
+    case TextureType::Color2DRect:
+        return 2;
+    case TextureType::ColorArray2D:
+    case TextureType::Color3D:
+    case TextureType::ColorCube:
+    case TextureType::ColorArrayCube:
+        return 3;
+    }
+    throw LogicError("Unspecified image type");
+}
+
 class ImageOperands {
 public:
     [[maybe_unused]] static constexpr bool ImageSampleOffsetAllowed = false;
@@ -299,6 +317,13 @@ Id ImageGatherSubpixelOffset(EmitContext& ctx, const IR::TextureInstInfo& info, 
     // Apply a subpixel offset of 1/512 the texel size of the texture to ensure same rounding on
     // AMD hardware as on Maxwell or other Nvidia architectures.
     const auto calculate_coords{[&](size_t dim) {
+        const auto image_dim{ImageQuerySizeComponents(ctx.textures.at(info.descriptor_index).type)};
+        // A guest texture slot can be reused with a different dimensionality.
+        // Do not emit an invalid size query for such a slot; the coordinate
+        // correction is optional and the original coordinates remain valid.
+        if (image_dim != dim) {
+            return coords;
+        }
         const Id nudge{ctx.Const(0x1p-9f)};
         const Id image_size{ctx.OpImageQuerySizeLod(ctx.U32[dim], texture, ctx.u32_zero_value)};
         Id offset{dim == 2 ? ctx.ConstantComposite(ctx.F32[dim], nudge, nudge)
@@ -561,26 +586,22 @@ Id EmitImageQueryDimensions(EmitContext& ctx, IR::Inst* inst, const IR::Value& i
     const auto mips{[&] { return skip_mips ? zero : ctx.OpImageQueryLevels(ctx.U32[1], image); }};
     const bool is_msaa{IsTextureMsaa(ctx, info)};
     const bool uses_lod{!is_msaa && info.type != TextureType::Buffer};
-    const auto query{[&](Id type) {
-        return uses_lod ? ctx.OpImageQuerySizeLod(type, image, lod)
-                        : ctx.OpImageQuerySize(type, image);
-    }};
-    switch (info.type) {
-    case TextureType::Color1D:
-        return ctx.OpCompositeConstruct(ctx.U32[4], query(ctx.U32[1]), zero, zero, mips());
-    case TextureType::ColorArray1D:
-    case TextureType::Color2D:
-    case TextureType::ColorCube:
-    case TextureType::Color2DRect:
-        return ctx.OpCompositeConstruct(ctx.U32[4], query(ctx.U32[2]), zero, mips());
-    case TextureType::ColorArray2D:
-    case TextureType::Color3D:
-    case TextureType::ColorArrayCube:
-        return ctx.OpCompositeConstruct(ctx.U32[4], query(ctx.U32[3]), mips());
-    case TextureType::Buffer:
-        return ctx.OpCompositeConstruct(ctx.U32[4], query(ctx.U32[1]), zero, zero, mips());
+    const size_t dimensions{info.type == TextureType::Buffer
+                                ? 1
+                                : ImageQuerySizeComponents(
+                                      ctx.textures.at(info.descriptor_index).type)};
+    const Id size{uses_lod ? ctx.OpImageQuerySizeLod(ctx.U32[dimensions], image, lod)
+                           : ctx.OpImageQuerySize(ctx.U32[dimensions], image)};
+    if (dimensions == 1) {
+        return ctx.OpCompositeConstruct(ctx.U32[4], size, zero, zero, mips());
     }
-    throw LogicError("Unspecified image type {}", info.type.Value());
+    const Id width{ctx.OpCompositeExtract(ctx.U32[1], size, 0)};
+    const Id height{ctx.OpCompositeExtract(ctx.U32[1], size, 1)};
+    if (dimensions == 2) {
+        return ctx.OpCompositeConstruct(ctx.U32[4], width, height, zero, mips());
+    }
+    const Id depth{ctx.OpCompositeExtract(ctx.U32[1], size, 2)};
+    return ctx.OpCompositeConstruct(ctx.U32[4], width, height, depth, mips());
 }
 
 Id EmitImageQueryLod(EmitContext& ctx, IR::Inst* inst, const IR::Value& index, Id coords) {

@@ -34,6 +34,7 @@ struct TextureDefinition {
     Id sampled_type;
     Id pointer_type;
     Id image_type;
+    TextureType type;
     u32 count;
     bool is_multisample;
 };
