@@ -41,6 +41,7 @@
 #include "common/settings_input.h"
 #include "common/thread.h"
 #include "core/core.h"
+#include "core/loader/loader.h"
 #include "core/cpu_manager.h"
 #include "core/frontend/framebuffer_layout.h"
 #include "core/frontend/graphics_context.h"
@@ -81,8 +82,13 @@ void EmuThread::run() {
 
     emit LoadProgress(VideoCore::LoadCallbackStage::Prepare, 0, 0);
     if (Settings::values.use_disk_shader_cache.GetValue()) {
+        // Homebrew (NRO) processes run as program 0; key their cache by the NACP title id instead.
+        u64 cache_program_id = m_system.GetApplicationProcessProgramID();
+        if (cache_program_id == 0) {
+            m_system.GetAppLoader().ReadProgramId(cache_program_id);
+        }
         m_system.Renderer().ReadRasterizer()->LoadDiskResources(
-            m_system.GetApplicationProcessProgramID(), stop_token,
+            cache_program_id, stop_token,
             [this](VideoCore::LoadCallbackStage stage, std::size_t value, std::size_t total) {
                 emit LoadProgress(stage, value, total);
             });

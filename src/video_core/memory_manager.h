@@ -116,6 +116,7 @@ public:
      * Checks if a gpu region is mapped by a single range of device addresses.
      */
     [[nodiscard]] bool IsContinuousRange(GPUVAddr gpu_addr, std::size_t size) const;
+    [[nodiscard]] bool IsContinuousRangeUncached(GPUVAddr gpu_addr, std::size_t size) const;
 
     /**
      * Checks if a gpu region is mapped entirely.
@@ -239,6 +240,9 @@ private:
     Common::VirtualBuffer<u32> big_page_table_dev;
 
     std::vector<u64> big_page_continuous;
+    // Bumped before and after every page table change; IsContinuousRange answers from a cache of
+    // queries made in the same generation.
+    std::atomic<u64> table_generation{0};
     boost::container::small_vector<std::pair<DAddr, std::size_t>, 32> page_stash{};
     boost::container::small_vector<std::pair<DAddr, std::size_t>, 32> page_stash2{};
 

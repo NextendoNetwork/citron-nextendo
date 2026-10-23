@@ -3,8 +3,11 @@
 
 #include <algorithm>
 
+#include <array>
+
 #include "common/alignment.h"
 #include "common/assert.h"
+#include "common/scope_exit.h"
 #include "common/logging.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_page_table.h"
@@ -109,6 +112,10 @@ inline void MemoryManager::SetBigPageContinuous(size_t big_page_index, bool valu
 template <MemoryManager::EntryType entry_type>
 GPUVAddr MemoryManager::PageTableOp(GPUVAddr gpu_addr, [[maybe_unused]] DAddr dev_addr, size_t size,
                                     PTEKind kind) {
+    table_generation.fetch_add(1, std::memory_order_acq_rel);
+    SCOPE_EXIT {
+        table_generation.fetch_add(1, std::memory_order_acq_rel);
+    };
     [[maybe_unused]] u64 remaining_size{size};
     if constexpr (entry_type == EntryType::Mapped) {
         page_table.ReserveRange(gpu_addr, size);
@@ -135,6 +142,10 @@ GPUVAddr MemoryManager::PageTableOp(GPUVAddr gpu_addr, [[maybe_unused]] DAddr de
 template <MemoryManager::EntryType entry_type>
 GPUVAddr MemoryManager::BigPageTableOp(GPUVAddr gpu_addr, [[maybe_unused]] DAddr dev_addr,
                                        size_t size, PTEKind kind) {
+    table_generation.fetch_add(1, std::memory_order_acq_rel);
+    SCOPE_EXIT {
+        table_generation.fetch_add(1, std::memory_order_acq_rel);
+    };
     [[maybe_unused]] u64 remaining_size{size};
     for (u64 offset{}; offset < size; offset += big_page_size) {
         const GPUVAddr current_gpu_addr = gpu_addr + offset;
@@ -621,7 +632,32 @@ bool MemoryManager::IsGranularRange(GPUVAddr gpu_addr, std::size_t size) const {
     return page <= Core::DEVICE_PAGESIZE;
 }
 
+// Buffer bindings ask this on every draw; a large bound buffer walked thousands of pages each time.
 bool MemoryManager::IsContinuousRange(GPUVAddr gpu_addr, std::size_t size) const {
+    struct Query {
+        const MemoryManager* owner;
+        GPUVAddr addr;
+        std::size_t size;
+        u64 generation;
+        bool result;
+    };
+    thread_local std::array<Query, 8> cache{};
+    thread_local u32 next{};
+    const u64 generation = table_generation.load(std::memory_order_acquire);
+    for (const Query& query : cache) {
+        if (query.owner == this && query.addr == gpu_addr && query.size == size &&
+            query.generation == generation) {
+            return query.result;
+        }
+    }
+    const bool result = IsContinuousRangeUncached(gpu_addr, size);
+    if ((generation & 1) == 0 && table_generation.load(std::memory_order_acquire) == generation) {
+        cache[next++ % cache.size()] = {this, gpu_addr, size, generation, result};
+    }
+    return result;
+}
+
+bool MemoryManager::IsContinuousRangeUncached(GPUVAddr gpu_addr, std::size_t size) const {
     std::optional<DAddr> old_page_addr{};
     bool result{true};
     auto fail = [&]([[maybe_unused]] std::size_t page_index, [[maybe_unused]] std::size_t offset,
