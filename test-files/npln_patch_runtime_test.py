@@ -122,7 +122,7 @@ inline std::filesystem::path GetCitronPath(CitronPath) { return std::getenv("NPL
         source = source.replace('https://nextendo.network', 'http://127.0.0.1:' + str(server.server_port))
         source = source.replace('LAI+Pi+GZtj3p4DpNM5ORBraw1cbZCVSMFgUmAVWNeA=', public)
         (root / 'catalog.cpp').write_text(source)
-        command = ['g++', '-std=c++20', '-Wall', '-Wextra', '-pthread',
+        command = [os.environ.get('CXX', 'g++'), '-std=c++20', '-Wall', '-Wextra', '-pthread',
                    '-DCPPHTTPLIB_OPENSSL_SUPPORT', '-DFMT_HEADER_ONLY', '-I' + str(root),
                    '-I' + str(repo / 'src')]
         command += ['-I' + path for path in args.include]
