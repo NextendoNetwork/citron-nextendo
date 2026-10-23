@@ -9,6 +9,7 @@ The loader continues to require the existing signed catalog and instruction guar
 | SNES | 6.0.0 | FE4A4FE0C808B28795AA8D42B171F9BF6093F32C |
 | Game Boy | 4.1.0 | AEDF491084F433567EA142D0F77626956798A826 |
 | Game Boy Advance | 3.3.0 | 06980CD0757C5020C6EF73E937C5C16595964612 |
+| Game Boy Advance | 3.4.0 | C4744859A0EA4C05A67629274CD930ABC1B97DA2 |
 
 The IPS32 records reproduce the three TLS compatibility instruction edits in the
 Prelude 4.0.8 patches used for the corresponding Classics builds. They contain no
@@ -41,3 +42,5 @@ suspend/resume remains unresolved and is outside this client rollout. GBA four-d
 and gameplay have been exercised between Switch/Citron, but lag and intermittent
 rejoin errors remain under investigation. Do not advertise all Classics as fully
 stable on the basis of patch installation.
+
+GBA 3.4.0 was inspected from the owner's original update. All three exact preimages and unique surrounding contexts match the corresponding 3.3.0 sites, shifted by 0x1AC0. NSO section hashes and simulated IPS32 application passed. Retain the 3.3.0 definition. Real 3.4.0 room/gameplay testing and signed production publication remain pending.

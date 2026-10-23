@@ -14,11 +14,14 @@ expected = {
     "0100c62011050000": "AEDF491084F433567EA142D0F77626956798A826",
     "010012f017576000": "06980CD0757C5020C6EF73E937C5C16595964612",
 }
-assert len(patches) == len(titles) == len(expected)
+assert len(patches) == 5 and len(titles) == len(expected)
 assert {t["title_id"] for t in titles if t["enabled"]} == set(expected)
-assert len({p["title_id"] for p in patches}) == len(expected)
+assert {p["title_id"] for p in patches} == set(expected)
+expected_builds = {(title, build.ljust(64, "0")) for title, build in expected.items()}
+expected_builds.add(("010012f017576000", "C4744859A0EA4C05A67629274CD930ABC1B97DA2".ljust(64, "0")))
+assert {(p["title_id"], p["build_id"]) for p in patches} == expected_builds
 for patch in patches:
-    assert patch["build_id"] == expected[patch["title_id"]].ljust(64, "0")
+    assert (patch["title_id"], patch["build_id"]) in expected_builds
     assert patch["module"] == "main" and patch["enabled"]
     assert patch["offset_basis"] == "nso_header_included"
     assert patch["required_capabilities"] == ["npln.ips32.v1"]
@@ -41,4 +44,4 @@ for patch in patches:
         assert len(original) == len(replacement) == 4 and original != replacement
         assert records.pop(guard["offset"]) == replacement
     assert not records
-print("PASS: four exact Classics builds, title index, IPS32 hashes and guards agree; original-image verification still required before signing")
+print("PASS: five exact Classics builds across four titles, title index, IPS32 hashes and guards agree; original-image verification still required before signing")
