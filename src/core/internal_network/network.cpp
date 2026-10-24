@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <limits>
 #include <utility>
@@ -589,10 +590,9 @@ PollEvents TranslatePollRevents(short revents) {
 // indefinitely instead of "this connection is dead", starving whatever retry/give-up logic
 // depends on ever actually seeing an error. Ryujinx-Nextendo hit and fixed this same Windows
 // gap (see ManagedSocketPollManager.cs's IsPeerHungUp -- measured 142 consecutive empty polls,
-// 38.8s, stuck on a gRPC socket before that fix landed). Peek a byte directly for the real
-// signal instead of trusting WSAPoll's revents alone: 0 back means an orderly close (FIN
-// already received), a reset-family error means a hard hangup, and anything else (in
-// particular WSAEWOULDBLOCK) means truly nothing yet -- left alone.
+// 38.8s, stuck on a gRPC socket before that fix landed). Observe queued bytes and TCP state
+// instead of trusting WSAPoll's revents alone. Never read here: the guest may have left the
+// descriptor in blocking mode, and another reader can consume data between readiness and peek.
 //
 // WIN32-only: this whole gap is specific to WSAPoll's exceptfds behavior. Real POSIX poll()
 // on Linux/macOS already reports POLLHUP/POLLERR correctly for a hung-up peer, and this
@@ -612,34 +612,37 @@ bool PeekPeerHungUp(SOCKET native_fd, bool& has_pending_data) {
         return false;
     }
 
-    char peek_byte;
-    const int peek_result = recv(native_fd, &peek_byte, 1, MSG_PEEK);
-    if (peek_result > 0) {
+    // recv(MSG_PEEK) blocks on a blocking descriptor. A guest's Poll can
+    // therefore strand the socket worker and CloseServices() indefinitely.
+    // FIONREAD observes queued data without consuming it or changing I/O mode.
+    u_long available = 0;
+    if (ioctlsocket(native_fd, FIONREAD, &available) == SOCKET_ERROR) {
+        const int error = WSAGetLastError();
+        return error == WSAECONNRESET || error == WSAECONNABORTED ||
+               error == WSAENETRESET || error == WSAESHUTDOWN;
+    }
+    if (available > 0) {
         has_pending_data = true;
         return false;
     }
-    if (peek_result == 0) {
-        LOG_INFO(Network, "[Nextendo][DIAG] PeekPeerHungUp fd={} -- recv(MSG_PEEK) returned 0 "
-                           "(orderly FIN), reporting hung up", native_fd);
-        return true;
-    }
-
-    const int err = WSAGetLastError();
-    switch (err) {
-    case WSAECONNRESET:
-    case WSAECONNABORTED:
-    case WSAENETRESET:
-    case WSAESHUTDOWN:
-        LOG_INFO(Network, "[Nextendo][DIAG] PeekPeerHungUp fd={} -- recv(MSG_PEEK) failed with "
-                           "{}, reporting hung up", native_fd, err);
-        return true;
-    default:
-        if (err != WSAEWOULDBLOCK) {
-            LOG_INFO(Network, "[Nextendo][DIAG] PeekPeerHungUp fd={} -- recv(MSG_PEEK) failed "
-                               "with unexpected {}, NOT reporting hung up", native_fd, err);
-        }
+    // SIO_TCP_INFO version 0 starts with a 32-bit TCPSTATE. Use a bounded
+    // output buffer so SDKs targeting pre-RS2 still compile; an older provider
+    // can reject this optional observation without falling back to recv().
+    // https://learn.microsoft.com/windows/win32/winsock/sio-tcp-info
+    constexpr DWORD tcp_info_control = _WSAIORW(IOC_VENDOR, 39);
+    DWORD version = 0;
+    DWORD returned = 0;
+    std::array<unsigned char, 256> info{};
+    if (WSAIoctl(native_fd, tcp_info_control, &version, sizeof(version), info.data(),
+                 static_cast<DWORD>(info.size()), &returned, nullptr, nullptr) == SOCKET_ERROR ||
+        returned < sizeof(DWORD)) {
         return false;
     }
+    DWORD state = 0;
+    std::memcpy(&state, info.data(), sizeof(state));
+    // TCPSTATE_CLOSED, CLOSE_WAIT, CLOSING, LAST_ACK and TIME_WAIT respectively.
+    // ESTABLISHED/SYN/LISTEN and unknown future states are not peer shutdowns.
+    return state == 0 || state == 7 || state == 8 || state == 9 || state == 10;
 }
 #endif
 

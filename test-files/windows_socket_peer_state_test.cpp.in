@@ -1,0 +1,55 @@
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <mstcpip.h>
+#include <array>
+#include <chrono>
+#include <cstring>
+#include <future>
+#include <iostream>
+#include <stdexcept>
+#include <thread>
+#define LOG_INFO(...)
+PROBE_SOURCE
+struct Pair {
+ SOCKET listener=INVALID_SOCKET,client=INVALID_SOCKET,peer=INVALID_SOCKET;
+ Pair(){
+  listener=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);sockaddr_in a{};a.sin_family=AF_INET;a.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
+  if(bind(listener,(sockaddr*)&a,sizeof(a))||listen(listener,1))throw std::runtime_error("fixture listen");
+  int n=sizeof(a);getsockname(listener,(sockaddr*)&a,&n);client=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+  if(connect(client,(sockaddr*)&a,n))throw std::runtime_error("fixture connect");peer=accept(listener,nullptr,nullptr);
+ }
+ ~Pair(){if(peer!=INVALID_SOCKET)closesocket(peer);closesocket(client);closesocket(listener);}
+};
+int main(){WSADATA w{};WSAStartup(MAKEWORD(2,2),&w);bool failed=false;
+ {
+ Pair p;bool pending=false;auto begin=std::chrono::steady_clock::now();
+ auto f=std::async(std::launch::async,[&]{return PeekPeerHungUp(p.client,pending);});
+ bool blocked=f.wait_for(std::chrono::milliseconds(120))!=std::future_status::ready;
+ if(blocked)send(p.peer,"x",1,0);bool hung=f.get();
+ auto elapsed=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-begin).count();
+ std::cout<<"idle blocking TCP probe: blocked="<<blocked<<" duration_ms="<<elapsed<<"\n";
+ if(blocked||hung)failed=true;
+ }
+ if(failed){WSACleanup();return 1;}
+ {
+ Pair p;bool pending=false;send(p.peer,"abc",3,0);std::this_thread::sleep_for(std::chrono::milliseconds(20));
+ if(PeekPeerHungUp(p.client,pending)||!pending){std::cerr<<"pending data lost\n";failed=true;}
+ char b[3]{};if(recv(p.client,b,3,0)!=3||std::memcmp(b,"abc",3)){std::cerr<<"probe consumed data\n";failed=true;}
+ shutdown(p.peer,SD_SEND);std::this_thread::sleep_for(std::chrono::milliseconds(30));pending=false;
+ if(!PeekPeerHungUp(p.client,pending)||pending){std::cerr<<"FIN not detected\n";failed=true;}
+ }
+ {
+ Pair p;linger reset{1,0};setsockopt(p.peer,SOL_SOCKET,SO_LINGER,(char*)&reset,sizeof(reset));closesocket(p.peer);p.peer=INVALID_SOCKET;
+ std::this_thread::sleep_for(std::chrono::milliseconds(30));bool pending=false;
+ if(!PeekPeerHungUp(p.client,pending)){std::cerr<<"RST not detected\n";failed=true;}
+ }
+ {
+ SOCKET udp=socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);bool pending=false;
+ if(PeekPeerHungUp(udp,pending)||pending){std::cerr<<"UDP classified as TCP EOF\n";failed=true;}closesocket(udp);
+ Pair p;if(PeekPeerHungUp(p.listener,pending)){std::cerr<<"listener classified as EOF\n";failed=true;}
+ auto begin=std::chrono::steady_clock::now();for(int i=0;i<1000;++i){if(PeekPeerHungUp(p.client,pending)||pending)failed=true;}
+ std::cout<<"1000 idle probes duration_ms="<<std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-begin).count()<<"\n";
+ }
+ WSACleanup();std::cout<<(failed?"FAIL":"PASS: idle blocking socket, unread data, FIN, RST, UDP and listener")<<"\n";return failed?1:0;
+}
