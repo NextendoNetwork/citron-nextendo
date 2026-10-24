@@ -169,6 +169,8 @@ public:
 
 private:
     void CreateAsyncInterface(HLERequestContext& ctx) {
+        LOG_INFO(Service_NIM, "CreateAsyncInterface: domain={}, tipc={}",
+                 ctx.GetManager()->IsDomain(), ctx.IsTipc());
         auto async_interface = std::make_shared<IShopServiceAsync>(system);
         IPC::ResponseBuilder rb{ctx, 2, 1, 1};
         rb.Push(ResultSuccess);
@@ -646,15 +648,11 @@ private:
         rb.PushIpcInterface<IShopServiceAccessServer>(system);
     }
 
-    void CreateServerInterface2(HLERequestContext& ctx)
-    {
-        // [17.0.0+] CreateServerInterface2
-        // Use the same logic as CreateServerInterface
-        LOG_WARNING(Service_NIM, "(STUBBED) called");
-        // Signal To IPC For A Response
-        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
-        rb.Push(ResultSuccess);
-        rb.PushIpcInterface<IShopServiceAccessor>(system);
+    void CreateServerInterface2(HLERequestContext& ctx) {
+        // [17.0.0+] returns the same server interface as command 0. The guest
+        // calls CreateAccessorInterface on it before CreateAsyncInterface.
+        LOG_INFO(Service_NIM, "CreateServerInterface2 returning IShopServiceAccessServer");
+        CreateServerInterface(ctx);
     }
 
     void IsLargeResourceAvailable(HLERequestContext& ctx) {
