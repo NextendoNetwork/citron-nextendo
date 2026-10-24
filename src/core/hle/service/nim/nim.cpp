@@ -4,6 +4,8 @@
 
 #include <chrono>
 #include <ctime>
+#include <memory>
+#include <utility>
 #include "core/core.h"
 #include "core/hle/kernel/k_event.h"
 #include "core/hle/service/ipc_helpers.h"
@@ -18,6 +20,10 @@
 #undef CreateSemaphore
 
 namespace Service::NIM {
+
+// The emulator has no eShop backend. Return a NIM failure to the guest rather
+// than reporting a successful request with no completion or response body.
+constexpr Result ResultShopServiceUnavailable{ErrorModule::NIM, 500};
 
 class IAsyncValue final : public ServiceFramework<IAsyncValue> {
 public:
@@ -87,20 +93,65 @@ public:
 class IShopServiceAsync final : public ServiceFramework<IShopServiceAsync> {
 public:
     explicit IShopServiceAsync(Core::System& system_)
-        : ServiceFramework{system_, "IShopServiceAsync"} {
+        : ServiceFramework{system_, "IShopServiceAsync"},
+          service_context{system_, "IShopServiceAsync"} {
         // clang-format off
         static const FunctionInfo functions[] = {
-            {0, nullptr, "Cancel"},
-            {1, nullptr, "GetSize"},
-            {2, nullptr, "Read"},
-            {3, nullptr, "GetErrorCode"},
-            {4, nullptr, "Request"},
-            {5, nullptr, "Prepare"},
+            {0, &IShopServiceAsync::Cancel, "Cancel"},
+            {1, &IShopServiceAsync::GetSize, "GetSize"},
+            {2, &IShopServiceAsync::Read, "Read"},
+            {3, &IShopServiceAsync::GetErrorCode, "GetErrorCode"},
+            {4, &IShopServiceAsync::Request, "Request"},
+            {5, &IShopServiceAsync::Prepare, "Prepare"},
         };
         // clang-format on
 
         RegisterHandlers(functions);
+        completion_event = service_context.CreateEvent("IShopServiceAsync:Completion");
     }
+
+    ~IShopServiceAsync() override {
+        service_context.CloseEvent(completion_event);
+    }
+
+    Kernel::KReadableEvent* GetEvent() const {
+        return &completion_event->GetReadableEvent();
+    }
+
+private:
+    void Cancel(HLERequestContext& ctx) {
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(ResultSuccess);
+    }
+
+    void GetSize(HLERequestContext& ctx) {
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(ResultShopServiceUnavailable);
+    }
+
+    void Read(HLERequestContext& ctx) {
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(ResultShopServiceUnavailable);
+    }
+
+    void GetErrorCode(HLERequestContext& ctx) {
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(ResultShopServiceUnavailable);
+    }
+
+    void Request(HLERequestContext& ctx) {
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(ResultShopServiceUnavailable);
+    }
+
+    void Prepare(HLERequestContext& ctx) {
+        LOG_INFO(Service_NIM, "Shop service request refused: no eShop backend");
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(ResultShopServiceUnavailable);
+    }
+
+    KernelHelpers::ServiceContext service_context;
+    Kernel::KEvent* completion_event;
 };
 
 class IShopServiceAccessor final : public ServiceFramework<IShopServiceAccessor> {
@@ -118,10 +169,11 @@ public:
 
 private:
     void CreateAsyncInterface(HLERequestContext& ctx) {
-        LOG_WARNING(Service_NIM, "(STUBBED) called");
-        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+        auto async_interface = std::make_shared<IShopServiceAsync>(system);
+        IPC::ResponseBuilder rb{ctx, 2, 1, 1};
         rb.Push(ResultSuccess);
-        rb.PushIpcInterface<IShopServiceAsync>(system);
+        rb.PushCopyObjects(async_interface->GetEvent());
+        rb.PushIpcInterface<IShopServiceAsync>(std::move(async_interface));
     }
 };
 
