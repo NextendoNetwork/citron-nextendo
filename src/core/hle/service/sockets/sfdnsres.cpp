@@ -178,6 +178,26 @@ static std::optional<std::string> GetNextendoRedirectIp(const std::string& host,
         return server_ip;
     }
 
+    // Guilty Gear -Strive- signs in to Epic Online Services at boot, then calls Arc System Works'
+    // API and its two match servers when the player goes online. api.epicgames.dev is shared with
+    // other Epic titles, so it is redirected only while Strive runs. NEXTENDO_GGST_IP points the
+    // four hosts at a local test server without moving the rest of Nextendo.
+    // 0100AB401F136000 is the analysed release (JP cartridge, update 1.08). The US, EU and Asian
+    // IDs come from their DLC/listing IDs and are not checked against a binary yet.
+    const bool is_guilty_gear_strive =
+        program_id == 0x0100AB401F136000ULL || program_id == 0x01002F4020718000ULL ||
+        program_id == 0x01002F402071A000ULL || program_id == 0x010034A020A5C000ULL;
+    if (is_guilty_gear_strive &&
+        (host == "api.epicgames.dev" || host == "switch-ggst-game.guiltygear.com" ||
+         host == "prod-switch-match-ggst-game.guiltygear.com" ||
+         host == "prod-to3match-ggst-game.guiltygear.com")) {
+        const char* ggst_ip = std::getenv("NEXTENDO_GGST_IP");
+        const std::string target = (ggst_ip && *ggst_ip) ? std::string{ggst_ip} : server_ip;
+        LOG_INFO(Service, "[Nextendo] Redirecting Guilty Gear Strive host '{}' -> '{}'", host,
+                 target);
+        return target;
+    }
+
     // Just Dance 2022: exact service hosts on the lab or deployed Nextendo server.
     constexpr u64 JustDance2022 = 0x0100EA6014BB8000ULL;
     if (program_id == JustDance2022 &&
