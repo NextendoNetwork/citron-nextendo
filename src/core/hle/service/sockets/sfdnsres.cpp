@@ -206,6 +206,14 @@ static std::optional<std::string> GetNextendoRedirectIp(const std::string& host,
         return server_ip;
     }
 
+    // World War Z: Saber's Hydra API (wwz*.wwzapi.com) and RedLynx dispatcher (rlx*.hydrapi.net).
+    constexpr u64 WorldWarZ = 0x010099F013898000ULL;
+    if (program_id == WorldWarZ &&
+        (host.ends_with(".wwzapi.com") || host.ends_with(".hydrapi.net"))) {
+        LOG_INFO(Service, "Redirecting World War Z host '{}' -> '{}'", host, server_ip);
+        return server_ip;
+    }
+
     if (host.starts_with("nncs2-") && host.ends_with(".n.n.srv.nintendo.net")) {
         LOG_INFO(Service, "[Nextendo] Redirecting NAT check host '{}' -> '{}'", host, nat_ip);
         return nat_ip;
