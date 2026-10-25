@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include <atomic>
 #include <memory>
-#include <vector>
 
 #include <QDialog>
 #include <QJsonArray>
@@ -18,7 +16,6 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
-class QTimer;
 class QNetworkAccessManager;
 class QNetworkReply;
 class ControllerShortcut;
@@ -45,7 +42,6 @@ private:
     void SaveFavorites() const;
     void PopulateCategories();
     void FilterCatalog();
-    void MoveSelection(int direction);
     void UpdateSelection(int row);
     void ToggleFavorite();
     void ScanSelectedAmiibo();
@@ -67,13 +63,8 @@ private:
     QLabel* details_label{};
     QPushButton* scan_button{};
     QPushButton* favorite_button{};
-    QTimer* controller_repeat_timer{};
-    Core::HID::EmulatedController* navigation_controller{};
-    int navigation_callback_key{-1};
-    std::atomic_bool navigation_up_pressed{};
-    std::atomic_bool navigation_down_pressed{};
+    std::unique_ptr<ControllerShortcut> close_shortcut;
     QNetworkAccessManager* network{};
     QNetworkReply* image_reply{};
-    std::vector<std::unique_ptr<ControllerShortcut>> controller_shortcuts;
     bool load_bin_requested{};
 };

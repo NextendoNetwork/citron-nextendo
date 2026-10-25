@@ -23,7 +23,6 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
-#include <QMetaObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -121,13 +120,6 @@ AmiiboPickerDialog::AmiiboPickerDialog(QWidget* parent, QString title_id,
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 1);
     root->addWidget(splitter, 1);
-    auto* controls_hint = new QLabel(
-        tr("D-pad Up/Down: Select Amiibo  |  D-pad Left/Right or L/R: Change category  |  "
-           "A: Scan  |  B: Back  |  X: Favorite  |  Y: Show all Amiibo"),
-        this);
-    controls_hint->setWordWrap(true);
-    controls_hint->setAlignment(Qt::AlignCenter);
-    root->addWidget(controls_hint);
 
     auto* buttons = new QHBoxLayout;
     auto* bin_button = new QPushButton(tr("Load .bin file..."), this);
@@ -161,84 +153,10 @@ AmiiboPickerDialog::AmiiboPickerDialog(QWidget* parent, QString title_id,
     connect(cancel_button, &QPushButton::clicked, this, &QDialog::reject);
 
     if (controller) {
-        navigation_controller = controller;
-        controller_repeat_timer = new QTimer(this);
-        controller_repeat_timer->setSingleShot(true);
-        controller_repeat_timer->setInterval(400);
-        connect(controller_repeat_timer, &QTimer::timeout, this, [this] {
-            int direction = 0;
-            if (navigation_up_pressed.load(std::memory_order_acquire)) {
-                direction = -1;
-            } else if (navigation_down_pressed.load(std::memory_order_acquire)) {
-                direction = 1;
-            }
-            if (direction == 0) {
-                controller_repeat_timer->stop();
-                controller_repeat_timer->setSingleShot(true);
-                controller_repeat_timer->setInterval(400);
-                return;
-            }
-
-            MoveSelection(direction);
-            controller_repeat_timer->setSingleShot(false);
-            controller_repeat_timer->setInterval(180);
-            controller_repeat_timer->start();
-        });
-        const auto queue_navigation = [this](int direction) {
-            QMetaObject::invokeMethod(this, [this, direction] {
-                MoveSelection(direction);
-                if (controller_repeat_timer && !controller_repeat_timer->isActive()) {
-                    controller_repeat_timer->setSingleShot(true);
-                    controller_repeat_timer->setInterval(400);
-                    controller_repeat_timer->start();
-                }
-            }, Qt::QueuedConnection);
-        };
-        Core::HID::ControllerUpdateCallback navigation_callback{
-            .on_change = [this, controller, queue_navigation](
-                Core::HID::ControllerTriggerType type) {
-                if (type != Core::HID::ControllerTriggerType::Button) {
-                    return;
-                }
-                const u64 buttons = static_cast<u64>(controller->GetNpadButtons().raw);
-                const bool up = (buttons & static_cast<u64>(Core::HID::NpadButton::Up)) != 0;
-                const bool down = (buttons & static_cast<u64>(Core::HID::NpadButton::Down)) != 0;
-                const bool was_up =
-                    navigation_up_pressed.exchange(up, std::memory_order_acq_rel);
-                const bool was_down =
-                    navigation_down_pressed.exchange(down, std::memory_order_acq_rel);
-                if (up && !was_up) {
-                    queue_navigation(-1);
-                }
-                if (down && !was_down) {
-                    queue_navigation(1);
-                }
-            },
-            .is_npad_service = false,
-        };
-        navigation_callback_key = controller->SetCallback(navigation_callback);
-        const auto bind = [this, controller](const char* buttons, auto callback) {
-            auto shortcut = std::make_unique<ControllerShortcut>(controller);
-            shortcut->SetKey(std::string{buttons});
-            connect(shortcut.get(), &ControllerShortcut::Activated, this, callback,
-                    Qt::QueuedConnection);
-            controller_shortcuts.push_back(std::move(shortcut));
-        };
-        const auto change_category = [this](int direction) {
-            const int count = category_combo->count();
-            if (count > 0) {
-                const int next = (category_combo->currentIndex() + direction + count) % count;
-                category_combo->setCurrentIndex(next);
-            }
-        };
-        bind("Dpad_Left", [change_category] { change_category(-1); });
-        bind("Dpad_Right", [change_category] { change_category(1); });
-        bind("L", [change_category] { change_category(-1); });
-        bind("R", [change_category] { change_category(1); });
-        bind("A", [this] { ScanSelectedAmiibo(); });
-        bind("B", [this] { reject(); });
-        bind("X", [this] { ToggleFavorite(); });
-        bind("Y", [this] { show_all->setChecked(!show_all->isChecked()); });
+        close_shortcut = std::make_unique<ControllerShortcut>(controller);
+        close_shortcut->SetKey("B");
+        connect(close_shortcut.get(), &ControllerShortcut::Activated, this, &QDialog::reject,
+                Qt::QueuedConnection);
     }
 
     LoadFavorites();
@@ -246,24 +164,8 @@ AmiiboPickerDialog::AmiiboPickerDialog(QWidget* parent, QString title_id,
     amiibo_list->setFocus(Qt::OtherFocusReason);
 }
 
-AmiiboPickerDialog::~AmiiboPickerDialog() {
-    if (navigation_controller && navigation_callback_key >= 0) {
-        navigation_controller->DeleteCallback(navigation_callback_key);
-    }
-}
+AmiiboPickerDialog::~AmiiboPickerDialog() = default;
 
-void AmiiboPickerDialog::MoveSelection(int direction) {
-    const int count = amiibo_list->count();
-    if (count == 0) {
-        return;
-    }
-
-    const int row = amiibo_list->currentRow();
-    const int next_row = std::clamp(row + direction, 0, count - 1);
-    if (next_row != row) {
-        amiibo_list->setCurrentRow(next_row);
-    }
-}
 void AmiiboPickerDialog::LoadFavorites() {
     const auto path = Common::FS::GetCitronPath(Common::FS::CitronPath::AmiiboDir) /
                       "AmiiboFavorites.json";

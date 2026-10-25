@@ -5251,22 +5251,39 @@ void GMainWindow::OnLoadAmiibo() {
     }
 
     auto* virtual_amiibo = input_subsystem->GetVirtualAmiibo();
-    auto* amiibo_controller =
-        system->HIDCore().GetEmulatedController(Core::HID::NpadIdType::Player1);
     if (virtual_amiibo->GetCurrentState() == InputCommon::VirtualAmiibo::State::TagNearby) {
         virtual_amiibo->CloseAmiibo();
         QMessageBox::warning(this, tr("Amiibo"), tr("The current amiibo has been removed"));
         return;
     }
     if (virtual_amiibo->GetCurrentState() != InputCommon::VirtualAmiibo::State::WaitingForAmiibo) {
-        QMessageBox::warning(this, tr("Error"), tr("The current game is not looking for amiibos"));
+        QMessageBox error{QMessageBox::Warning, tr("Error"),
+                          tr("The current game is not looking for amiibos"), QMessageBox::Ok,
+                          this};
+        auto* controller = system->HIDCore().GetEmulatedController(
+            Core::HID::NpadIdType::Player1);
+        if (controller) {
+            ControllerShortcut accept_with_a{controller};
+            ControllerShortcut accept_with_b{controller};
+            accept_with_a.SetKey("A");
+            accept_with_b.SetKey("B");
+            connect(&accept_with_a, &ControllerShortcut::Activated, &error,
+                    &QMessageBox::accept, Qt::QueuedConnection);
+            connect(&accept_with_b, &ControllerShortcut::Activated, &error,
+                    &QMessageBox::accept, Qt::QueuedConnection);
+            error.exec();
+        } else {
+            error.exec();
+        }
         return;
     }
 
     is_amiibo_file_select_active = true;
     const QString title_id = QString::number(system->GetApplicationProcessProgramID(), 16)
                                  .rightJustified(16, QLatin1Char('0')).toUpper();
-    AmiiboPickerDialog picker{this, title_id, amiibo_controller, last_scanned_amiibo_id};
+    auto* controller = system->HIDCore().GetEmulatedController(
+        Core::HID::NpadIdType::Player1);
+    AmiiboPickerDialog picker{this, title_id, controller, last_scanned_amiibo_id};
     const int result = picker.exec();
     is_amiibo_file_select_active = false;
     if (result != QDialog::Accepted) {
