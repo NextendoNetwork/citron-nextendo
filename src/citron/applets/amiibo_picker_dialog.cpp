@@ -120,6 +120,13 @@ AmiiboPickerDialog::AmiiboPickerDialog(QWidget* parent, QString title_id,
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 1);
     root->addWidget(splitter, 1);
+    auto* controls_hint = new QLabel(
+        tr("D-pad Up/Down: Select Amiibo  |  D-pad Left/Right or L/R: Change category  |  "
+           "A: Scan  |  B: Back  |  X: Favorite  |  Y: Show all Amiibo"),
+        this);
+    controls_hint->setWordWrap(true);
+    controls_hint->setAlignment(Qt::AlignCenter);
+    root->addWidget(controls_hint);
 
     auto* buttons = new QHBoxLayout;
     auto* bin_button = new QPushButton(tr("Load .bin file..."), this);
@@ -157,12 +164,6 @@ AmiiboPickerDialog::AmiiboPickerDialog(QWidget* parent, QString title_id,
         controller_repeat_timer->setSingleShot(true);
         controller_repeat_timer->setInterval(350);
         connect(controller_repeat_timer, &QTimer::timeout, this, [this, controller] {
-            if (!amiibo_list->hasFocus()) {
-                controller_repeat_timer->stop();
-                controller_repeat_timer->setSingleShot(true);
-                controller_repeat_timer->setInterval(350);
-                return;
-            }
             const u64 buttons = static_cast<u64>(controller->GetNpadButtons().raw);
             const u64 up = static_cast<u64>(Core::HID::NpadButton::Up);
             const u64 down = static_cast<u64>(Core::HID::NpadButton::Down);
@@ -198,28 +199,18 @@ AmiiboPickerDialog::AmiiboPickerDialog(QWidget* parent, QString title_id,
         };
         bind("Dpad_Up", [begin_navigation] { begin_navigation(-1); });
         bind("Dpad_Down", [begin_navigation] { begin_navigation(1); });
-        bind("Dpad_Left", [this] {
-            if (category_combo->count() > 0) {
-                category_combo->setCurrentIndex(
-                    (category_combo->currentIndex() + category_combo->count() - 1) %
-                    category_combo->count());
+        const auto change_category = [this](int direction) {
+            const int count = category_combo->count();
+            if (count > 0) {
+                const int next = (category_combo->currentIndex() + direction + count) % count;
+                category_combo->setCurrentIndex(next);
             }
-        });
-        bind("Dpad_Right", [this] {
-            if (category_combo->count() > 0) {
-                category_combo->setCurrentIndex((category_combo->currentIndex() + 1) %
-                                                 category_combo->count());
-            }
-        });
-        bind("A", [this] {
-            if (show_all->hasFocus()) {
-                show_all->setChecked(!show_all->isChecked());
-            } else if (category_combo->hasFocus()) {
-                amiibo_list->setFocus(Qt::OtherFocusReason);
-            } else {
-                ScanSelectedAmiibo();
-            }
-        });
+        };
+        bind("Dpad_Left", [change_category] { change_category(-1); });
+        bind("Dpad_Right", [change_category] { change_category(1); });
+        bind("L", [change_category] { change_category(-1); });
+        bind("R", [change_category] { change_category(1); });
+        bind("A", [this] { ScanSelectedAmiibo(); });
         bind("B", [this] { reject(); });
         bind("X", [this] { ToggleFavorite(); });
         bind("Y", [this] { show_all->setChecked(!show_all->isChecked()); });
@@ -233,50 +224,17 @@ AmiiboPickerDialog::AmiiboPickerDialog(QWidget* parent, QString title_id,
 AmiiboPickerDialog::~AmiiboPickerDialog() = default;
 
 void AmiiboPickerDialog::MoveSelection(int direction) {
-    if (show_all->hasFocus()) {
-        if (direction > 0) {
-            amiibo_list->setFocus(Qt::OtherFocusReason);
-            if (amiibo_list->currentRow() < 0) {
-                amiibo_list->setCurrentRow(0);
-            }
-        } else {
-            category_combo->setFocus(Qt::OtherFocusReason);
-        }
-        return;
-    }
-    if (category_combo->hasFocus()) {
-        if (direction > 0) {
-            show_all->setFocus(Qt::OtherFocusReason);
-        } else {
-            search_box->setFocus(Qt::OtherFocusReason);
-        }
-        return;
-    }
-    if (search_box->hasFocus()) {
-        if (direction > 0) {
-            category_combo->setFocus(Qt::OtherFocusReason);
-        }
-        return;
-    }
-
-    if (amiibo_list->count() == 0) {
-        if (direction < 0) {
-            show_all->setFocus(Qt::OtherFocusReason);
-        }
+    const int count = amiibo_list->count();
+    if (count == 0) {
         return;
     }
 
     const int row = amiibo_list->currentRow();
-    if (direction < 0 && row <= 0) {
-        show_all->setFocus(Qt::OtherFocusReason);
-        return;
-    }
-    const int next_row = std::clamp(row + direction, 0, amiibo_list->count() - 1);
+    const int next_row = std::clamp(row + direction, 0, count - 1);
     if (next_row != row) {
         amiibo_list->setCurrentRow(next_row);
     }
 }
-
 void AmiiboPickerDialog::LoadFavorites() {
     const auto path = Common::FS::GetCitronPath(Common::FS::CitronPath::AmiiboDir) /
                       "AmiiboFavorites.json";
