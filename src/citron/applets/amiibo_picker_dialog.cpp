@@ -7,6 +7,7 @@
 
 #include "citron/hotkeys.h"
 #include "common/fs/path_util.h"
+#include "hid_core/frontend/emulated_controller.h"
 
 #include <QAbstractItemView>
 #include <QCheckBox>
@@ -152,6 +153,34 @@ AmiiboPickerDialog::AmiiboPickerDialog(QWidget* parent, QString title_id,
     connect(cancel_button, &QPushButton::clicked, this, &QDialog::reject);
 
     if (controller) {
+        controller_repeat_timer = new QTimer(this);
+        controller_repeat_timer->setSingleShot(true);
+        controller_repeat_timer->setInterval(350);
+        connect(controller_repeat_timer, &QTimer::timeout, this, [this, controller] {
+            if (!amiibo_list->hasFocus()) {
+                controller_repeat_timer->stop();
+                controller_repeat_timer->setSingleShot(true);
+                controller_repeat_timer->setInterval(350);
+                return;
+            }
+            const u64 buttons = static_cast<u64>(controller->GetNpadButtons().raw);
+            const u64 up = static_cast<u64>(Core::HID::NpadButton::Up);
+            const u64 down = static_cast<u64>(Core::HID::NpadButton::Down);
+            if ((buttons & up) != 0) {
+                MoveSelection(-1);
+            } else if ((buttons & down) != 0) {
+                MoveSelection(1);
+            } else {
+                controller_repeat_timer->stop();
+                controller_repeat_timer->setSingleShot(true);
+                controller_repeat_timer->setInterval(350);
+                return;
+            }
+
+            controller_repeat_timer->setSingleShot(false);
+            controller_repeat_timer->setInterval(90);
+            controller_repeat_timer->start();
+        });
         const auto bind = [this, controller](const char* buttons, auto callback) {
             auto shortcut = std::make_unique<ControllerShortcut>(controller);
             shortcut->SetKey(std::string{buttons});
@@ -159,18 +188,16 @@ AmiiboPickerDialog::AmiiboPickerDialog(QWidget* parent, QString title_id,
                     Qt::QueuedConnection);
             controller_shortcuts.push_back(std::move(shortcut));
         };
-        bind("Dpad_Up", [this] {
-            const int row = amiibo_list->currentRow();
-            if (row > 0) {
-                amiibo_list->setCurrentRow(row - 1);
+        const auto begin_navigation = [this](int direction) {
+            MoveSelection(direction);
+            if (controller_repeat_timer && !controller_repeat_timer->isActive()) {
+                controller_repeat_timer->setSingleShot(true);
+                controller_repeat_timer->setInterval(350);
+                controller_repeat_timer->start();
             }
-        });
-        bind("Dpad_Down", [this] {
-            const int row = amiibo_list->currentRow();
-            if (row + 1 < amiibo_list->count()) {
-                amiibo_list->setCurrentRow(row + 1);
-            }
-        });
+        };
+        bind("Dpad_Up", [begin_navigation] { begin_navigation(-1); });
+        bind("Dpad_Down", [begin_navigation] { begin_navigation(1); });
         bind("Dpad_Left", [this] {
             if (category_combo->count() > 0) {
                 category_combo->setCurrentIndex(
@@ -184,7 +211,15 @@ AmiiboPickerDialog::AmiiboPickerDialog(QWidget* parent, QString title_id,
                                                  category_combo->count());
             }
         });
-        bind("A", [this] { ScanSelectedAmiibo(); });
+        bind("A", [this] {
+            if (show_all->hasFocus()) {
+                show_all->setChecked(!show_all->isChecked());
+            } else if (category_combo->hasFocus()) {
+                amiibo_list->setFocus(Qt::OtherFocusReason);
+            } else {
+                ScanSelectedAmiibo();
+            }
+        });
         bind("B", [this] { reject(); });
         bind("X", [this] { ToggleFavorite(); });
         bind("Y", [this] { show_all->setChecked(!show_all->isChecked()); });
@@ -196,6 +231,51 @@ AmiiboPickerDialog::AmiiboPickerDialog(QWidget* parent, QString title_id,
 }
 
 AmiiboPickerDialog::~AmiiboPickerDialog() = default;
+
+void AmiiboPickerDialog::MoveSelection(int direction) {
+    if (show_all->hasFocus()) {
+        if (direction > 0) {
+            amiibo_list->setFocus(Qt::OtherFocusReason);
+            if (amiibo_list->currentRow() < 0) {
+                amiibo_list->setCurrentRow(0);
+            }
+        } else {
+            category_combo->setFocus(Qt::OtherFocusReason);
+        }
+        return;
+    }
+    if (category_combo->hasFocus()) {
+        if (direction > 0) {
+            show_all->setFocus(Qt::OtherFocusReason);
+        } else {
+            search_box->setFocus(Qt::OtherFocusReason);
+        }
+        return;
+    }
+    if (search_box->hasFocus()) {
+        if (direction > 0) {
+            category_combo->setFocus(Qt::OtherFocusReason);
+        }
+        return;
+    }
+
+    if (amiibo_list->count() == 0) {
+        if (direction < 0) {
+            show_all->setFocus(Qt::OtherFocusReason);
+        }
+        return;
+    }
+
+    const int row = amiibo_list->currentRow();
+    if (direction < 0 && row <= 0) {
+        show_all->setFocus(Qt::OtherFocusReason);
+        return;
+    }
+    const int next_row = std::clamp(row + direction, 0, amiibo_list->count() - 1);
+    if (next_row != row) {
+        amiibo_list->setCurrentRow(next_row);
+    }
+}
 
 void AmiiboPickerDialog::LoadFavorites() {
     const auto path = Common::FS::GetCitronPath(Common::FS::CitronPath::AmiiboDir) /

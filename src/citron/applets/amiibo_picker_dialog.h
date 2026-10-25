@@ -17,6 +17,7 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
+class QTimer;
 class QNetworkAccessManager;
 class QNetworkReply;
 class ControllerShortcut;
@@ -43,6 +44,7 @@ private:
     void SaveFavorites() const;
     void PopulateCategories();
     void FilterCatalog();
+    void MoveSelection(int direction);
     void UpdateSelection(int row);
     void ToggleFavorite();
     void ScanSelectedAmiibo();
@@ -64,6 +66,7 @@ private:
     QLabel* details_label{};
     QPushButton* scan_button{};
     QPushButton* favorite_button{};
+    QTimer* controller_repeat_timer{};
     QNetworkAccessManager* network{};
     QNetworkReply* image_reply{};
     std::vector<std::unique_ptr<ControllerShortcut>> controller_shortcuts;
