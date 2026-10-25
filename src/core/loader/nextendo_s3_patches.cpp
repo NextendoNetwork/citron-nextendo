@@ -9,6 +9,7 @@
 #include "core/file_sys/ips_layer.h"
 #include "core/file_sys/vfs/vfs_vector.h"
 #include "core/loader/nextendo_s3_patches.h"
+#include "core/loader/nextendo_jd22_patch.h"
 
 #ifdef ENABLE_WEB_SERVICE
 #include "web_service/npln_patch_catalog.h"
@@ -101,6 +102,11 @@ std::vector<u8> ApplyOne(std::vector<u8> nso, std::span<const u8> ips_bytes, siz
 std::vector<u8> ApplyIfMatch(const std::array<u8, 0x20>& build_id, std::vector<u8> nso,
                              std::string_view module_name, u64 title_id) {
     const auto build_id_raw = Common::HexToString(build_id);
+    if (nso.size() >= 0x100 && NextendoJd22::Apply(title_id, build_id_raw, module_name,
+                                                std::span<u8>(nso).subspan(0x100))) {
+        LOG_INFO(Loader, "[Nextendo] JD2022 exact-build TLS trust applied");
+        return nso;
+    }
 #ifdef ENABLE_WEB_SERVICE
     const auto catalog = WebService::NplnPatchCatalog::Find(title_id, build_id_raw, module_name, nso);
     if (catalog.authoritative) {

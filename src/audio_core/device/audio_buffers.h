@@ -291,6 +291,27 @@ public:
         return true;
     }
 
+    // A newly acquired sink stream starts its sample counter at zero. Preserve
+    // queued buffers and released tags, but use that same origin for playback.
+    void RebaseForNewSession() {
+        std::scoped_lock l{lock};
+        std::array<u64, N> durations{};
+        for (size_t i = 0; i < N; ++i) {
+            durations[i] = buffers[i].end_timestamp - buffers[i].start_timestamp;
+            buffers[i].start_timestamp = 0;
+            buffers[i].end_timestamp = 0;
+        }
+        auto index = (registered_index - registered_count + static_cast<s32>(append_limit)) %
+                     static_cast<s32>(append_limit);
+        u64 timestamp{};
+        for (s32 i = 0; i < registered_count + appended_count; ++i) {
+            buffers[index].start_timestamp = timestamp;
+            timestamp += durations[index];
+            buffers[index].end_timestamp = timestamp;
+            index = (index + 1) % append_limit;
+        }
+    }
+
     u64 GetNextTimestamp() const {
         // Iterate backwards through the buffer queue, and take the most recent buffer's end
         std::scoped_lock l{lock};

@@ -1223,6 +1223,7 @@ add_library(core STATIC
     loader/nextendo_pvzbfn_patch.h
     loader/nextendo_s3_patches.cpp
     loader/nextendo_s3_patches.h
+    loader/nextendo_jd22_patch.h
     loader/nro.cpp
     loader/nro.h
     loader/nso.cpp

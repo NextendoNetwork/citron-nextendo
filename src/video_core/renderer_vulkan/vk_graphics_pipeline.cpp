@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <fstream>
+#include <iomanip>
 #include <span>
 #include <vector>
 
@@ -13,6 +15,8 @@
 #include "video_core/renderer_vulkan/pipeline_helper.h"
 
 #include "common/bit_field.h"
+#include "common/fs/path_util.h"
+#include "common/settings.h"
 #include "video_core/renderer_vulkan/maxwell_to_vk.h"
 #include "video_core/renderer_vulkan/pipeline_statistics.h"
 #include "video_core/renderer_vulkan/vk_buffer_cache.h"
@@ -1098,8 +1102,28 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         */
     }
     VkPipelineCreateFlags flags{};
+    if (device.GetDriverID() == VK_DRIVER_ID_AMD_PROPRIETARY) {
+        // Preserve the original AMD workaround: skip graphics-pipeline optimization.
+        flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+    }
     if (device.IsKhrPipelineExecutablePropertiesEnabled()) {
         flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;
+    }
+    if (device.GetDriverID() == VK_DRIVER_ID_AMD_PROPRIETARY &&
+        Settings::values.dump_shaders.GetValue()) {
+        const auto dump_dir{Common::FS::GetCitronPath(Common::FS::CitronPath::DumpDir)};
+        std::ofstream attempt{dump_dir / "amd_pipeline_attempt.txt",
+                              std::ios::out | std::ios::trunc};
+        if (attempt) {
+            attempt << "pipeline=0x" << std::hex << key.Hash() << '\n';
+            for (size_t stage = 0; stage < key.unique_hashes.size(); ++stage) {
+                if (key.unique_hashes[stage] != 0) {
+                    attempt << "stage[" << std::dec << stage << "]=0x" << std::hex
+                            << key.unique_hashes[stage] << '\n';
+                }
+            }
+            attempt.flush();
+        }
     }
     pipeline = device.GetLogical().CreateGraphicsPipeline(
         {

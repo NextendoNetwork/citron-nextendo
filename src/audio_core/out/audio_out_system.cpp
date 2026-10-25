@@ -84,6 +84,11 @@ Result System::Start() {
         return Service::Audio::ResultOperationFailed;
     }
 
+    LOG_INFO(Service_Audio,
+             "AudioOut restart timeline: session={} pending={} previous_end={} previous_played={}",
+             session_id, buffers.GetAppendedRegisteredCount(), buffers.GetNextTimestamp(),
+             session->GetPlayedSampleCount());
+    buffers.RebaseForNewSession();
     session->Initialize(name, sample_format, channel_count, session_id, handle,
                         applet_resource_user_id, Sink::StreamType::Out);
     session->SetVolume(volume);

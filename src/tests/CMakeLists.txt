@@ -17,12 +17,14 @@ add_executable(tests
     common/uint128.cpp
     core/core_timing.cpp
     core/loader/nextendo_amongus_patch.cpp
+    core/loader/nextendo_jd22_patch.cpp
     core/hle/service/acc/nextendo_account_country.cpp
     core/hle/service/olsc/nextendo_island.cpp
     core/hle/service/sockets/nextendo_uch.cpp
     core/internal_network/network.cpp
     precompiled_headers.h
     video_core/memory_tracker.cpp
+    video_core/vp9_segmentation.cpp
     input_common/calibration_configuration_job.cpp
 )
 

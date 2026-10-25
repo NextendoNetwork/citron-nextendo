@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <limits>
 #include <utility>
@@ -589,10 +590,9 @@ PollEvents TranslatePollRevents(short revents) {
 // indefinitely instead of "this connection is dead", starving whatever retry/give-up logic
 // depends on ever actually seeing an error. Ryujinx-Nextendo hit and fixed this same Windows
 // gap (see ManagedSocketPollManager.cs's IsPeerHungUp -- measured 142 consecutive empty polls,
-// 38.8s, stuck on a gRPC socket before that fix landed). Peek a byte directly for the real
-// signal instead of trusting WSAPoll's revents alone: 0 back means an orderly close (FIN
-// already received), a reset-family error means a hard hangup, and anything else (in
-// particular WSAEWOULDBLOCK) means truly nothing yet -- left alone.
+// 38.8s, stuck on a gRPC socket before that fix landed). Observe queued bytes and TCP state
+// instead of trusting WSAPoll's revents alone. Never read here: the guest may have left the
+// descriptor in blocking mode, and another reader can consume data between readiness and peek.
 //
 // WIN32-only: this whole gap is specific to WSAPoll's exceptfds behavior. Real POSIX poll()
 // on Linux/macOS already reports POLLHUP/POLLERR correctly for a hung-up peer, and this
@@ -612,34 +612,37 @@ bool PeekPeerHungUp(SOCKET native_fd, bool& has_pending_data) {
         return false;
     }
 
-    char peek_byte;
-    const int peek_result = recv(native_fd, &peek_byte, 1, MSG_PEEK);
-    if (peek_result > 0) {
+    // recv(MSG_PEEK) blocks on a blocking descriptor. A guest's Poll can
+    // therefore strand the socket worker and CloseServices() indefinitely.
+    // FIONREAD observes queued data without consuming it or changing I/O mode.
+    u_long available = 0;
+    if (ioctlsocket(native_fd, FIONREAD, &available) == SOCKET_ERROR) {
+        const int error = WSAGetLastError();
+        return error == WSAECONNRESET || error == WSAECONNABORTED ||
+               error == WSAENETRESET || error == WSAESHUTDOWN;
+    }
+    if (available > 0) {
         has_pending_data = true;
         return false;
     }
-    if (peek_result == 0) {
-        LOG_INFO(Network, "[Nextendo][DIAG] PeekPeerHungUp fd={} -- recv(MSG_PEEK) returned 0 "
-                           "(orderly FIN), reporting hung up", native_fd);
-        return true;
-    }
-
-    const int err = WSAGetLastError();
-    switch (err) {
-    case WSAECONNRESET:
-    case WSAECONNABORTED:
-    case WSAENETRESET:
-    case WSAESHUTDOWN:
-        LOG_INFO(Network, "[Nextendo][DIAG] PeekPeerHungUp fd={} -- recv(MSG_PEEK) failed with "
-                           "{}, reporting hung up", native_fd, err);
-        return true;
-    default:
-        if (err != WSAEWOULDBLOCK) {
-            LOG_INFO(Network, "[Nextendo][DIAG] PeekPeerHungUp fd={} -- recv(MSG_PEEK) failed "
-                               "with unexpected {}, NOT reporting hung up", native_fd, err);
-        }
+    // SIO_TCP_INFO version 0 starts with a 32-bit TCPSTATE. Use a bounded
+    // output buffer so SDKs targeting pre-RS2 still compile; an older provider
+    // can reject this optional observation without falling back to recv().
+    // https://learn.microsoft.com/windows/win32/winsock/sio-tcp-info
+    constexpr DWORD tcp_info_control = _WSAIORW(IOC_VENDOR, 39);
+    DWORD version = 0;
+    DWORD returned = 0;
+    std::array<unsigned char, 256> info{};
+    if (WSAIoctl(native_fd, tcp_info_control, &version, sizeof(version), info.data(),
+                 static_cast<DWORD>(info.size()), &returned, nullptr, nullptr) == SOCKET_ERROR ||
+        returned < sizeof(DWORD)) {
         return false;
     }
+    DWORD state = 0;
+    std::memcpy(&state, info.data(), sizeof(state));
+    // TCPSTATE_CLOSED, CLOSE_WAIT, CLOSING, LAST_ACK and TIME_WAIT respectively.
+    // ESTABLISHED/SYN/LISTEN and unknown future states are not peer shutdowns.
+    return state == 0 || state == 7 || state == 8 || state == 9 || state == 10;
 }
 #endif
 
@@ -1003,7 +1006,21 @@ Errno Socket::Shutdown(ShutdownHow how) {
         UNIMPLEMENTED_MSG("Unimplemented flag how={}", how);
         return Errno::SUCCESS;
     }
-    if (shutdown(fd, host_how) != SOCKET_ERROR) {
+    const int shutdown_result = shutdown(fd, host_how);
+#ifdef _WIN32
+    // POSIX wakes a thread that is blocked in recv()/recvfrom() on this socket when shutdown(SHUT_RD or SHUT_RDWR) is called on it.
+    // Winsock does not do that for datagram sockets: the blocked call simply stays blocked. A guest that stops a receiver thread
+    // with shutdown() and then joins it waits forever (Just Dance 2022's local UDP listener). Cancelling the pending I/O gives
+    // the POSIX behaviour; Recv() and RecvFrom() report the cancellation as end of input.
+    const int shutdown_error = shutdown_result != SOCKET_ERROR ? 0 : WSAGetLastError();
+    if (host_how != SD_SEND) {
+        CancelIoEx(reinterpret_cast<HANDLE>(fd), nullptr);
+    }
+    if (shutdown_result == SOCKET_ERROR) {
+        WSASetLastError(shutdown_error);
+    }
+#endif
+    if (shutdown_result != SOCKET_ERROR) {
         return Errno::SUCCESS;
     }
 
@@ -1020,6 +1037,12 @@ std::pair<s32, Errno> Socket::Recv(int flags, std::span<u8> message) {
         return {static_cast<s32>(result), Errno::SUCCESS};
     }
 
+#ifdef _WIN32
+    if (WSAGetLastError() == WSAEINTR) {
+        // Woken by Shutdown() on this socket (see there): POSIX reports end of input.
+        return {0, Errno::SUCCESS};
+    }
+#endif
     return {-1, GetAndLogLastError()};
 }
 
@@ -1041,6 +1064,12 @@ std::pair<s32, Errno> Socket::RecvFrom(int flags, std::span<u8> message, SockAdd
         return {static_cast<s32>(result), Errno::SUCCESS};
     }
 
+#ifdef _WIN32
+    if (WSAGetLastError() == WSAEINTR) {
+        // Woken by Shutdown() on this socket (see there): POSIX reports end of input.
+        return {0, Errno::SUCCESS};
+    }
+#endif
     return {-1, GetAndLogLastError()};
 }
 

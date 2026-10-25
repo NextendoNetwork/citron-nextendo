@@ -198,6 +198,19 @@ static std::optional<std::string> GetNextendoRedirectIp(const std::string& host,
         return target;
     }
 
+    // Just Dance 2022: exact service hosts on the lab or deployed Nextendo server.
+    constexpr u64 JustDance2022 = 0x0100EA6014BB8000ULL;
+    if (program_id == JustDance2022 &&
+        (server_ip == "127.0.0.5" || server_ip == "51.178.29.194") &&
+        (host == "public-ubiservices.ubi.com" ||
+         host == "public-ws-ubiservices.ubi.com" || host == "jd.ubisoft.com" ||
+         host == "phonescoring.jd.ubisoft.com" ||
+         host == "v2.phonescoring.jd.ubisoft.com")) {
+        LOG_INFO(Service, "[Nextendo] Redirecting Just Dance host '{}' -> '{}'",
+                 host, server_ip);
+        return server_ip;
+    }
+
     // UNO signs in through Ubisoft's public services endpoint before any matchmaking. The
     // redirect is limited to that exact host while UNO runs; other Ubisoft titles are untouched.
     constexpr u64 Uno = 0x0100B6E012EBE000ULL;
@@ -210,6 +223,14 @@ static std::optional<std::string> GetNextendoRedirectIp(const std::string& host,
     // Prelude writes into the hosts file. Limited to the title so no other game is redirected.
     if (NextendoUch::IsTitle(program_id) && NextendoUch::IsServiceHost(host)) {
         LOG_INFO(Service, "[Nextendo] Redirecting UCH host '{}' -> '{}'", host, server_ip);
+        return server_ip;
+    }
+
+    // World War Z: Saber's Hydra API (wwz*.wwzapi.com) and RedLynx dispatcher (rlx*.hydrapi.net).
+    constexpr u64 WorldWarZ = 0x010099F013898000ULL;
+    if (program_id == WorldWarZ &&
+        (host.ends_with(".wwzapi.com") || host.ends_with(".hydrapi.net"))) {
+        LOG_INFO(Service, "Redirecting World War Z host '{}' -> '{}'", host, server_ip);
         return server_ip;
     }
 

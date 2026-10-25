@@ -15,6 +15,14 @@ int main(int argc, char**) {
     StartTitleIndexCheck();
     // Launch immediately, while the delayed initial request is still in flight.
     WaitForTitleIndex();
+    // Classics must remain discoverable with the older public title index or
+    // on the first offline launch. Compatibility never supplies unsigned bytes.
+    for (auto classics : {0x0100D870045B6000ULL, 0x01008D300C50C000ULL,
+                          0x0100C62011050000ULL, 0x010012F017576000ULL}) {
+        assert(IsCompatibleTitle(classics));
+        assert(!HasEntry(classics, build, "main"));
+        assert(!Find(classics, build, "main", {}).authoritative);
+    }
     if (argc > 1) {
         assert(!IsCompatibleTitle(title));
         assert(IsCompatibleTitle(0x0100965017338000ULL));

@@ -6,6 +6,7 @@
 #include <optional>
 #include <type_traits>
 #include <queue>
+#include <unordered_set>
 
 #include <boost/container/small_vector.hpp>
 
@@ -20,9 +21,24 @@ auto BreadthFirstSearch(const Value& value, Pred&& pred)
         // Nothing to do with immediates
         return std::nullopt;
     }
-    // Breadth-first search visiting the right most arguments first
-    // Small vector has been determined from shaders in Super Smash Bros. Ultimate
-    boost::container::small_vector<const Inst*, 2> visited;
+    // Breadth-first search visiting the right most arguments first. Visited instructions are a small
+    // vector for short searches and a hash set past 32: a linear search per step made long searches
+    // quadratic (seconds of pipeline building for shaders with many global memory accesses).
+    boost::container::small_vector<const Inst*, 32> visited;
+    std::unordered_set<const Inst*> visited_set;
+    const auto first_visit = [&](const Inst* inst) {
+        if (!visited_set.empty()) {
+            return visited_set.insert(inst).second;
+        }
+        if (std::ranges::find(visited, inst) != visited.end()) {
+            return false;
+        }
+        visited.push_back(inst);
+        if (visited.size() > 32) {
+            visited_set.insert(visited.begin(), visited.end());
+        }
+        return true;
+    };
     std::queue<const Inst*> queue;
     queue.push(value.InstRecursive());
 
@@ -42,8 +58,7 @@ auto BreadthFirstSearch(const Value& value, Pred&& pred)
             }
             // Queue instruction if it hasn't been visited
             const Inst* const arg_inst{arg_value.InstRecursive()};
-            if (std::ranges::find(visited, arg_inst) == visited.end()) {
-                visited.push_back(arg_inst);
+            if (first_visit(arg_inst)) {
                 queue.push(arg_inst);
             }
         }

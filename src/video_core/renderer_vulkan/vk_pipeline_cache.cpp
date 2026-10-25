@@ -708,10 +708,8 @@ GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) const
     if (!use_asynchronous_shaders) {
         return pipeline;
     }
-    const auto& state = maxwell3d->draw_manager->GetDrawState();
-    if (state.index_buffer.count <= 32 || state.vertex_buffer.count <= 32) {
-        return pipeline;
-    }
+    // Asynchronous means no draw waits for its pipeline: waiting for every draw of 32 vertices or
+    // fewer stalled on full-screen passes, HUD and menu quads, which are most new pipelines.
     return nullptr;
 }
 
