@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -67,6 +68,10 @@ private:
     QPushButton* scan_button{};
     QPushButton* favorite_button{};
     QTimer* controller_repeat_timer{};
+    Core::HID::EmulatedController* navigation_controller{};
+    int navigation_callback_key{-1};
+    std::atomic_bool navigation_up_pressed{};
+    std::atomic_bool navigation_down_pressed{};
     QNetworkAccessManager* network{};
     QNetworkReply* image_reply{};
     std::vector<std::unique_ptr<ControllerShortcut>> controller_shortcuts;

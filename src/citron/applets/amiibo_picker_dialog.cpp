@@ -23,6 +23,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMetaObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -160,28 +161,62 @@ AmiiboPickerDialog::AmiiboPickerDialog(QWidget* parent, QString title_id,
     connect(cancel_button, &QPushButton::clicked, this, &QDialog::reject);
 
     if (controller) {
+        navigation_controller = controller;
         controller_repeat_timer = new QTimer(this);
         controller_repeat_timer->setSingleShot(true);
-        controller_repeat_timer->setInterval(350);
-        connect(controller_repeat_timer, &QTimer::timeout, this, [this, controller] {
-            const u64 buttons = static_cast<u64>(controller->GetNpadButtons().raw);
-            const u64 up = static_cast<u64>(Core::HID::NpadButton::Up);
-            const u64 down = static_cast<u64>(Core::HID::NpadButton::Down);
-            if ((buttons & up) != 0) {
-                MoveSelection(-1);
-            } else if ((buttons & down) != 0) {
-                MoveSelection(1);
-            } else {
+        controller_repeat_timer->setInterval(400);
+        connect(controller_repeat_timer, &QTimer::timeout, this, [this] {
+            int direction = 0;
+            if (navigation_up_pressed.load(std::memory_order_acquire)) {
+                direction = -1;
+            } else if (navigation_down_pressed.load(std::memory_order_acquire)) {
+                direction = 1;
+            }
+            if (direction == 0) {
                 controller_repeat_timer->stop();
                 controller_repeat_timer->setSingleShot(true);
-                controller_repeat_timer->setInterval(350);
+                controller_repeat_timer->setInterval(400);
                 return;
             }
 
+            MoveSelection(direction);
             controller_repeat_timer->setSingleShot(false);
-            controller_repeat_timer->setInterval(90);
+            controller_repeat_timer->setInterval(180);
             controller_repeat_timer->start();
         });
+        const auto queue_navigation = [this](int direction) {
+            QMetaObject::invokeMethod(this, [this, direction] {
+                MoveSelection(direction);
+                if (controller_repeat_timer && !controller_repeat_timer->isActive()) {
+                    controller_repeat_timer->setSingleShot(true);
+                    controller_repeat_timer->setInterval(400);
+                    controller_repeat_timer->start();
+                }
+            }, Qt::QueuedConnection);
+        };
+        Core::HID::ControllerUpdateCallback navigation_callback{
+            .on_change = [this, controller, queue_navigation](
+                Core::HID::ControllerTriggerType type) {
+                if (type != Core::HID::ControllerTriggerType::Button) {
+                    return;
+                }
+                const u64 buttons = static_cast<u64>(controller->GetNpadButtons().raw);
+                const bool up = (buttons & static_cast<u64>(Core::HID::NpadButton::Up)) != 0;
+                const bool down = (buttons & static_cast<u64>(Core::HID::NpadButton::Down)) != 0;
+                const bool was_up =
+                    navigation_up_pressed.exchange(up, std::memory_order_acq_rel);
+                const bool was_down =
+                    navigation_down_pressed.exchange(down, std::memory_order_acq_rel);
+                if (up && !was_up) {
+                    queue_navigation(-1);
+                }
+                if (down && !was_down) {
+                    queue_navigation(1);
+                }
+            },
+            .is_npad_service = false,
+        };
+        navigation_callback_key = controller->SetCallback(navigation_callback);
         const auto bind = [this, controller](const char* buttons, auto callback) {
             auto shortcut = std::make_unique<ControllerShortcut>(controller);
             shortcut->SetKey(std::string{buttons});
@@ -189,16 +224,6 @@ AmiiboPickerDialog::AmiiboPickerDialog(QWidget* parent, QString title_id,
                     Qt::QueuedConnection);
             controller_shortcuts.push_back(std::move(shortcut));
         };
-        const auto begin_navigation = [this](int direction) {
-            MoveSelection(direction);
-            if (controller_repeat_timer && !controller_repeat_timer->isActive()) {
-                controller_repeat_timer->setSingleShot(true);
-                controller_repeat_timer->setInterval(350);
-                controller_repeat_timer->start();
-            }
-        };
-        bind("Dpad_Up", [begin_navigation] { begin_navigation(-1); });
-        bind("Dpad_Down", [begin_navigation] { begin_navigation(1); });
         const auto change_category = [this](int direction) {
             const int count = category_combo->count();
             if (count > 0) {
@@ -221,7 +246,11 @@ AmiiboPickerDialog::AmiiboPickerDialog(QWidget* parent, QString title_id,
     amiibo_list->setFocus(Qt::OtherFocusReason);
 }
 
-AmiiboPickerDialog::~AmiiboPickerDialog() = default;
+AmiiboPickerDialog::~AmiiboPickerDialog() {
+    if (navigation_controller && navigation_callback_key >= 0) {
+        navigation_controller->DeleteCallback(navigation_callback_key);
+    }
+}
 
 void AmiiboPickerDialog::MoveSelection(int direction) {
     const int count = amiibo_list->count();
