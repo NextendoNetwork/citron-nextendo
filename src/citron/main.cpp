@@ -42,6 +42,7 @@
 #include <boost/container/flat_set.hpp>
 
 // VFS includes must be before glad as they will conflict with Windows file api, which uses defines.
+#include "applets/amiibo_picker_dialog.h"
 #include "applets/qt_amiibo_settings.h"
 #include "applets/qt_controller.h"
 #include "applets/qt_error.h"
@@ -1670,7 +1671,7 @@ void GMainWindow::InitializeHotkeys() {
 
     // Link all standard menu actions
     LinkActionShortcut(ui->action_Load_File, QStringLiteral("Load File"));
-    LinkActionShortcut(ui->action_Load_Amiibo, QStringLiteral("Load/Remove Amiibo"));
+    LinkActionShortcut(ui->action_Load_Amiibo, QStringLiteral("Load Amiibo"));
     LinkActionShortcut(ui->action_Exit, QStringLiteral("Exit citron"));
     LinkActionShortcut(ui->action_Restart, QStringLiteral("Restart Emulation"));
     LinkActionShortcut(ui->action_Pause, QStringLiteral("Continue/Pause Emulation"));
@@ -5245,38 +5246,50 @@ void GMainWindow::OpenPerGameConfiguration(u64 title_id, const std::string& file
 }
 
 void GMainWindow::OnLoadAmiibo() {
-    if (emu_thread == nullptr || !emu_thread->IsRunning()) {
-        return;
-    }
-    if (is_amiibo_file_select_active) {
+    if (emu_thread == nullptr || !emu_thread->IsRunning() || is_amiibo_file_select_active) {
         return;
     }
 
     auto* virtual_amiibo = input_subsystem->GetVirtualAmiibo();
-
-    // Remove amiibo if one is connected
+    auto* amiibo_controller =
+        system->HIDCore().GetEmulatedController(Core::HID::NpadIdType::Player1);
     if (virtual_amiibo->GetCurrentState() == InputCommon::VirtualAmiibo::State::TagNearby) {
         virtual_amiibo->CloseAmiibo();
         QMessageBox::warning(this, tr("Amiibo"), tr("The current amiibo has been removed"));
         return;
     }
-
     if (virtual_amiibo->GetCurrentState() != InputCommon::VirtualAmiibo::State::WaitingForAmiibo) {
         QMessageBox::warning(this, tr("Error"), tr("The current game is not looking for amiibos"));
         return;
     }
 
     is_amiibo_file_select_active = true;
-    const QString extensions{QStringLiteral("*.bin")};
-    const QString file_filter = tr("Amiibo File (%1);; All Files (*.*)").arg(extensions);
-    const QString filename = QFileDialog::getOpenFileName(this, tr("Load Amiibo"), {}, file_filter);
+    const QString title_id = QString::number(system->GetApplicationProcessProgramID(), 16)
+                                 .rightJustified(16, QLatin1Char('0')).toUpper();
+    AmiiboPickerDialog picker{this, title_id, amiibo_controller, last_scanned_amiibo_id};
+    const int result = picker.exec();
     is_amiibo_file_select_active = false;
-
-    if (filename.isEmpty()) {
+    if (result != QDialog::Accepted) {
         return;
     }
 
-    LoadAmiibo(filename);
+    if (picker.LoadBinRequested()) {
+        const QString filter = tr("Amiibo File (*.bin);; All Files (*.*)");
+        const QString filename = QFileDialog::getOpenFileName(this, tr("Load Amiibo"), {}, filter);
+        if (!filename.isEmpty()) {
+            LoadAmiibo(filename);
+        }
+        return;
+    }
+
+    const auto scan_result = virtual_amiibo->LoadVirtualAmiibo(
+        picker.SelectedAmiiboId().toStdString(), picker.SelectedAmiiboName().toStdString());
+    if (scan_result != InputCommon::VirtualAmiibo::Info::Success) {
+        QMessageBox::warning(this, tr("Amiibo"),
+                             tr("Citron could not create the selected virtual Amiibo."));
+        return;
+    }
+    last_scanned_amiibo_id = picker.SelectedAmiiboId();
 }
 
 bool GMainWindow::question(QWidget* parent, const QString& title, const QString& text,

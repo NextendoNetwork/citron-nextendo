@@ -33,6 +33,7 @@ add_executable(citron
     util/dice_widget.cpp
     util/dice_widget.h
     applets/qt_amiibo_settings.cpp
+    applets/amiibo_picker_dialog.cpp
     applets/qt_amiibo_settings.h
     applets/qt_amiibo_settings.ui
     applets/qt_controller.cpp
