@@ -544,6 +544,7 @@ private:
     QTranslator translator;
     QProgressDialog* install_progress;
     QString last_filename_booted;
+    QString last_scanned_amiibo_id;
     QtAmiiboSettingsDialog* cabinet_applet = nullptr;
     QtControllerSelectorDialog* controller_applet = nullptr;
     QtProfileSelectionDialog* profile_select_applet = nullptr;

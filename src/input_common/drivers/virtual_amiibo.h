@@ -59,6 +59,7 @@ public:
     State GetCurrentState() const;
 
     Info LoadAmiibo(const std::string& amiibo_file);
+    Info LoadVirtualAmiibo(const std::string& amiibo_id, const std::string& amiibo_name);
     Info LoadAmiibo(std::span<u8> data);
     Info ReloadAmiibo();
     Info CloseAmiibo();
@@ -76,5 +77,6 @@ private:
     std::vector<u8> nfc_data;
     Common::Input::NfcStatus status;
     Common::Input::PollingMode polling_mode{Common::Input::PollingMode::Passive};
+    bool virtual_amiibo_pending{};
 };
 } // namespace InputCommon
