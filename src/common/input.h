@@ -225,6 +225,8 @@ struct NfcStatus {
     u8 protocol;
     u8 tag_type;
     std::array<u8, 10> uuid;
+    // Set while the tag comes from the virtual Amiibo picker rather than a dumped file
+    bool virtual_amiibo{};
 };
 
 struct MifareData {
