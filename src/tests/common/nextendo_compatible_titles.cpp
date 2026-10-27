@@ -16,6 +16,7 @@ constexpr u64 Uno = 0x0100b6e012ebe000;
 constexpr u64 Minecraft = 0x01006bd001e06000;
 constexpr u64 Portal2 = 0x0100abd01785c000;
 constexpr u64 UltimateChickenHorse = 0x0100fcf002a58000;
+constexpr u64 SpeedRunners2 = 0x01004cc023582000;
 constexpr u64 Nes = 0x0100d870045b6000;
 constexpr u64 Snes = 0x01008d300c50c000;
 constexpr u64 GameBoy = 0x0100c62011050000;
@@ -171,6 +172,19 @@ TEST_CASE("Nextendo::CompatibleTitles Ultimate Chicken Horse needs exactly 1.13.
     REQUIRE_FALSE(IsVersionOk(UltimateChickenHorse, "1.13.13.764"));
     REQUIRE_FALSE(IsVersionOk(UltimateChickenHorse, "1.13.14.0"));
     REQUIRE_FALSE(IsVersionOk(UltimateChickenHorse, "1.13.13"));
+}
+
+TEST_CASE("Nextendo::CompatibleTitles SpeedRunners 2 needs exactly 1.2.0", "[common][nextendo]") {
+    using Nextendo::CompatibleTitles::IsVersionOk;
+
+    REQUIRE(Nextendo::CompatibleTitles::Table().at(SpeedRunners2) == "1.2.0");
+    REQUIRE(IsVersionOk(SpeedRunners2, "1.2.0"));
+    REQUIRE(IsVersionOk(SpeedRunners2, "1.2.0.0"));
+    // The base game is 1.0.0 and the in-game label of the update (v1.3.9) is not its display version.
+    REQUIRE_FALSE(IsVersionOk(SpeedRunners2, "1.0.0"));
+    REQUIRE_FALSE(IsVersionOk(SpeedRunners2, "1.1.0"));
+    REQUIRE_FALSE(IsVersionOk(SpeedRunners2, "1.2.1"));
+    REQUIRE_FALSE(IsVersionOk(SpeedRunners2, "1.3.9"));
 }
 
 TEST_CASE("Nextendo::CompatibleTitles NSO Classics need their exact application version",
