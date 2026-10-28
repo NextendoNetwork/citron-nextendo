@@ -140,6 +140,14 @@ Result MapMemory(Core::System& system, u64 dst_addr, u64 src_addr, u64 size) {
         return result;
     }
 
+    // As on hardware (Atmosphère kern_svc_memory.cpp): the alias must land in the stack region. Without this, homebrew
+    // that maps elsewhere works here and fails with 0xDC01 on a real Switch.
+    if (!page_table.CanContain(dst_addr, size, KMemoryState::Stack)) {
+        LOG_ERROR(Kernel_SVC, "Destination is outside the stack region, addr=0x{:016X}, size=0x{:016X}",
+                  dst_addr, size);
+        R_THROW(ResultInvalidMemoryRegion);
+    }
+
     R_RETURN(page_table.MapMemory(dst_addr, src_addr, size));
 }
 
