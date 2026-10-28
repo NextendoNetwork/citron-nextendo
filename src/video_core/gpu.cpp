@@ -147,6 +147,10 @@ struct GPU::Impl {
         gpu_thread.Synchronize();
     }
 
+    void RunAfterGPUThread(std::function<void()>&& func) {
+        gpu_thread.RunAfterQueued(std::move(func));
+    }
+
     /// Returns a reference to the Maxwell3D GPU engine.
     [[nodiscard]] Engines::Maxwell3D& Maxwell3D() {
         ASSERT(current_channel);
@@ -474,6 +478,10 @@ void GPU::TickWork() {
 
 void GPU::SynchronizeGPUThread() {
     impl->SynchronizeGPUThread();
+}
+
+void GPU::RunAfterGPUThread(std::function<void()>&& func) {
+    impl->RunAfterGPUThread(std::move(func));
 }
 
 /// Gets a mutable reference to the Host1x interface

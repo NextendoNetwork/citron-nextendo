@@ -41,6 +41,8 @@ static void RunThread(std::stop_token stop_token, Core::System& system, VideoCor
             rasterizer->FlushRegion(flush->addr, flush->size);
         } else if (const auto* invalidate = std::get_if<InvalidateRegionCommand>(&next.data)) {
             rasterizer->OnCacheInvalidation(invalidate->addr, invalidate->size);
+        } else if (auto* run = std::get_if<RunFunctionCommand>(&next.data)) {
+            run->func();
         } else if (std::holds_alternative<SynchronizeCommand>(next.data)) {
             // The command's fence is signaled below after all earlier queue entries are processed.
         } else {
@@ -98,6 +100,15 @@ void ThreadManager::Synchronize() {
         return;
     }
     PushCommand(SynchronizeCommand(), true);
+}
+
+void ThreadManager::RunAfterQueued(std::function<void()>&& func) {
+    if (!is_async || !thread.joinable() || thread.get_stop_token().stop_requested() ||
+        thread.get_id() == std::this_thread::get_id()) {
+        func();
+        return;
+    }
+    PushCommand(RunFunctionCommand{std::move(func)});
 }
 
 void ThreadManager::Stop() {

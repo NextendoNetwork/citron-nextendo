@@ -89,13 +89,16 @@ void NvMap::UnmapHandle(Handle& handle_description) {
 
     const bool has_gmmu_mapping = handle_description.pin_virt_address >= 0x1000;
     const bool has_smmu_mapping = handle_description.d_address >= 0x1000;
-    if (has_gmmu_mapping || has_smmu_mapping) {
+    auto& system = host1x.System();
+    const bool async_gpu = system.IsPoweredOn() && system.GPU().IsAsync();
+    // Heap mappings are reference counted per page, so their unmap can be queued behind the GPU
+    // commands submitted before it instead of making the guest wait for them (games free per-frame
+    // memory every frame, and the wait stalled them whenever the GPU thread was busy).
+    const bool defer_heap_unmap = async_gpu && handle_description.in_heap && !has_gmmu_mapping;
+    if ((has_gmmu_mapping || has_smmu_mapping) && async_gpu && !defer_heap_unmap) {
         // Async GPU commands may still reference either mapping. Drain commands submitted before
         // the unmap so the device mapping cannot disappear while they are executing.
-        auto& system = host1x.System();
-        if (system.IsPoweredOn() && system.GPU().IsAsync()) {
-            system.GPU().SynchronizeGPUThread();
-        }
+        system.GPU().SynchronizeGPUThread();
     }
 
     // Free and unmap the handle from Host1x GMMU
@@ -121,8 +124,14 @@ void NvMap::UnmapHandle(Handle& handle_description) {
     }
     const VAddr vaddress = handle_description.address;
     auto* session = core.GetSession(handle_description.session_id);
-    if (session && vaddress >= 0x1000) {
-        session->mapper->Unmap(vaddress, map_size);
+    if (session && session->mapper && vaddress >= 0x1000) {
+        if (defer_heap_unmap) {
+            system.GPU().RunAfterGPUThread([mapper = session->mapper.get(), vaddress, map_size] {
+                mapper->Unmap(vaddress, map_size);
+            });
+        } else {
+            session->mapper->Unmap(vaddress, map_size);
+        }
     }
     handle_description.d_address = 0;
     handle_description.in_heap = false;

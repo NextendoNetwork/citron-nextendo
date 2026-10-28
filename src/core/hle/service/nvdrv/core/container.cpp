@@ -6,12 +6,14 @@
 #include <deque>
 #include <mutex>
 
+#include "core/core.h"
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/service/nvdrv/core/container.h"
 #include "core/hle/service/nvdrv/core/heap_mapper.h"
 #include "core/hle/service/nvdrv/core/nvmap.h"
 #include "core/hle/service/nvdrv/core/syncpoint_manager.h"
 #include "core/memory.h"
+#include "video_core/gpu.h"
 #include "video_core/host1x/host1x.h"
 
 namespace Service::Nvidia::NvCore {
@@ -161,6 +163,11 @@ void Container::CloseSession(SessionId session_id, bool is_shutdown) {
     impl->file.UnmapAllHandles(session_id);
     auto& smmu = impl->host1x.MemoryManager();
     if (session.has_preallocated_area) {
+        // Heap unmaps queued on the GPU thread still point at this mapper.
+        auto& system = impl->host1x.System();
+        if (system.IsPoweredOn() && system.GPU().IsAsync()) {
+            system.GPU().SynchronizeGPUThread();
+        }
         const DAddr region_start = session.mapper->GetRegionStart();
         const size_t region_size = session.mapper->GetRegionSize();
         session.mapper.reset();
