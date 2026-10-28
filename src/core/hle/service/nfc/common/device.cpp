@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2022 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <string_view>
+
 #include "core/hle/service/glue/time/static.h"
 #include "core/hle/service/psc/time/steady_clock.h"
 #ifdef _MSC_VER
@@ -1385,8 +1388,13 @@ NFP::AmiiboName NfcDevice::GetAmiiboName(const NFP::AmiiboSettings& settings) co
     }
 
     // Convert from utf16 to utf8
-    const auto amiibo_name_utf8 = Common::UTF16ToUTF8(settings_amiibo_name.data());
-    memcpy(amiibo_name.data(), amiibo_name_utf8.data(), amiibo_name_utf8.size());
+    const auto name_end =
+        std::find(settings_amiibo_name.begin(), settings_amiibo_name.end(), u'\0');
+    const auto name_length = static_cast<std::size_t>(name_end - settings_amiibo_name.begin());
+    const auto amiibo_name_utf8 = Common::UTF16ToUTF8(
+        std::u16string_view{settings_amiibo_name.data(), name_length});
+    const auto copy_size = std::min(amiibo_name_utf8.size(), amiibo_name.size() - 1);
+    memcpy(amiibo_name.data(), amiibo_name_utf8.data(), copy_size);
 
     return amiibo_name;
 }
@@ -1395,10 +1403,22 @@ void NfcDevice::SetAmiiboName(NFP::AmiiboSettings& settings,
                               const NFP::AmiiboName& amiibo_name) const {
     std::array<char16_t, NFP::amiibo_name_length> settings_amiibo_name{};
 
-    // Convert from utf8 to utf16
-    const auto amiibo_name_utf16 = Common::UTF8ToUTF16(amiibo_name.data());
-    memcpy(settings_amiibo_name.data(), amiibo_name_utf16.data(),
-           amiibo_name_utf16.size() * sizeof(char16_t));
+    // RegisterInfoPrivate carries a fixed-size UTF-8 buffer, while the tag
+    // stores at most ten UTF-16 code units. Treat the input as bounded and
+    // truncate before copying so a long or unterminated name cannot corrupt
+    // the following amiibo settings fields.
+    const auto name_utf8 = Common::StringFromFixedZeroTerminatedBuffer(
+        std::string_view{amiibo_name.data(), amiibo_name.size()}, amiibo_name.size());
+    const auto amiibo_name_utf16 = Common::UTF8ToUTF16(name_utf8);
+    const auto copy_size = std::min(amiibo_name_utf16.size(), settings_amiibo_name.size());
+    std::copy_n(amiibo_name_utf16.begin(), copy_size, settings_amiibo_name.begin());
+
+    // Do not leave an unpaired high surrogate if the ten-unit boundary lands
+    // in the middle of a supplementary Unicode character.
+    if (copy_size == settings_amiibo_name.size() && copy_size != 0 &&
+        settings_amiibo_name.back() >= 0xD800 && settings_amiibo_name.back() <= 0xDBFF) {
+        settings_amiibo_name.back() = 0;
+    }
 
     // Convert from little endian to big endian
     for (std::size_t i = 0; i < NFP::amiibo_name_length; i++) {
