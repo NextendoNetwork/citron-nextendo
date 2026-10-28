@@ -471,7 +471,7 @@ public:
 
     void DeleteBuffer(BufferId buffer_id, bool do_not_mark = false);
 
-    [[nodiscard]] Binding StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
+    [[nodiscard]] Binding StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index, u32 cbuf_offset,
                                                bool is_written) const;
 
     /// Resolves the buffers behind each contiguous piece of a scattered storage buffer.

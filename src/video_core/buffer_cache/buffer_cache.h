@@ -465,7 +465,7 @@ void BufferCache<P>::BindGraphicsStorageBuffer(size_t stage, size_t ssbo_index, 
     const auto& cbufs = maxwell3d->state.shader_stages[stage];
     const GPUVAddr ssbo_addr = cbufs.const_buffers[cbuf_index].address + cbuf_offset;
     channel_state->storage_buffers[stage][ssbo_index] =
-        StorageBufferBinding(ssbo_addr, cbuf_index, is_written);
+        StorageBufferBinding(ssbo_addr, cbuf_index, cbuf_offset, is_written);
 }
 
 template <class P>
@@ -512,7 +512,7 @@ void BufferCache<P>::BindComputeStorageBuffer(size_t ssbo_index, u32 cbuf_index,
     const auto& cbufs = launch_desc.const_buffer_config;
     const GPUVAddr ssbo_addr = cbufs[cbuf_index].Address() + cbuf_offset;
     channel_state->compute_storage_buffers[ssbo_index] =
-        StorageBufferBinding(ssbo_addr, cbuf_index, is_written);
+        StorageBufferBinding(ssbo_addr, cbuf_index, cbuf_offset, is_written);
 }
 
 template <class P>
@@ -2036,13 +2036,16 @@ void BufferCache<P>::DeleteBuffer(BufferId buffer_id, bool do_not_mark) {
 }
 
 template <class P>
-Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
+Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index, u32 cbuf_offset,
                                              bool is_written) const {
     const GPUVAddr gpu_addr = gpu_memory->Read<u64>(ssbo_addr);
-    const auto size = [&]() {
-        const bool is_nvn_cbuf = cbuf_index == 0;
-        // The NVN driver buffer (index 0) is known to pack the SSBO address followed by its size.
-        if (is_nvn_cbuf) {
+    auto size = [&]() {
+        // The NVN driver buffer (index 0) packs each SSBO address followed by its size, but only in
+        // its descriptor table. Addresses tracked elsewhere in cbuf 0 are plain shader parameters
+        // (e.g. Crypt of the NecroDancer's buffer copy shader); the word after them is not a size.
+        const bool is_nvn_descriptor =
+            cbuf_index == 0 && cbuf_offset >= 0x110 && cbuf_offset < 0x810;
+        if (is_nvn_descriptor) {
             const u32 ssbo_size = gpu_memory->Read<u32>(ssbo_addr + 8);
             if (ssbo_size != 0) {
                 return ssbo_size;
@@ -2060,7 +2063,8 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
     // Alignment only applies to the offset of the buffer
     const u32 alignment = runtime.GetStorageBufferAlignment();
     const GPUVAddr aligned_gpu_addr = Common::AlignDown(gpu_addr, alignment);
-    const u32 aligned_size = static_cast<u32>(gpu_addr - aligned_gpu_addr) + size;
+    const u32 offset = static_cast<u32>(gpu_addr - aligned_gpu_addr);
+    u32 aligned_size = offset + size;
 
     const std::optional<DAddr> aligned_device_addr = gpu_memory->GpuToCpuAddress(aligned_gpu_addr);
     if (!aligned_device_addr) {
@@ -2071,6 +2075,23 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
                       cbuf_index, aligned_gpu_addr);
         }
         return NULL_BINDING;
+    }
+    if (!gpu_memory->IsContinuousRange(aligned_gpu_addr, aligned_size)) {
+        // A declared size can run past the buffer's mapping; the shader can only reach what is
+        // mapped back to back from the start, so a scattered copy is never sized beyond that.
+        u64 mapped = 0;
+        for (const auto& [piece_gpu_addr, piece_size] :
+             gpu_memory->GetSubmappedRange(aligned_gpu_addr, aligned_size)) {
+            if (piece_gpu_addr != aligned_gpu_addr + mapped) {
+                break;
+            }
+            mapped += piece_size;
+        }
+        if (mapped <= offset) {
+            return NULL_BINDING;
+        }
+        aligned_size = static_cast<u32>(std::min<u64>(mapped, aligned_size));
+        size = aligned_size - offset;
     }
     if (!gpu_memory->IsContinuousRange(aligned_gpu_addr, aligned_size)) {
         return Binding{
