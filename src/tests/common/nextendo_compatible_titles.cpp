@@ -17,6 +17,7 @@ constexpr u64 Minecraft = 0x01006bd001e06000;
 constexpr u64 Portal2 = 0x0100abd01785c000;
 constexpr u64 UltimateChickenHorse = 0x0100fcf002a58000;
 constexpr u64 SpeedRunners2 = 0x01004cc023582000;
+constexpr u64 CryptOfTheNecroDancer = 0x0100cea007d08000;
 constexpr u64 Nes = 0x0100d870045b6000;
 constexpr u64 Snes = 0x01008d300c50c000;
 constexpr u64 GameBoy = 0x0100c62011050000;
@@ -99,7 +100,10 @@ TEST_CASE("Nextendo::CompatibleTitles::IsVersionOk edge cases", "[common][nexten
 TEST_CASE("Nextendo::CompatibleTitles table versions are all numeric", "[common][nextendo]") {
     for (const auto& [program_id, version] : Nextendo::CompatibleTitles::Table()) {
         INFO("program_id=" << program_id << " version=" << version);
-        REQUIRE(Nextendo::CompatibleTitles::ParseVersion(version).has_value());
+        // NecroDancer's display version carries a build tag and is matched as exact text.
+        if (program_id != CryptOfTheNecroDancer) {
+            REQUIRE(Nextendo::CompatibleTitles::ParseVersion(version).has_value());
+        }
         REQUIRE(Nextendo::CompatibleTitles::IsVersionOk(program_id, version));
     }
 }
@@ -185,6 +189,19 @@ TEST_CASE("Nextendo::CompatibleTitles SpeedRunners 2 needs exactly 1.2.0", "[com
     REQUIRE_FALSE(IsVersionOk(SpeedRunners2, "1.1.0"));
     REQUIRE_FALSE(IsVersionOk(SpeedRunners2, "1.2.1"));
     REQUIRE_FALSE(IsVersionOk(SpeedRunners2, "1.3.9"));
+}
+
+TEST_CASE("Nextendo::CompatibleTitles Crypt of the NecroDancer needs exactly 4.2.1-b5668",
+          "[common][nextendo]") {
+    using Nextendo::CompatibleTitles::IsVersionOk;
+
+    REQUIRE(Nextendo::CompatibleTitles::Table().at(CryptOfTheNecroDancer) == "4.2.1-b5668");
+    REQUIRE(IsVersionOk(CryptOfTheNecroDancer, "4.2.1-b5668"));
+    // Not numeric, so only the exact text passes: other builds and the bare number are refused.
+    REQUIRE_FALSE(IsVersionOk(CryptOfTheNecroDancer, "4.2.1"));
+    REQUIRE_FALSE(IsVersionOk(CryptOfTheNecroDancer, "4.2.1-b5667"));
+    REQUIRE_FALSE(IsVersionOk(CryptOfTheNecroDancer, "4.2.0-b5600"));
+    REQUIRE_FALSE(IsVersionOk(CryptOfTheNecroDancer, "1.0.0"));
 }
 
 TEST_CASE("Nextendo::CompatibleTitles NSO Classics need their exact application version",

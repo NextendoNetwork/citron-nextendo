@@ -84,6 +84,8 @@ inline const std::unordered_map<u64, std::string>& BuiltInTable() {
         {0x0100b6e012ebe000, "1.1.17"},      // UNO
         {0x0100fcf002a58000, "1.13.13.765"}, // Ultimate Chicken Horse
         {0x01004cc023582000, "1.2.0"},       // SpeedRunners 2: King of Speed (update v131072)
+        // The update's display version carries its build tag, so it must match as exact text.
+        {0x0100cea007d08000, "4.2.1-b5668"}, // Crypt of the NecroDancer (update v720896)
         {0x01006bd001e06000, "1.0.17"},      // Minecraft: Nintendo Switch Edition
         {0x0100abd01785c000, "1.0.3"},       // Portal 2
     };
