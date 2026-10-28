@@ -238,6 +238,15 @@ static std::optional<std::string> GetNextendoRedirectIp(const std::string& host,
         return server_ip;
     }
 
+    // Crypt of the NecroDancer signs in to brainCloud for its online services.
+    // The host is shared with other brainCloud titles, so it is redirected only while NecroDancer
+    // runs. vortexbuffer.com, which the game also contacts, keeps resolving normally.
+    constexpr u64 CryptOfTheNecroDancer = 0x0100CEA007D08000ULL;
+    if (program_id == CryptOfTheNecroDancer && host == "api.braincloudservers.com") {
+        LOG_INFO(Service, "[Nextendo] Redirecting NecroDancer host '{}' -> '{}'", host, server_ip);
+        return server_ip;
+    }
+
     // World War Z: Saber's Hydra API (wwz*.wwzapi.com) and RedLynx dispatcher (rlx*.hydrapi.net).
     constexpr u64 WorldWarZ = 0x010099F013898000ULL;
     if (program_id == WorldWarZ &&
