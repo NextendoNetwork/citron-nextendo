@@ -26,6 +26,10 @@ void DmaPusher::DispatchCalls() {
 
     dma_state.is_last_call = true;
 
+    // CPU writes to GPU-modified pages are deferred until the cache is invalidated. The guest made
+    // them before submitting this list, so they must be visible to its draws.
+    gpu.InvalidateGPUCache();
+
     while (system.IsPoweredOn()) {
         if (!Step()) {
             break;
