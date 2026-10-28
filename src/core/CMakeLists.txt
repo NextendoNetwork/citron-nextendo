@@ -1219,6 +1219,8 @@ add_library(core STATIC
     loader/nextendo_amongus_patch.h
     loader/nextendo_dungeons2_patch.cpp
     loader/nextendo_dungeons2_patch.h
+    loader/nextendo_necrodancer_patch.cpp
+    loader/nextendo_necrodancer_patch.h
     loader/nextendo_pvzbfn_patch.cpp
     loader/nextendo_pvzbfn_patch.h
     loader/nextendo_s3_patches.cpp

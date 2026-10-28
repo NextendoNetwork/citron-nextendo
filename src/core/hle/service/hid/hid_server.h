@@ -368,6 +368,7 @@ private:
     Result Unknown2060(ClientAppletResourceUserId aruid);
     Result Unknown2061(ClientAppletResourceUserId aruid);
     Result Unknown2062(ClientAppletResourceUserId aruid);
+    Result Unknown3150(u32 value, ClientAppletResourceUserId aruid);
 
     // Missing functions from gaps in current implementation
     Result Unknown90(ClientAppletResourceUserId aruid);

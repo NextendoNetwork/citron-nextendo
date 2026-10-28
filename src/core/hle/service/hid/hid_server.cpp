@@ -246,6 +246,7 @@ IHidServer::IHidServer(Core::System& system_, std::shared_ptr<ResourceManager> r
         {2060, C<&IHidServer::Unknown2060>, "Unknown2060"},
         {2061, C<&IHidServer::Unknown2061>, "Unknown2061"},
         {2062, C<&IHidServer::Unknown2062>, "Unknown2062"},
+        {3150, C<&IHidServer::Unknown3150>, "Unknown3150"},
     };
     // clang-format on
 
@@ -2041,6 +2042,12 @@ Result IHidServer::Unknown2061(ClientAppletResourceUserId aruid) {
 
 Result IHidServer::Unknown2062(ClientAppletResourceUserId aruid) {
     LOG_WARNING(Service_HID, "(STUBBED) called, applet_resource_user_id={}", aruid.pid);
+    R_SUCCEED();
+}
+
+Result IHidServer::Unknown3150(u32 value, ClientAppletResourceUserId aruid) {
+    LOG_WARNING(Service_HID, "(STUBBED) called, value={}, applet_resource_user_id={}", value,
+                aruid.pid);
     R_SUCCEED();
 }
 
