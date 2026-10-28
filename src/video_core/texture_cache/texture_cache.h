@@ -18,6 +18,7 @@
 #include "video_core/texture_cache/samples_helper.h"
 #include "video_core/texture_cache/texture_cache_base.h"
 #include "video_core/texture_cache/util.h"
+#include "video_core/textures/workers.h"
 
 namespace VideoCommon {
 
@@ -606,6 +607,9 @@ void TextureCache<P>::WriteMemory(DAddr cpu_addr, size_t size) {
     const DAddr page_end = Common::AlignUp(cpu_addr + size, Core::DEVICE_PAGESIZE);
     ForEachImageInRegion(page_start, page_end - page_start, [this, cpu_addr, size](ImageId image_id,
                                                                                    Image& image) {
+        if (MarkCpuWritePages(image, cpu_addr, size)) {
+            return;
+        }
         if (True(image.flags & ImageFlagBits::CpuModified)) {
             return;
         }
@@ -699,7 +703,7 @@ void TextureCache<P>::UnmapGPUMemory(size_t as_id, GPUVAddr gpu_addr, size_t siz
                             [&](ImageId id, Image&) { deleted_images.push_back(id); });
     for (const ImageId id : deleted_images) {
         Image& image = slot_images[id];
-        if (False(image.flags & ImageFlagBits::CpuModified)) {
+        if (False(image.flags & ImageFlagBits::CpuModified) || !image.cpu_dirty_pages.empty()) {
             image.flags |= ImageFlagBits::CpuModified;
             if (True(image.flags & ImageFlagBits::Tracked)) {
                 UntrackImage(image, id);
@@ -1142,6 +1146,12 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
         return;
     }
     image.flags &= ~ImageFlagBits::CpuModified;
+    if (!image.cpu_dirty_pages.empty()) {
+        if (RefreshDirtyBlockRows(image)) {
+            return;
+        }
+        UntrackImage(image, image_id);
+    }
     TrackImage(image, image_id);
 
     if (image.info.num_samples > 1 && !runtime.CanUploadMSAA()) {
@@ -1205,6 +1215,202 @@ void TextureCache<P>::UploadImageContents(Image& image, StagingBuffer& staging) 
             UnswizzleImage(*gpu_memory, gpu_addr, image.info, swizzle_data, mapped_span);
         upload(copies);
     }
+}
+
+/// Calls func(addr, size) for each run of consecutive CPU-written pages of an image.
+template <typename Func>
+void ForEachDirtyPageRun(const ImageBase& image, Func&& func) {
+    const DAddr first_page = Common::AlignDown(image.cpu_addr, Core::DEVICE_PAGESIZE);
+    const size_t num_bits = image.cpu_dirty_pages.size() * 64;
+    size_t index = 0;
+    while (index < num_bits) {
+        if (!(image.cpu_dirty_pages[index / 64] & (1ULL << (index % 64)))) {
+            ++index;
+            continue;
+        }
+        const size_t run_begin = index;
+        while (index < num_bits && (image.cpu_dirty_pages[index / 64] & (1ULL << (index % 64)))) {
+            ++index;
+        }
+        func(first_page + (run_begin << Core::DEVICE_PAGEBITS),
+             (index - run_begin) << Core::DEVICE_PAGEBITS);
+    }
+}
+
+template <class P>
+bool TextureCache<P>::MarkCpuWritePages(Image& image, DAddr cpu_addr, size_t size) {
+    // Below this size a whole re-upload is cheaper than tracking writes page by page.
+    static constexpr u32 MIN_PAGE_TRACKED_SIZE = 8_MiB;
+    static constexpr ImageFlagBits WHOLE_UPLOAD_ONLY =
+        ImageFlagBits::AcceleratedUpload | ImageFlagBits::Converted | ImageFlagBits::GpuModified |
+        ImageFlagBits::Sparse | ImageFlagBits::AsynchronousDecode;
+    if (False(image.flags & ImageFlagBits::Tracked) || True(image.flags & WHOLE_UPLOAD_ONLY) ||
+        image.guest_size_bytes < MIN_PAGE_TRACKED_SIZE || image.cpu_addr >= ~(1ULL << 40)) {
+        return false;
+    }
+    if (True(image.flags & ImageFlagBits::CpuModified) && image.cpu_dirty_pages.empty()) {
+        return false;
+    }
+    if (!MakeBlockRowLayout(image.info)) {
+        return false;
+    }
+    const DAddr image_page = Common::AlignDown(image.cpu_addr, Core::DEVICE_PAGESIZE);
+    const DAddr image_page_end =
+        Common::AlignUp(image.cpu_addr + image.guest_size_bytes, Core::DEVICE_PAGESIZE);
+    const DAddr begin = std::max(Common::AlignDown(cpu_addr, Core::DEVICE_PAGESIZE), image_page);
+    const DAddr end =
+        std::min(Common::AlignUp(cpu_addr + size, Core::DEVICE_PAGESIZE), image_page_end);
+    if (begin >= end) {
+        return true;
+    }
+    if (image.cpu_dirty_pages.empty()) {
+        const size_t num_pages = (image_page_end - image_page) >> Core::DEVICE_PAGEBITS;
+        image.cpu_dirty_pages.assign(Common::DivCeil(num_pages, size_t{64}), 0);
+    }
+    DAddr run_begin = 0;
+    size_t run_size = 0;
+    const auto untrack_run = [&] {
+        if (run_size != 0) {
+            device_memory.UpdatePagesCachedCount(run_begin, run_size, -1);
+            run_size = 0;
+        }
+    };
+    for (DAddr page = begin; page < end; page += Core::DEVICE_PAGESIZE) {
+        const size_t index = (page - image_page) >> Core::DEVICE_PAGEBITS;
+        u64& word = image.cpu_dirty_pages[index / 64];
+        const u64 bit = 1ULL << (index % 64);
+        if (word & bit) {
+            untrack_run();
+            continue;
+        }
+        word |= bit;
+        if (run_size == 0) {
+            run_begin = page;
+        }
+        run_size += Core::DEVICE_PAGESIZE;
+    }
+    untrack_run();
+    image.flags |= ImageFlagBits::CpuModified;
+    return true;
+}
+
+template <class P>
+void TextureCache<P>::RetrackDirtyPages(ImageBase& image) {
+    ForEachDirtyPageRun(image, [this](DAddr addr, size_t size) {
+        device_memory.UpdatePagesCachedCount(addr, size, 1);
+    });
+    image.cpu_dirty_pages.clear();
+}
+
+template <class P>
+bool TextureCache<P>::RefreshDirtyBlockRows(Image& image) {
+    const std::optional<BlockRowLayout> layout = MakeBlockRowLayout(image.info);
+    if (!layout) {
+        return false;
+    }
+    const u32 num_layers = static_cast<u32>(image.info.resources.layers);
+    const u64 layer_bytes = static_cast<u64>(layout->block_rows) * layout->block_row_bytes;
+    if (static_cast<u64>(layout->layer_stride) * (num_layers - 1) + layer_bytes >
+        image.guest_size_bytes) {
+        return false;
+    }
+
+    // Block rows (per layer) holding any written byte.
+    std::vector<bool> dirty_rows(static_cast<size_t>(num_layers) * layout->block_rows);
+    ForEachDirtyPageRun(image, [&](DAddr addr, size_t size) {
+        const u64 begin = addr > image.cpu_addr ? addr - image.cpu_addr : 0;
+        const u64 end = std::min<u64>(addr + size - image.cpu_addr, image.guest_size_bytes);
+        for (u64 layer = begin / layout->layer_stride; layer < num_layers; ++layer) {
+            const u64 base = layer * layout->layer_stride;
+            if (base >= end) {
+                break;
+            }
+            const u64 low = std::max(begin, base) - base;
+            const u64 high = std::min(end - base, layer_bytes);
+            if (low >= high) {
+                continue;
+            }
+            for (u64 row = low / layout->block_row_bytes; row <= (high - 1) / layout->block_row_bytes;
+                 ++row) {
+                dirty_rows[layer * layout->block_rows + row] = true;
+            }
+        }
+    });
+    // Track the pages again before reading them so writes made during the upload are not lost.
+    RetrackDirtyPages(image);
+
+    struct Run {
+        u32 layer;
+        u32 first_row;
+        u32 num_rows;
+    };
+    // Runs are capped so the texture workers can unswizzle a large rewrite in parallel.
+    const u32 max_run_rows = std::max<u32>(1, static_cast<u32>(4_MiB / layout->block_row_bytes));
+    std::vector<Run> runs;
+    size_t host_bytes = 0;
+    const size_t row_pitch = static_cast<size_t>(image.info.size.width) << layout->bpp_log2;
+    for (u32 layer = 0; layer < num_layers; ++layer) {
+        for (u32 row = 0; row < layout->block_rows;) {
+            if (!dirty_rows[static_cast<size_t>(layer) * layout->block_rows + row]) {
+                ++row;
+                continue;
+            }
+            const u32 first = row;
+            while (row < layout->block_rows && row - first < max_run_rows &&
+                   dirty_rows[static_cast<size_t>(layer) * layout->block_rows + row]) {
+                ++row;
+            }
+            runs.push_back({layer, first, row - first});
+            const u32 y = first * layout->rows_per_block_row;
+            host_bytes += row_pitch * std::min((row - first) * layout->rows_per_block_row,
+                                               image.info.size.height - y);
+        }
+    }
+    if (runs.empty()) {
+        return true;
+    }
+
+    auto staging = runtime.UploadStagingBuffer(host_bytes);
+    std::vector<BufferImageCopy> copies(runs.size());
+    Common::ThreadWorker& workers = Tegra::Texture::GetThreadWorkers();
+    bool queued = false;
+    size_t host_offset = 0;
+    for (size_t i = 0; i < runs.size(); ++i) {
+        const Run& run = runs[i];
+        const u64 guest_offset = static_cast<u64>(run.layer) * layout->layer_stride +
+                                 static_cast<u64>(run.first_row) * layout->block_row_bytes;
+        const size_t guest_size = static_cast<size_t>(run.num_rows) * layout->block_row_bytes;
+        const std::span<u8> output = staging.mapped_span.subspan(host_offset);
+        const size_t offset = host_offset;
+        const u32 y = run.first_row * layout->rows_per_block_row;
+        host_offset += row_pitch * std::min(run.num_rows * layout->rows_per_block_row,
+                                            image.info.size.height - y);
+
+        const auto unswizzle = [&copies, &image, &layout, i, run, output,
+                                offset](std::span<const u8> input) {
+            copies[i] = UnswizzleImageBlockRows(image.info, *layout, input, output,
+                                                static_cast<s32>(run.layer), run.first_row,
+                                                run.num_rows);
+            copies[i].buffer_offset = offset;
+        };
+        if (const u8* const guest = device_memory.GetSpan(image.cpu_addr + guest_offset,
+                                                          guest_size)) {
+            workers.QueueWork([unswizzle, guest, guest_size] { unswizzle({guest, guest_size}); });
+            queued = true;
+        } else {
+            swizzle_data_buffer.resize_destructive(guest_size);
+            static_cast<void>(device_memory.ReadBlockUnsafe(image.cpu_addr + guest_offset,
+                                                            swizzle_data_buffer.data(), guest_size,
+                                                            "TextureCache.RefreshDirtyBlockRows"));
+            unswizzle({swizzle_data_buffer.data(), guest_size});
+        }
+    }
+    if (queued) {
+        workers.WaitForRequests();
+    }
+    image.UploadMemory(staging, copies);
+    runtime.InsertUploadMemoryBarrier();
+    return true;
 }
 
 template <class P>
@@ -2349,6 +2555,8 @@ void TextureCache<P>::TrackImage(ImageBase& image, ImageId image_id) {
 template <class P>
 void TextureCache<P>::UntrackImage(ImageBase& image, ImageId image_id) {
     ASSERT(True(image.flags & ImageFlagBits::Tracked));
+    // Pages written since the last upload were already untracked one by one.
+    RetrackDirtyPages(image);
     image.flags &= ~ImageFlagBits::Tracked;
     if (False(image.flags & ImageFlagBits::Sparse)) {
         if (image.cpu_addr < ~(1ULL << 40)) {
@@ -2612,6 +2820,7 @@ void TextureCache<P>::PrepareImage(ImageId image_id, bool is_modification, bool 
     Image& image = slot_images[image_id];
     if (invalidate) {
         image.flags &= ~(ImageFlagBits::CpuModified | ImageFlagBits::GpuModified);
+        RetrackDirtyPages(image);
         if (False(image.flags & ImageFlagBits::Tracked)) {
             TrackImage(image, image_id);
         }

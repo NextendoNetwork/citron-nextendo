@@ -67,6 +67,28 @@ struct OverlapResult {
     Tegra::MemoryManager& gpu_memory, GPUVAddr gpu_addr, const ImageInfo& info,
     std::span<const u8> input, std::span<u8> output);
 
+/// Guest layout of a single-level block-linear color image, in rows of GOB blocks. Each block row
+/// is self-contained, so a run of them can be unswizzled without the rest of the image.
+struct BlockRowLayout {
+    u32 bpp_log2;
+    u32 block_height;
+    u32 stride_alignment;
+    u32 rows_per_block_row;
+    u32 block_rows;
+    u32 block_row_bytes;
+    u32 layer_stride;
+};
+
+[[nodiscard]] std::optional<BlockRowLayout> MakeBlockRowLayout(const ImageInfo& info);
+
+/// Unswizzles block rows [first_block_row, first_block_row + num_block_rows) of one layer.
+/// input starts at the first of those block rows.
+[[nodiscard]] BufferImageCopy UnswizzleImageBlockRows(const ImageInfo& info,
+                                                      const BlockRowLayout& layout,
+                                                      std::span<const u8> input,
+                                                      std::span<u8> output, s32 layer,
+                                                      u32 first_block_row, u32 num_block_rows);
+
 void ConvertImage(std::span<const u8> input, const ImageInfo& info, std::span<u8> output,
                   std::span<BufferImageCopy> copies);
 

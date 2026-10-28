@@ -932,6 +932,74 @@ boost::container::small_vector<BufferImageCopy, 16> UnswizzleImage(Tegra::Memory
     return copies;
 }
 
+std::optional<BlockRowLayout> MakeBlockRowLayout(const ImageInfo& info) {
+    if (info.type != ImageType::e2D || info.resources.levels != 1 || info.num_samples != 1 ||
+        info.tile_width_spacing != 0 || info.size.depth != 1 ||
+        GetFormatType(info.format) != SurfaceType::ColorTexture) {
+        return std::nullopt;
+    }
+    const Extent2D tile_size = DefaultBlockSize(info.format);
+    if (tile_size.width != 1 || tile_size.height != 1) {
+        return std::nullopt;
+    }
+    // Same layout math as UnswizzleImage for level 0.
+    const LevelInfo level_info = MakeLevelInfo(info);
+    const u32 bpp_log2 = level_info.bpp_log2;
+    const Extent3D num_tiles = AdjustTileSize(info.size, tile_size);
+    const Extent3D block = AdjustMipBlockSize(num_tiles, level_info.block, 0, 1);
+    if (block.depth != 0) {
+        return std::nullopt;
+    }
+    const Extent2D gob = GobSize(bpp_log2, info.block.height, info.tile_width_spacing);
+    const u32 stride_alignment = StrideAlignment(num_tiles, info.block, gob, bpp_log2);
+    const std::array level_sizes = CalculateLevelSizes(level_info, 1);
+    const u32 layer_stride =
+        AlignLayerSize(CalculateLevelBytes(level_sizes, 1), info.size, level_info.block,
+                       tile_size.height, info.tile_width_spacing);
+
+    const u32 stride = Common::AlignUpLog2(num_tiles.width, stride_alignment) << bpp_log2;
+    const u32 block_row_bytes = Common::DivCeilLog2(stride, GOB_SIZE_X_SHIFT)
+                                << (GOB_SIZE_SHIFT + block.height);
+    const u32 rows_per_block_row = 1U << (GOB_SIZE_Y_SHIFT + block.height);
+    const u32 block_rows = Common::DivCeil(num_tiles.height, rows_per_block_row);
+    if (static_cast<u64>(block_rows) * block_row_bytes != level_sizes[0] ||
+        layer_stride < level_sizes[0]) {
+        return std::nullopt;
+    }
+    return BlockRowLayout{
+        .bpp_log2 = bpp_log2,
+        .block_height = block.height,
+        .stride_alignment = stride_alignment,
+        .rows_per_block_row = rows_per_block_row,
+        .block_rows = block_rows,
+        .block_row_bytes = block_row_bytes,
+        .layer_stride = layer_stride,
+    };
+}
+
+BufferImageCopy UnswizzleImageBlockRows(const ImageInfo& info, const BlockRowLayout& layout,
+                                        std::span<const u8> input, std::span<u8> output,
+                                        s32 layer, u32 first_block_row, u32 num_block_rows) {
+    const u32 y = first_block_row * layout.rows_per_block_row;
+    const u32 rows = std::min(num_block_rows * layout.rows_per_block_row, info.size.height - y);
+    UnswizzleTexture(output, input, 1U << layout.bpp_log2, info.size.width, rows, 1,
+                     layout.block_height, 0, layout.stride_alignment);
+    return BufferImageCopy{
+        .buffer_offset = 0,
+        .buffer_size = (static_cast<size_t>(info.size.width) * rows) << layout.bpp_log2,
+        .buffer_row_length = info.size.width,
+        .buffer_image_height = rows,
+        .image_subresource =
+            {
+                .base_level = 0,
+                .base_layer = layer,
+                .num_layers = 1,
+            },
+        .image_offset = {0, static_cast<s32>(y), 0},
+        .image_extent = {info.size.width, rows, 1},
+    };
+}
+
 void ConvertImage(std::span<const u8> input, const ImageInfo& info, std::span<u8> output,
                   std::span<BufferImageCopy> copies) {
     u32 output_offset = 0;

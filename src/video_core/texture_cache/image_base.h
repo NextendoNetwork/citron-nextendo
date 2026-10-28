@@ -116,6 +116,10 @@ struct ImageBase {
     std::vector<ImageId> overlapping_images;
     ImageMapId map_view_id{};
 
+    /// Pages written by the CPU since the last upload, one bit per page from the page holding
+    /// cpu_addr. Only those pages are untracked; the rest of the image stays tracked.
+    std::vector<u64> cpu_dirty_pages;
+
     /// Texture cache: storage_id of the page tables this image was registered in.
     /// Used when unregistering so we clear the correct table (channel may have changed).
     std::optional<size_t> registration_storage_id;

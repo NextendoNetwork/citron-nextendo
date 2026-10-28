@@ -338,6 +338,16 @@ public:
     template <typename StagingBuffer>
     void UploadImageContents(Image& image, StagingBuffer& staging_buffer);
 
+    /// Records a CPU write to a large tracked image page by page instead of invalidating it all.
+    /// Returns false when the image has to be re-uploaded whole.
+    bool MarkCpuWritePages(Image& image, DAddr cpu_addr, size_t size);
+
+    /// Re-uploads only the block rows covering the image's CPU-written pages.
+    bool RefreshDirtyBlockRows(Image& image);
+
+    /// Tracks the image's CPU-written pages again and forgets them.
+    void RetrackDirtyPages(ImageBase& image);
+
     /// Find or create an image view from a guest descriptor
     [[nodiscard]] ImageViewId FindImageView(const TICEntry& config);
 
