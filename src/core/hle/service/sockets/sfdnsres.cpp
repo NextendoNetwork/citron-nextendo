@@ -156,11 +156,12 @@ static std::optional<std::string> GetNextendoRedirectIp(const std::string& host,
     }
 
     // Sonic Racing CrossWorlds signs in to Epic Online Services, then to SEGA's own backend
-    // (prod-api/prod-cdn.sora-online.net); our stand-in serves both.
+    // (prod-api/prod-cdn.sora-online.net); our stand-in serves both. EOS P2P relays through
+    // Epic's TURN host with credentials our server issues, so that host goes to our coturn.
     constexpr u64 SonicRacingCrossWorlds = 0x01006E001823C000ULL;
     if (program_id == SonicRacingCrossWorlds &&
         (host == "api.epicgames.dev" || host == "prod-api.sora-online.net" ||
-         host == "prod-cdn.sora-online.net")) {
+         host == "prod-cdn.sora-online.net" || host == "turn.rtcp.on.epicgames.com")) {
         LOG_INFO(Service, "Redirecting CrossWorlds host '{}' -> '{}'", host, server_ip);
         return server_ip;
     }

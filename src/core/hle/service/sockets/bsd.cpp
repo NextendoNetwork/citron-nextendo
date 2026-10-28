@@ -3276,7 +3276,21 @@ void BSD::RecvMMsg(HLERequestContext& ctx) {
             LOG_INFO(Service, "[Nextendo][SCHED-WATCH] RecvMMsg (pre-recv) on thread id={} prio={}",
                      cur ? cur->GetThreadId() : 0, cur ? cur->GetPriority() : -1);
         }
-        auto [ret, recv_errno] = RecvImpl(fd, flags | msg.flags, received);
+        const FileDescriptor& descriptor = *file_descriptors[fd];
+        s32 ret;
+        Errno recv_errno;
+        if (!descriptor.is_connection_based && !descriptor.connected) {
+            // An unconnected datagram socket (WebRTC's ICE socket) needs recvfrom(): RecvImpl
+            // never reads one, and the sender must be reported in msg_name.
+            std::vector<u8> from;
+            std::tie(ret, recv_errno) = RecvFromImpl(fd, flags | msg.flags, received, from);
+            if (recv_errno == Errno::SUCCESS && !msg.name.empty()) {
+                std::fill(msg.name.begin(), msg.name.end(), u8{0});
+                std::copy_n(from.begin(), std::min(from.size(), msg.name.size()), msg.name.begin());
+            }
+        } else {
+            std::tie(ret, recv_errno) = RecvImpl(fd, flags | msg.flags, received);
+        }
         if (recv_errno != Errno::SUCCESS) {
             last_errno = recv_errno;
             break;
