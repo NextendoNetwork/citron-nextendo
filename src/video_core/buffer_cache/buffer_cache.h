@@ -976,7 +976,8 @@ void BufferCache<P>::BindHostGraphicsStorageBuffers(size_t stage) {
         const bool is_written = ((channel_state->written_storage_buffers[stage] >> index) & 1) != 0;
 
         if (is_written) {
-            MarkWrittenBuffer(binding.buffer_id, binding.device_addr, size);
+            MarkWrittenBuffer(binding.buffer_id, binding.device_addr,
+                              binding.tracked_size != 0 ? binding.tracked_size : size);
         }
 
         if constexpr (NEEDS_BIND_STORAGE_INDEX) {
@@ -1102,7 +1103,8 @@ void BufferCache<P>::BindHostComputeStorageBuffers() {
             ((channel_state->written_compute_storage_buffers >> index) & 1) != 0;
 
         if (is_written) {
-            MarkWrittenBuffer(binding.buffer_id, binding.device_addr, size);
+            MarkWrittenBuffer(binding.buffer_id, binding.device_addr,
+                              binding.tracked_size != 0 ? binding.tracked_size : size);
         }
 
         if constexpr (NEEDS_BIND_STORAGE_INDEX) {
@@ -1628,6 +1630,7 @@ typename P::Buffer& BufferCache<P>::GatherScatteredStorage(const Binding& bindin
     }
     ScatteredStorage& entry = *it;
     entry.last_use = scattered_use_tick;
+    entry.tracked_size = binding.tracked_size != 0 ? binding.tracked_size : size;
 
     boost::container::small_vector<std::pair<GPUVAddr, DAddr>, 8> piece_addrs;
     boost::container::small_vector<size_t, 8> piece_sizes;
@@ -1697,11 +1700,17 @@ void BufferCache<P>::FlushScatteredStorageWrites() {
                 .size = piece_size,
             }};
             runtime.CopyBuffer(buffer, *entry.buffer, copies, true);
-            memory_tracker.MarkRegionAsGpuModified(piece_addr, piece_size);
-            gpu_modified_ranges.Add(piece_addr, piece_size);
-            uncommitted_gpu_modified_ranges.Add(piece_addr, piece_size);
             // This entry already holds the data it wrote back.
             MarkScatteredStale(piece_addr, piece_size, &entry);
+            const GPUVAddr tracked_end = entry.gpu_addr + entry.tracked_size;
+            if (piece_gpu_addr >= tracked_end) {
+                continue;
+            }
+            const size_t tracked_piece_size =
+                std::min<size_t>(piece_size, tracked_end - piece_gpu_addr);
+            memory_tracker.MarkRegionAsGpuModified(piece_addr, tracked_piece_size);
+            gpu_modified_ranges.Add(piece_addr, tracked_piece_size);
+            uncommitted_gpu_modified_ranges.Add(piece_addr, tracked_piece_size);
         }
     }
 }
@@ -2039,17 +2048,14 @@ template <class P>
 Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index, u32 cbuf_offset,
                                              bool is_written) const {
     const GPUVAddr gpu_addr = gpu_memory->Read<u64>(ssbo_addr);
+    // The NVN driver buffer (index 0) packs each SSBO address followed by its size, but only in its
+    // descriptor table. Addresses tracked elsewhere in cbuf 0 are plain shader parameters (e.g.
+    // Crypt of the NecroDancer's buffer copy shader); the word after them is not a size.
+    const bool is_nvn_descriptor = cbuf_index == 0 && cbuf_offset >= 0x110 && cbuf_offset < 0x810;
+    const u32 nvn_size = cbuf_index == 0 ? gpu_memory->Read<u32>(ssbo_addr + 8) : 0;
     auto size = [&]() {
-        // The NVN driver buffer (index 0) packs each SSBO address followed by its size, but only in
-        // its descriptor table. Addresses tracked elsewhere in cbuf 0 are plain shader parameters
-        // (e.g. Crypt of the NecroDancer's buffer copy shader); the word after them is not a size.
-        const bool is_nvn_descriptor =
-            cbuf_index == 0 && cbuf_offset >= 0x110 && cbuf_offset < 0x810;
-        if (is_nvn_descriptor) {
-            const u32 ssbo_size = gpu_memory->Read<u32>(ssbo_addr + 8);
-            if (ssbo_size != 0) {
-                return ssbo_size;
-            }
+        if (is_nvn_descriptor && nvn_size != 0) {
+            return nvn_size;
         }
         // Other titles (notably Doom Eternal) may use STG/LDG on buffer addresses in custom defined
         // cbufs, which do not store the sizes adjacent to the addresses, so use the fully
@@ -2093,12 +2099,21 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
         aligned_size = static_cast<u32>(std::min<u64>(mapped, aligned_size));
         size = aligned_size - offset;
     }
+    // Outside the descriptor table the shader gets the mapped size, so its writes land, but only
+    // the range the following word gives is tracked as GPU-modified, as before. Tracking the whole
+    // mapped size flags memory the shader never writes, such as NecroDancer's command buffers
+    // right after its vertex ring, and flushing that back overwrites newer CPU data with stale
+    // copies.
+    const u32 tracked_size = cbuf_index == 0 && !is_nvn_descriptor && nvn_size != 0
+                                 ? std::min(offset + nvn_size, aligned_size)
+                                 : 0;
     if (!gpu_memory->IsContinuousRange(aligned_gpu_addr, aligned_size)) {
         return Binding{
             .device_addr = *aligned_device_addr,
             .size = aligned_size,
             .buffer_id = NULL_BUFFER_ID,
             .scattered_gpu_addr = aligned_gpu_addr,
+            .tracked_size = tracked_size,
         };
     }
     const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
@@ -2111,6 +2126,7 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
         .device_addr = *aligned_device_addr,
         .size = is_written ? aligned_size : static_cast<u32>(cpu_end - *aligned_device_addr),
         .buffer_id = BufferId{},
+        .tracked_size = tracked_size,
     };
     return binding;
 }
