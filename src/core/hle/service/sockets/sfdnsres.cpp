@@ -226,6 +226,17 @@ static std::optional<std::string> GetNextendoRedirectIp(const std::string& host,
         return server_ip;
     }
 
+    // SpeedRunners 2 signs in to brainCloud before it uses Photon for rooms. The brainCloud host is shared
+    // with Ultimate Chicken Horse, so redirects apply only while SpeedRunners 2 runs and only for these
+    // exact hosts. Photon matchmaking and gameplay are served independently by Nextendo.
+    constexpr u64 SpeedRunners2 = 0x01004CC023582000ULL;
+    if (program_id == SpeedRunners2 &&
+        (host == "api.braincloudservers.com" || host == "ns.photonengine.io" ||
+         host == "api.gameanalytics.com")) {
+        LOG_INFO(Service, "[Nextendo] Redirecting SpeedRunners 2 host '{}' -> '{}'", host, server_ip);
+        return server_ip;
+    }
+
     // World War Z: Saber's Hydra API (wwz*.wwzapi.com) and RedLynx dispatcher (rlx*.hydrapi.net).
     constexpr u64 WorldWarZ = 0x010099F013898000ULL;
     if (program_id == WorldWarZ &&
