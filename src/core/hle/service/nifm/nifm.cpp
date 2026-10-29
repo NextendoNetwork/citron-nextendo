@@ -4,6 +4,7 @@
 
 #include <cstring>
 #include "common/cityhash.h"
+#include "common/settings.h"
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/hle/kernel/k_event.h"
@@ -805,11 +806,13 @@ void IGeneralService::SetBackgroundRequestEnabled(HLERequestContext& ctx) {
 }
 
 void IGeneralService::IsWirelessCommunicationEnabled(HLERequestContext& ctx) {
-    LOG_WARNING(Service_NIFM, "(STUBBED) called");
+    const bool wireless_enabled = !::Settings::values.airplane_mode.GetValue();
+    LOG_INFO(Service_NIFM, "called, airplane_mode={}, wireless_enabled={}",
+             ::Settings::values.airplane_mode.GetValue(), wireless_enabled);
 
     IPC::ResponseBuilder rb{ctx, 3};
     rb.Push(ResultSuccess);
-    rb.Push<u8>(1);
+    rb.Push<u8>(wireless_enabled ? 1 : 0);
 }
 
 void IGeneralService::GetInternetConnectionStatus(HLERequestContext& ctx) {

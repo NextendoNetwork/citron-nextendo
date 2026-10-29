@@ -1012,10 +1012,10 @@ Result ISystemSettingsServer::SetSleepSettings(SleepSettings sleep_settings) {
 }
 
 Result ISystemSettingsServer::GetWirelessLanEnableFlag(Out<bool> out_wireless_lan_enable_flag) {
-    LOG_INFO(Service_SET, "called, wireless_lan_enable_flag={}",
-             m_system_settings.wireless_lan_enable_flag);
-
-    *out_wireless_lan_enable_flag = m_system_settings.wireless_lan_enable_flag;
+    const bool wireless_lan_enabled = !::Settings::values.airplane_mode.GetValue();
+    LOG_INFO(Service_SET, "called, wireless_lan_enable_flag={}, airplane_mode={}",
+             wireless_lan_enabled, ::Settings::values.airplane_mode.GetValue());
+    *out_wireless_lan_enable_flag = wireless_lan_enabled;
     R_SUCCEED();
 }
 
