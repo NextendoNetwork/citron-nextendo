@@ -53,11 +53,21 @@ Common::Input::NfcState VirtualAmiibo::SupportsNfc(
     return Common::Input::NfcState::Success;
 }
 Common::Input::NfcState VirtualAmiibo::StartNfcPolling(const PadIdentifier& identifier_) {
-    if (state != State::Initialized) {
-        return Common::Input::NfcState::WrongDeviceState;
+    switch (state) {
+    case State::Initialized:
+        state = State::WaitingForAmiibo;
+        return Common::Input::NfcState::Success;
+    case State::WaitingForAmiibo:
+        return Common::Input::NfcState::Success;
+    case State::TagNearby:
+        status.state = Common::Input::NfcState::NewAmiibo;
+        SetNfc(identifier_, status);
+        return Common::Input::NfcState::Success;
+    case State::Disabled:
+        state = State::WaitingForAmiibo;
+        return Common::Input::NfcState::Success;
     }
-    state = State::WaitingForAmiibo;
-    return Common::Input::NfcState::Success;
+    return Common::Input::NfcState::NotSupported;
 }
 
 Common::Input::NfcState VirtualAmiibo::StopNfcPolling(const PadIdentifier& identifier_) {
