@@ -29,6 +29,10 @@ struct RenderAreaLayout {
 constexpr u32 RESCALING_LAYOUT_WORDS_OFFSET = offsetof(RescalingLayout, rescaling_textures);
 constexpr u32 RESCALING_LAYOUT_DOWN_FACTOR_OFFSET = offsetof(RescalingLayout, down_factor);
 constexpr u32 RENDERAREA_LAYOUT_OFFSET = offsetof(RenderAreaLayout, render_area);
+/// The bindless handle table follows the graphics push constants above.
+constexpr u32 BINDLESS_HANDLE_TABLE_OFFSET =
+    static_cast<u32>(sizeof(RescalingLayout) + sizeof(RenderAreaLayout));
+constexpr u32 BINDLESS_HANDLE_TABLE_BYTES = BINDLESS_HANDLE_TABLE_SIZE * sizeof(u32);
 
 [[nodiscard]] std::vector<u32> EmitSPIRV(const Profile& profile, const RuntimeInfo& runtime_info, IR::Program& program, Bindings& bindings);
 

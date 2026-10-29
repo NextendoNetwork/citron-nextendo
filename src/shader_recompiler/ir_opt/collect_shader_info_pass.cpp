@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <array>
+#include <optional>
+
 #include "common/alignment.h"
 #include "common/settings.h"
 #include "shader_recompiler/environment.h"
@@ -386,6 +389,7 @@ void VisitUsages(Info& info, IR::Inst& inst) {
     case IR::Opcode::GlobalAtomicOr32:
     case IR::Opcode::GlobalAtomicXor32:
     case IR::Opcode::GlobalAtomicExchange32:
+    case IR::Opcode::GlobalAtomicCompareExchange32:
     case IR::Opcode::GlobalAtomicIAdd64:
     case IR::Opcode::GlobalAtomicSMin64:
     case IR::Opcode::GlobalAtomicUMin64:
@@ -624,6 +628,7 @@ void VisitUsages(Info& info, IR::Inst& inst) {
     case IR::Opcode::StorageAtomicOr32:
     case IR::Opcode::StorageAtomicXor32:
     case IR::Opcode::StorageAtomicExchange32:
+    case IR::Opcode::StorageAtomicCompareExchange32:
         info.used_storage_buffer_types |= IR::Type::U32;
         break;
     case IR::Opcode::LoadStorage64:
@@ -947,8 +952,66 @@ void GatherInfoFromHeader(Environment& env, Info& info) {
 }
 } // Anonymous namespace
 
+namespace {
+/// Input generic component (index * 4 + element) a value copies unchanged, through bitcasts.
+std::optional<u32> PassedThroughInput(const IR::Value& value) {
+    const IR::Value resolved{value.Resolve()};
+    if (resolved.IsImmediate()) {
+        return std::nullopt;
+    }
+    const IR::Inst* const inst{resolved.InstRecursive()};
+    switch (inst->GetOpcode()) {
+    case IR::Opcode::BitCastF32U32:
+    case IR::Opcode::BitCastU32F32:
+        return PassedThroughInput(inst->Arg(0));
+    case IR::Opcode::GetAttribute:
+    case IR::Opcode::GetAttributeU32: {
+        const IR::Value attribute{inst->Arg(0)};
+        if (!attribute.IsImmediate() || !IR::IsGeneric(attribute.Attribute())) {
+            return std::nullopt;
+        }
+        return IR::GenericAttributeIndex(attribute.Attribute()) * 4 +
+               IR::GenericAttributeElement(attribute.Attribute());
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+/// Records which vertex outputs copy an input attribute, so the host can find per-vertex data
+/// (such as bindless handles) that later stages read from those outputs.
+void CollectGenericPassthrough(IR::Program& program) {
+    constexpr s32 UNSEEN = -1;
+    constexpr s32 COMPUTED = -2;
+    std::array<s32, 128> sources;
+    sources.fill(UNSEEN);
+    for (IR::Block* const block : program.post_order_blocks) {
+        for (IR::Inst& inst : block->Instructions()) {
+            if (inst.GetOpcode() != IR::Opcode::SetAttribute || !inst.Arg(0).IsImmediate() ||
+                !IR::IsGeneric(inst.Arg(0).Attribute())) {
+                continue;
+            }
+            const IR::Attribute attribute{inst.Arg(0).Attribute()};
+            const u32 output{IR::GenericAttributeIndex(attribute) * 4 +
+                             IR::GenericAttributeElement(attribute)};
+            const std::optional<u32> input{PassedThroughInput(inst.Arg(1))};
+            const s32 source{input ? static_cast<s32>(*input) : COMPUTED};
+            sources[output] = sources[output] == UNSEEN || sources[output] == source ? source
+                                                                                     : COMPUTED;
+        }
+    }
+    for (size_t output = 0; output < sources.size(); ++output) {
+        program.info.generic_output_source[output] =
+            sources[output] >= 0 ? static_cast<u8>(sources[output] + 1) : 0;
+    }
+}
+} // Anonymous namespace
+
 void CollectShaderInfoPass(Environment& env, IR::Program& program) {
     Info& info{program.info};
+    if (program.stage == Stage::VertexA || program.stage == Stage::VertexB) {
+        CollectGenericPassthrough(program);
+    }
     const u32 base{[&] {
         switch (program.stage) {
         case Stage::VertexA:

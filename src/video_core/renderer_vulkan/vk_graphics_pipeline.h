@@ -69,6 +69,13 @@ class RescalingPushConstant;
 class RenderAreaPushConstant;
 class Scheduler;
 
+/// Bindless texture handles a draw reads per vertex, in the slots the fragment shader picks from.
+struct BindlessHandleTable {
+    std::array<u32, Shader::BINDLESS_HANDLE_TABLE_SIZE> handles{};
+    u32 count{};
+    bool used{};
+};
+
 class GraphicsPipeline {
     static constexpr size_t NUM_STAGES = Tegra::Engines::Maxwell3D::Regs::MaxShaderStage;
 
@@ -132,7 +139,10 @@ private:
     void ConfigureImpl(bool is_indexed);
 
     void ConfigureDraw(const RescalingPushConstant& rescaling,
-                       const RenderAreaPushConstant& render_are);
+                       const RenderAreaPushConstant& render_are,
+                       const BindlessHandleTable& bindless_table);
+
+    void CollectBindlessHandles(bool is_indexed, BindlessHandleTable& table) const;
 
     void MakePipeline(VkRenderPass render_pass);
 
@@ -157,6 +167,8 @@ private:
 
     std::array<Shader::Info, NUM_STAGES> stage_infos;
     std::array<std::vector<TextureArrayMemo>, NUM_STAGES> texture_array_memos;
+    /// Vertex input generic component holding the fragment shader's bindless handles, or -1.
+    s32 bindless_handle_source{-1};
     std::array<u32, 5> enabled_uniform_buffer_masks{};
     VideoCommon::UniformBufferSizes uniform_buffer_sizes{};
     u32 num_textures{};

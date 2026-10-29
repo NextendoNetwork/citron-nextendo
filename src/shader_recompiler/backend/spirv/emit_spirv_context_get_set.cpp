@@ -605,6 +605,17 @@ Id EmitResolutionDownFactor(EmitContext& ctx) {
     }
 }
 
+Id EmitBindlessHandleTable(EmitContext& ctx, const IR::Value& index) {
+    if (!ctx.profile.unified_descriptor_binding) {
+        throw NotImplementedException("Bindless handle table without push constants");
+    }
+    const Id pointer_type{ctx.TypePointer(spv::StorageClass::PushConstant, ctx.U32[1])};
+    const Id member{ctx.Const(ctx.bindless_handles_member_index)};
+    const Id pointer{ctx.OpAccessChain(pointer_type, ctx.rescaling_push_constants, member,
+                                       ctx.Const(index.U32()))};
+    return ctx.OpLoad(ctx.U32[1], pointer);
+}
+
 Id EmitRenderArea(EmitContext& ctx) {
     if (ctx.profile.unified_descriptor_binding) {
         const Id pointer_type{ctx.TypePointer(spv::StorageClass::PushConstant, ctx.F32[4])};

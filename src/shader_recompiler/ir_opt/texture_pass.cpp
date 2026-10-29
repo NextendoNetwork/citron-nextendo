@@ -29,6 +29,7 @@ struct ConstBufferAddr {
     bool has_secondary;
     u32 handle_constant{}; // sampler bits the shader ORs in as an immediate
     u32 handle_mask{~0U};  // immediate AND applied to a single-cbuf handle (e.g. 0xfffff)
+    u32 attribute_handle{}; // see TextureDescriptor::attribute_handle
 };
 
 struct TextureInst {
@@ -189,6 +190,31 @@ bool IsTextureInstruction(const IR::Inst& inst) {
 }
 
 std::optional<ConstBufferAddr> TryGetConstBuffer(const IR::Inst* inst, Environment& env);
+
+/// Returns the input generic component (index * 4 + element) a bindless handle is read from, when
+/// the handle is an input attribute passed through unchanged.
+std::optional<u32> InputAttributeHandle(const IR::Value& value) {
+    const IR::Value resolved{value.Resolve()};
+    if (resolved.IsImmediate()) {
+        return std::nullopt;
+    }
+    const IR::Inst* const inst{resolved.InstRecursive()};
+    switch (inst->GetOpcode()) {
+    case IR::Opcode::BitCastU32F32:
+        return InputAttributeHandle(inst->Arg(0));
+    case IR::Opcode::GetAttribute:
+    case IR::Opcode::GetAttributeU32: {
+        const IR::Value attribute{inst->Arg(0)};
+        if (!attribute.IsImmediate() || !IR::IsGeneric(attribute.Attribute())) {
+            return std::nullopt;
+        }
+        return IR::GenericAttributeIndex(attribute.Attribute()) * 4 +
+               IR::GenericAttributeElement(attribute.Attribute());
+    }
+    default:
+        return std::nullopt;
+    }
+}
 
 std::optional<ConstBufferAddr> Track(const IR::Value& value, Environment& env) {
     return IR::BreadthFirstSearch(
@@ -360,7 +386,34 @@ TextureInst MakeInst(Environment& env, IR::Block* block, IR::Inst& inst) {
     ConstBufferAddr addr;
     if (IsBindless(inst)) {
         const std::optional<ConstBufferAddr> track_addr{Track(inst.Arg(0), env)};
-        if (!track_addr) {
+        const std::optional<u32> attribute{
+            !track_addr && env.ShaderStage() == Stage::Fragment
+                ? InputAttributeHandle(inst.Arg(0))
+                : std::nullopt};
+        if (attribute) {
+            // The handle arrives per vertex (Super Mario Bros. 35 draws its NES tiles this way),
+            // so it can name a different texture per primitive. The host binds the handles the
+            // draw uses to a small array and passes them in a table; pick the matching slot.
+            IR::IREmitter ir{*block, IR::Block::InstructionList::s_iterator_to(inst)};
+            const IR::U32 handle{inst.Arg(0)};
+            IR::U32 slot{ir.Imm32(0)};
+            for (u32 i = BINDLESS_HANDLE_TABLE_SIZE; i-- > 1;) {
+                slot = IR::U32{ir.Select(ir.IEqual(handle, ir.BindlessHandleTable(i)),
+                                         ir.Imm32(i), slot)};
+            }
+            addr = ConstBufferAddr{
+                .index = env.TextureBoundBuffer(),
+                .offset = 0,
+                .shift_left = 0,
+                .secondary_index = 0,
+                .secondary_offset = 0,
+                .secondary_shift_left = 0,
+                .dynamic_offset = ir.ShiftLeftLogical(slot, ir.Imm32(DESCRIPTOR_SIZE_SHIFT)),
+                .count = BINDLESS_HANDLE_TABLE_SIZE,
+                .has_secondary = false,
+                .attribute_handle = *attribute + 1,
+            };
+        } else if (!track_addr) {
             // Enhanced bindless texture handling for UE4 games like Hogwarts Legacy
             // Instead of throwing an exception, we'll use a fallback approach
             LOG_WARNING(Shader, "Failed to track bindless texture constant buffer, using fallback");
@@ -471,6 +524,7 @@ public:
                    desc.secondary_shift_left == existing.secondary_shift_left &&
                    desc.handle_constant == existing.handle_constant &&
                    desc.handle_mask == existing.handle_mask &&
+                   desc.attribute_handle == existing.attribute_handle &&
                    desc.count == existing.count && desc.size_shift == existing.size_shift;
         })};
         // TODO: Read this from TIC
@@ -713,7 +767,9 @@ void TexturePass(Environment& env, IR::Program& program, const HostTranslateInfo
                     .size_shift = DESCRIPTOR_SIZE_SHIFT,
                     .handle_constant = cbuf.handle_constant,
                     .handle_mask = cbuf.handle_mask,
+                    .attribute_handle = cbuf.attribute_handle,
                 });
+                program.info.uses_bindless_handle_table |= cbuf.attribute_handle != 0;
             }
             break;
         }

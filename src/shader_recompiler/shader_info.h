@@ -37,6 +37,10 @@ enum class TextureType : u32 {
 };
 constexpr u32 NUM_TEXTURE_TYPES = 9;
 
+/// Slots of a texture whose bindless handle reaches the fragment shader as an input attribute.
+/// The host resolves the handles a draw uses into these slots and passes them in a table.
+constexpr u32 BINDLESS_HANDLE_TABLE_SIZE = 16;
+
 enum class TexturePixelFormat {
     A8B8G8R8_UNORM,
     A8B8G8R8_SNORM,
@@ -239,6 +243,9 @@ struct TextureDescriptor {
     u32 size_shift;
     u32 handle_constant{}; // immediate sampler bits ORed into the handle by the shader
     u32 handle_mask{~0U};  // immediate mask applied to a single-cbuf handle before that OR
+    // Non-zero: the handle comes from fragment input generic component (attribute_handle - 1),
+    // and the descriptor's slots are taken from the draw's bindless handle table.
+    u32 attribute_handle{};
 
     auto operator<=>(const TextureDescriptor&) const = default;
 };
@@ -336,7 +343,12 @@ struct Info {
     bool uses_rescaling_uniform{};
     bool uses_cbuf_indirect{};
     bool uses_render_area{};
+    bool uses_bindless_handle_table{};
     bool alpha_to_coverage_enabled{};
+
+    /// Vertex stages: for each output generic component, the input generic component it copies
+    /// plus one, or zero when the output is computed.
+    std::array<u8, 128> generic_output_source{};
 
     IR::Type used_constant_buffer_types{};
     IR::Type used_storage_buffer_types{};

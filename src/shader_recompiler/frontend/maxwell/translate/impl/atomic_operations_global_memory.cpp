@@ -205,6 +205,24 @@ void TranslatorVisitor::ATOM(u64 insn) {
     GlobalAtomic(*this, atom.dest_reg, atom.operand_reg, offset, atom.size, atom.op, true);
 }
 
+void TranslatorVisitor::ATOM_cas(u64 insn) {
+    union {
+        u64 raw;
+        BitField<0, 8, IR::Reg> dest_reg;
+        BitField<20, 8, IR::Reg> operand_reg;
+        BitField<49, 3, u64> size;
+    } const atom{insn};
+    if (atom.size != 0) {
+        throw NotImplementedException("64-bit ATOM.CAS");
+    }
+    const IR::U64 offset{AtomOffset(*this, insn)};
+    // The comparator is in Rb and the value to store in the register after it.
+    const bool rz{atom.operand_reg == IR::Reg::RZ};
+    const IR::U32 comparator{X(atom.operand_reg)};
+    const IR::U32 value{rz ? ir.Imm32(0) : X(atom.operand_reg + 1)};
+    X(atom.dest_reg, ir.GlobalAtomicCompareExchange(offset, comparator, value));
+}
+
 void TranslatorVisitor::RED(u64 insn) {
     union {
         u64 raw;

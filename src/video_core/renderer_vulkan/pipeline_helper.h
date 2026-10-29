@@ -84,15 +84,18 @@ public:
 
     vk::PipelineLayout CreatePipelineLayout(VkDescriptorSetLayout descriptor_set_layout,
                                             VkDescriptorSetLayout resource_set_layout = nullptr) const {
+        using Shader::Backend::SPIRV::BINDLESS_HANDLE_TABLE_BYTES;
         using Shader::Backend::SPIRV::RenderAreaLayout;
         using Shader::Backend::SPIRV::RescalingLayout;
         const u32 size_offset = is_compute ? sizeof(RescalingLayout::down_factor) : 0u;
+        // Graphics pipelines also carry the bindless handle table after the render area.
+        const u32 bindless_table_size = is_compute ? 0u : BINDLESS_HANDLE_TABLE_BYTES;
         const VkPushConstantRange range{
             .stageFlags = static_cast<VkShaderStageFlags>(
                 is_compute ? VK_SHADER_STAGE_COMPUTE_BIT : VK_SHADER_STAGE_ALL_GRAPHICS),
             .offset = 0,
             .size = static_cast<u32>(sizeof(RescalingLayout)) - size_offset +
-                    static_cast<u32>(sizeof(RenderAreaLayout)),
+                    static_cast<u32>(sizeof(RenderAreaLayout)) + bindless_table_size,
         };
         std::array<VkDescriptorSetLayout, 2> set_layouts{descriptor_set_layout, resource_set_layout};
         u32 set_count = 0;

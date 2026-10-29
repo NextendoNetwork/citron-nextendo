@@ -1060,18 +1060,20 @@ void EmitContext::DefineGlobalMemoryFunctions(const Info& info) {
 }
 
 void EmitContext::DefineRescalingInput(const Info& info) {
-    if (!info.uses_rescaling_uniform) {
+    // The bindless handle table shares the rescaling push constant block: a stage may only
+    // declare one push constant block.
+    if (!info.uses_rescaling_uniform && !info.uses_bindless_handle_table) {
         return;
     }
     if (profile.unified_descriptor_binding) {
-        DefineRescalingInputPushConstant();
+        DefineRescalingInputPushConstant(info);
     } else {
         DefineRescalingInputUniformConstant();
     }
 }
 
-void EmitContext::DefineRescalingInputPushConstant() {
-    boost::container::static_vector<Id, 3> members{};
+void EmitContext::DefineRescalingInputPushConstant(const Info& info) {
+    boost::container::static_vector<Id, 4> members{};
     u32 member_index{0};
 
     rescaling_textures_type = TypeArray(U32[1], Const(4u));
@@ -1087,6 +1089,13 @@ void EmitContext::DefineRescalingInputPushConstant() {
     if (stage != Stage::Compute) {
         members.push_back(F32[1]);
         rescaling_downfactor_member_index = member_index++;
+    }
+    Id bindless_handles_type{};
+    if (info.uses_bindless_handle_table) {
+        bindless_handles_type = TypeArray(U32[1], Const(BINDLESS_HANDLE_TABLE_SIZE));
+        Decorate(bindless_handles_type, spv::Decoration::ArrayStride, 4u);
+        members.push_back(bindless_handles_type);
+        bindless_handles_member_index = member_index++;
     }
     const Id push_constant_struct{TypeStruct(std::span(members.data(), members.size()))};
     Decorate(push_constant_struct, spv::Decoration::Block);
@@ -1105,6 +1114,11 @@ void EmitContext::DefineRescalingInputPushConstant() {
                        spv::Decoration::Offset,
                        static_cast<u32>(offsetof(RescalingLayout, down_factor)));
         MemberName(push_constant_struct, rescaling_downfactor_member_index, "down_factor");
+    }
+    if (info.uses_bindless_handle_table) {
+        MemberDecorate(push_constant_struct, bindless_handles_member_index,
+                       spv::Decoration::Offset, BINDLESS_HANDLE_TABLE_OFFSET);
+        MemberName(push_constant_struct, bindless_handles_member_index, "bindless_handles");
     }
     const Id pointer_type{TypePointer(spv::StorageClass::PushConstant, push_constant_struct)};
     rescaling_push_constants = AddGlobalVariable(pointer_type, spv::StorageClass::PushConstant);

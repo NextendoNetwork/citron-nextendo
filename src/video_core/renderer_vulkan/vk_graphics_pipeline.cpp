@@ -17,6 +17,7 @@
 #include "common/bit_field.h"
 #include "common/fs/path_util.h"
 #include "common/settings.h"
+#include "video_core/engines/draw_manager.h"
 #include "video_core/renderer_vulkan/maxwell_to_vk.h"
 #include "video_core/renderer_vulkan/pipeline_statistics.h"
 #include "video_core/renderer_vulkan/vk_buffer_cache.h"
@@ -38,6 +39,8 @@
 namespace Vulkan {
 namespace {
 using Shader::ImageBufferDescriptor;
+using Shader::Backend::SPIRV::BINDLESS_HANDLE_TABLE_BYTES;
+using Shader::Backend::SPIRV::BINDLESS_HANDLE_TABLE_OFFSET;
 using Shader::Backend::SPIRV::RENDERAREA_LAYOUT_OFFSET;
 using Shader::Backend::SPIRV::RESCALING_LAYOUT_DOWN_FACTOR_OFFSET;
 using Shader::Backend::SPIRV::RESCALING_LAYOUT_WORDS_OFFSET;
@@ -284,6 +287,25 @@ GraphicsPipeline::GraphicsPipeline(
         std::ranges::copy(info->constant_buffer_used_sizes, uniform_buffer_sizes[stage].begin());
         num_textures += Shader::NumDescriptors(info->texture_descriptors);
     }
+    // A fragment texture whose bindless handle is a vertex attribute the vertex shader passes
+    // through: find that attribute so each draw can read the handles it uses.
+    for (const auto& desc : stage_infos[NUM_STAGES - 1].texture_descriptors) {
+        if (desc.attribute_handle == 0) {
+            continue;
+        }
+        const bool vertex_feeds_fragment{infos[0] && !infos[1] && !infos[2] && !infos[3]};
+        const u8 source{vertex_feeds_fragment
+                            ? stage_infos[0].generic_output_source[desc.attribute_handle - 1]
+                            : u8{0}};
+        if (source != 0) {
+            bindless_handle_source = source - 1;
+        } else {
+            LOG_WARNING(Render_Vulkan,
+                        "Bindless handle from fragment input {} has no vertex attribute source",
+                        desc.attribute_handle - 1);
+        }
+        break;
+    }
     auto func{[this, shader_notify, &render_pass_cache, &descriptor_pool, pipeline_statistics] {
         try {
             DescriptorLayoutBuilder builder{MakeBuilder(device, stage_infos)};
@@ -382,6 +404,11 @@ void GraphicsPipeline::ConfigureImpl(bool is_indexed) {
     // Single texture-cache-wide counter; read once here rather than once per
     // qualifying bindless descriptor per shader stage
     const u64 image_table_generation = texture_cache.GraphicsImageTableGeneration();
+    BindlessHandleTable bindless_table{};
+    if (stage_infos[NUM_STAGES - 1].uses_bindless_handle_table) {
+        bindless_table.used = true;
+        CollectBindlessHandles(is_indexed, bindless_table);
+    }
     const auto config_stage{[&](size_t stage) LAMBDA_FORCEINLINE {
         const Shader::Info& info{stage_infos[stage]};
         buffer_cache.UnbindGraphicsStorageBuffers(stage);
@@ -444,6 +471,19 @@ void GraphicsPipeline::ConfigureImpl(bool is_indexed) {
             }
         }
         for (const auto& desc : info.texture_descriptors) {
+            if (desc.attribute_handle != 0) {
+                // Slots come from the handles this draw's vertices carry; unused slots repeat
+                // the first so the array never holds an unrelated texture.
+                for (u32 index = 0; index < desc.count; ++index) {
+                    const u32 raw{bindless_table.handles[index < bindless_table.count ? index : 0]};
+                    const auto handle{TexturePair(raw, via_header_index)};
+                    views.push_back({handle.first});
+                    samplers.push_back(handle.first == 0
+                                           ? VideoCommon::NULL_SAMPLER_ID
+                                           : texture_cache.GetGraphicsSamplerId(handle.second));
+                }
+                continue;
+            }
             if (desc.count > 1 && !desc.has_secondary) {
                 const GPUVAddr cbuf_addr =
                     cbufs[desc.cbuf_index].address + desc.cbuf_offset;
@@ -620,11 +660,94 @@ void GraphicsPipeline::ConfigureImpl(bool is_indexed) {
     }
     texture_cache.UpdateRenderTargets(false);
     texture_cache.CheckFeedbackLoop(views);
-    ConfigureDraw(rescaling, render_area);
+    ConfigureDraw(rescaling, render_area, bindless_table);
+}
+
+void GraphicsPipeline::CollectBindlessHandles(bool is_indexed, BindlessHandleTable& table) const {
+    using Size = Tegra::Engines::Maxwell3D::Regs::VertexAttribute::Size;
+    if (bindless_handle_source < 0) {
+        return;
+    }
+    const auto& regs{maxwell3d->regs};
+    const auto& attrib{regs.vertex_attrib_format[bindless_handle_source / 4]};
+    const u32 element{static_cast<u32>(bindless_handle_source % 4)};
+    const Size size{attrib.size};
+    const bool is_32bit{size == Size::Size_R32 || size == Size::Size_R32_G32 ||
+                        size == Size::Size_R32_G32_B32 || size == Size::Size_R32_G32_B32_A32};
+    if (attrib.constant != 0 || !is_32bit) {
+        return;
+    }
+    const auto& stream{regs.vertex_streams[attrib.buffer]};
+    if (!stream.IsEnabled() || regs.vertex_stream_instances.IsInstancingEnabled(attrib.buffer)) {
+        return;
+    }
+    const auto& draw_state{maxwell3d->draw_manager->GetDrawState()};
+    constexpr u32 MAX_VERTICES = 1u << 20;
+    thread_local std::vector<u8> scratch;
+    thread_local std::vector<u32> vertices;
+    vertices.clear();
+    if (is_indexed) {
+        if (draw_state.draw_mode == Tegra::Engines::DrawManager::DrawMode::InlineIndex) {
+            return;
+        }
+        const auto& index_buffer{draw_state.index_buffer};
+        const u32 index_size{index_buffer.FormatSizeInBytes()};
+        const u32 count{std::min(index_buffer.count, MAX_VERTICES)};
+        scratch.resize(static_cast<size_t>(count) * index_size);
+        gpu_memory->ReadBlockUnsafe(index_buffer.StartAddress() +
+                                        static_cast<GPUVAddr>(index_buffer.first) * index_size,
+                                    scratch.data(), scratch.size(),
+                                    "Vulkan.GraphicsPipeline.bindless_indices");
+        const u32 restart_index{index_size == 4 ? ~0U : (1U << (index_size * 8)) - 1};
+        for (u32 i = 0; i < count; ++i) {
+            u32 index{};
+            std::memcpy(&index, scratch.data() + static_cast<size_t>(i) * index_size, index_size);
+            if (index != restart_index) {
+                vertices.push_back(index + draw_state.base_index);
+            }
+        }
+    } else {
+        const u32 count{std::min(draw_state.vertex_buffer.count, MAX_VERTICES)};
+        for (u32 i = 0; i < count; ++i) {
+            vertices.push_back(draw_state.vertex_buffer.first + i);
+        }
+    }
+    if (vertices.empty()) {
+        return;
+    }
+    std::ranges::sort(vertices);
+    vertices.erase(std::unique(vertices.begin(), vertices.end()), vertices.end());
+    const u32 stride{stream.stride};
+    const u64 span{static_cast<u64>(vertices.back() - vertices.front()) * stride + sizeof(u32)};
+    if (span > (64ULL << 20)) {
+        return;
+    }
+    scratch.resize(span);
+    gpu_memory->ReadBlockUnsafe(stream.Address() + attrib.offset + element * sizeof(u32) +
+                                    static_cast<GPUVAddr>(vertices.front()) * stride,
+                                scratch.data(), scratch.size(),
+                                "Vulkan.GraphicsPipeline.bindless_handles");
+    for (const u32 vertex : vertices) {
+        u32 handle{};
+        std::memcpy(&handle,
+                    scratch.data() + static_cast<size_t>(vertex - vertices.front()) * stride,
+                    sizeof(handle));
+        const auto end{table.handles.begin() + table.count};
+        if (std::find(table.handles.begin(), end, handle) != end) {
+            continue;
+        }
+        if (table.count == table.handles.size()) {
+            LOG_WARNING(Render_Vulkan, "Draw uses more than {} bindless handles",
+                        table.handles.size());
+            break;
+        }
+        table.handles[table.count++] = handle;
+    }
 }
 
 void GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
-                                     const RenderAreaPushConstant& render_area) {
+                                     const RenderAreaPushConstant& render_area,
+                                     const BindlessHandleTable& bindless_table) {
     if (build_failed.load(std::memory_order::acquire)) {
         return;
     }
@@ -638,7 +761,9 @@ void GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
     scheduler.Record([this, descriptor_data, bind_pipeline,
                       rescaling_data = rescaling.Data(), is_rescaling, update_rescaling,
                       uses_render_area = render_area.uses_render_area,
-                      render_area_data = render_area.words](vk::CommandBuffer cmdbuf) {
+                      render_area_data = render_area.words,
+                      uses_bindless_table = bindless_table.used,
+                      bindless_handles = bindless_table.handles](vk::CommandBuffer cmdbuf) {
         if (!is_built.load(std::memory_order::acquire)) {
             std::unique_lock lock{build_mutex};
             build_condvar.wait(lock, [this] { return is_built.load(std::memory_order::acquire); });
@@ -663,6 +788,11 @@ void GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
             cmdbuf.PushConstants(*pipeline_layout, VK_SHADER_STAGE_ALL_GRAPHICS,
                                  RENDERAREA_LAYOUT_OFFSET, sizeof(render_area_data),
                                  &render_area_data);
+        }
+        if (uses_bindless_table) {
+            cmdbuf.PushConstants(*pipeline_layout, VK_SHADER_STAGE_ALL_GRAPHICS,
+                                 BINDLESS_HANDLE_TABLE_OFFSET, BINDLESS_HANDLE_TABLE_BYTES,
+                                 bindless_handles.data());
         }
         if (!descriptor_set_layout && !resource_set_layout) {
             return;
