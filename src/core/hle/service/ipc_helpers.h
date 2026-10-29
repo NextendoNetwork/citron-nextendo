@@ -102,14 +102,10 @@ public:
         if (ctx.IsTipc()) {
             header.type.Assign(ctx.GetCommandType());
         } else {
-            raw_data_size += static_cast<u32>(sizeof(IPC::DataPayloadHeader) / sizeof(u32) + 4 +
-                                              normal_params_size);
+            raw_data_size += static_cast<u32>(sizeof(IPC::DataPayloadHeader) / sizeof(u32) + 4);
         }
 
-        // raw_data_size counts normal params twice; nnSdk aborts once that passes its 0x100-byte buffer.
-        constexpr u32 MessageBufferWords = 0x100 / sizeof(u32);
-        const bool overcounted = !ctx.IsTipc() && raw_data_size > MessageBufferWords;
-        header.data_size.Assign(overcounted ? raw_data_size - normal_params_size : raw_data_size);
+        header.data_size.Assign(raw_data_size);
         if (num_handles_to_copy || num_handles_to_move) {
             header.enable_handle_descriptor.Assign(1);
         }
@@ -144,7 +140,8 @@ public:
 
         ctx.data_payload_offset = index;
         ctx.write_size += index;
-        ctx.domain_offset = static_cast<u32>(index + raw_data_size / sizeof(u32));
+        // Domain object IDs follow the normal parameters in the copied response.
+        ctx.domain_offset = ctx.write_size;
     }
 
     template <class T>
