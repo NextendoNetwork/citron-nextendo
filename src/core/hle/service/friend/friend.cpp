@@ -168,15 +168,17 @@ bool FriendMatchesId(const Common::NextendoFriends::Entry& entry, u64 id) {
     return entry.pid == id || (entry.account_id != 0 && entry.account_id == id);
 }
 
-// [Nextendo] Splatoon 3 gets its friend list from NPLN, which names every friend by its NSA
+// [Nextendo] These NPLN titles name every friend by its NSA
 // (nn::friends NetworkServiceAccountId). If the local friend: service advertises pids instead,
 // the two id spaces never intersect and the in-game friends screen stays empty -- even though
-// every UpdateFriendInfo call resolves. Gate it by title: every other game (Mario Kart 8 and
+// every UpdateFriendInfo call resolves. Gate it by title: other games (Mario Kart 8 and
 // the rest of NEX) keeps the original pid / is_console behaviour.
 constexpr u64 SplatoonThreeTitleId = 0x0100C2500FC20000ULL;
+constexpr u64 SuperMarioBrosWonderTitleId = 0x010015100B514000ULL;
 
 bool WantsNsaIds(Core::System& system) {
-    return system.GetApplicationProcessProgramID() == SplatoonThreeTitleId;
+    const auto title_id = system.GetApplicationProcessProgramID();
+    return title_id == SplatoonThreeTitleId || title_id == SuperMarioBrosWonderTitleId;
 }
 
 // UNO lays out the arguments of GetFriendList with the 8-byte aligned Uid at raw offset 8. Only UNO takes
@@ -188,7 +190,7 @@ bool IsUno(Core::System& system) {
 }
 
 // List a friend under the id their own client announces: account id on hardware, pid on emulators.
-// `prefer_nsa` is the Splatoon 3 override: NPLN names friends by NSA regardless of platform.
+// `prefer_nsa` is the NPLN title override: friends use NSA regardless of platform.
 // In a title where every client announces the baasUserID (Animal Crossing: New Horizons, see
 // nextendo_baas_nsa.h), every friend is listed by their "nsa" as well.
 u64 FriendAdvertisedId(const Common::NextendoFriends::Entry& entry, bool prefer_nsa) {
@@ -437,7 +439,7 @@ public:
         const auto offset = rp.Pop<s32>();
 
         u32 count = 0;
-        if (offset == 0 && ctx.CanWriteBuffer()) {
+        if (offset >= 0 && ctx.CanWriteBuffer()) {
             // [Nextendo] Splatoon 3 asks for its friend list exactly once, early in boot, and
             // never asks again -- unlike NEX titles, which poll this repeatedly from their own
             // online thread (where blocking would stall PRUDP acks and the server would declare
@@ -451,11 +453,11 @@ public:
                                           : Common::NextendoFriends::Get();
             const auto capacity = ctx.GetWriteBufferNumElements<u64>();
             std::vector<u64> ids;
-            for (const auto& entry : entries) {
+            for (size_t index = static_cast<size_t>(offset); index < entries.size(); ++index) {
                 if (ids.size() >= capacity) {
                     break;
                 }
-                ids.push_back(FriendAdvertisedId(entry, want_nsa));
+                ids.push_back(FriendAdvertisedId(entries[index], want_nsa));
             }
             if (!ids.empty()) {
                 ctx.WriteBuffer(ids);
@@ -813,18 +815,18 @@ void IFriendService::GetFriendList(HLERequestContext& ctx) {
     [[maybe_unused]] const auto filter = rp.PopRaw<IFriendService::SizedFriendFilter>();
     const auto pid = rp.Pop<u64>();
     u32 count = 0;
-    if (friend_offset == 0 && ctx.CanWriteBuffer()) {
+    if (ctx.CanWriteBuffer()) {
         const bool want_nsa = WantsNsaIds(system);
         const auto entries = Common::NextendoFriends::Get();
         const auto capacity = ctx.GetWriteBufferNumElements<FriendImpl>();
         std::vector<FriendImpl> list;
-        for (const auto& entry : entries) {
+        for (size_t index = friend_offset; index < entries.size(); ++index) {
             if (list.size() >= capacity) {
                 break;
             }
             // GetProfileImage checks that the stored Uid belongs to this console: for UNO, record the
             // requesting local owner while keeping the friend's own Nextendo account id.
-            list.push_back(MakeFriend(entry, 0, uno ? &uuid : nullptr, want_nsa));
+            list.push_back(MakeFriend(entries[index], 0, uno ? &uuid : nullptr, want_nsa));
         }
         if (!list.empty()) {
             ctx.WriteBuffer(list);
