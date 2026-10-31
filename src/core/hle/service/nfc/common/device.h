@@ -100,7 +100,8 @@ public:
 
 private:
     void NpadUpdate(Core::HID::ControllerTriggerType type);
-    bool LoadNfcTag(u8 protocol, u8 tag_type, u8 uuid_length, UniqueSerialNumber uuid);
+    bool LoadNfcTag(u8 protocol, u8 tag_type, u8 uuid_length, UniqueSerialNumber uuid,
+                    bool virtual_amiibo);
     bool LoadAmiiboData();
     void CloseNfcTag();
 
@@ -134,6 +135,7 @@ private:
     bool is_app_area_open{};
     bool is_plain_amiibo{};
     bool is_write_protected{};
+    bool is_virtual_amiibo{};
     NFP::MountTarget mount_target{NFP::MountTarget::None};
 
     TagInfo real_tag_info{};
