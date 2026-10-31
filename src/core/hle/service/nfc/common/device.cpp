@@ -110,7 +110,7 @@ void NfcDevice::NpadUpdate(Core::HID::ControllerTriggerType type) {
     switch (nfc_status.state) {
     case Common::Input::NfcState::NewAmiibo:
         LoadNfcTag(nfc_status.protocol, nfc_status.tag_type, nfc_status.uuid_length,
-                   nfc_status.uuid);
+                   nfc_status.uuid, nfc_status.virtual_amiibo);
         break;
     case Common::Input::NfcState::AmiiboRemoved:
         if (device_state == DeviceState::Initialized || device_state == DeviceState::TagRemoved) {
@@ -125,7 +125,8 @@ void NfcDevice::NpadUpdate(Core::HID::ControllerTriggerType type) {
     }
 }
 
-bool NfcDevice::LoadNfcTag(u8 protocol, u8 tag_type, u8 uuid_length, UniqueSerialNumber uuid) {
+bool NfcDevice::LoadNfcTag(u8 protocol, u8 tag_type, u8 uuid_length, UniqueSerialNumber uuid,
+                           bool virtual_amiibo) {
     if (device_state != DeviceState::SearchingForTag) {
         LOG_ERROR(Service_NFC, "Game is not looking for nfc tag, current state {}", device_state);
         return false;
@@ -143,6 +144,7 @@ bool NfcDevice::LoadNfcTag(u8 protocol, u8 tag_type, u8 uuid_length, UniqueSeria
         .tag_type = static_cast<TagType>(tag_type),
     };
 
+    is_virtual_amiibo = virtual_amiibo;
     device_state = DeviceState::TagFound;
     deactivate_event->GetReadableEvent().Clear();
     activate_event->Signal();
@@ -196,6 +198,7 @@ void NfcDevice::CloseNfcTag() {
     }
 
     device_state = DeviceState::TagRemoved;
+    is_virtual_amiibo = false;
     encrypted_tag_data = {};
     tag_data = {};
     activate_event->GetReadableEvent().Clear();
@@ -1390,9 +1393,8 @@ NFP::AmiiboName NfcDevice::GetAmiiboName(const NFP::AmiiboSettings& settings) co
     // Convert from utf16 to utf8
     const auto name_end =
         std::find(settings_amiibo_name.begin(), settings_amiibo_name.end(), u'\0');
-    const auto name_length = static_cast<std::size_t>(name_end - settings_amiibo_name.begin());
-    const auto amiibo_name_utf8 = Common::UTF16ToUTF8(
-        std::u16string_view{settings_amiibo_name.data(), name_length});
+    const auto amiibo_name_utf8 = Common::UTF16ToUTF8(std::u16string_view{
+        settings_amiibo_name.data(), static_cast<std::size_t>(name_end - settings_amiibo_name.begin())});
     const auto copy_size = std::min(amiibo_name_utf8.size(), amiibo_name.size() - 1);
     memcpy(amiibo_name.data(), amiibo_name_utf8.data(), copy_size);
 
@@ -1403,6 +1405,7 @@ void NfcDevice::SetAmiiboName(NFP::AmiiboSettings& settings,
                               const NFP::AmiiboName& amiibo_name) const {
     std::array<char16_t, NFP::amiibo_name_length> settings_amiibo_name{};
 
+    // Convert from utf8 to utf16
     // RegisterInfoPrivate carries a fixed-size UTF-8 buffer, while the tag
     // stores at most ten UTF-16 code units. Treat the input as bounded and
     // truncate before copying so a long or unterminated name cannot corrupt
