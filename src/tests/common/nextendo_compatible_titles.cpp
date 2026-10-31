@@ -18,6 +18,7 @@ constexpr u64 Portal2 = 0x0100abd01785c000;
 constexpr u64 UltimateChickenHorse = 0x0100fcf002a58000;
 constexpr u64 SpeedRunners2 = 0x01004cc023582000;
 constexpr u64 CryptOfTheNecroDancer = 0x0100cea007d08000;
+constexpr u64 SonicRacingCrossWorlds = 0x01006e001823c000;
 constexpr u64 Nes = 0x0100d870045b6000;
 constexpr u64 Snes = 0x01008d300c50c000;
 constexpr u64 GameBoy = 0x0100c62011050000;
@@ -202,6 +203,17 @@ TEST_CASE("Nextendo::CompatibleTitles Crypt of the NecroDancer needs exactly 4.2
     REQUIRE_FALSE(IsVersionOk(CryptOfTheNecroDancer, "4.2.1-b5667"));
     REQUIRE_FALSE(IsVersionOk(CryptOfTheNecroDancer, "4.2.0-b5600"));
     REQUIRE_FALSE(IsVersionOk(CryptOfTheNecroDancer, "1.0.0"));
+}
+
+TEST_CASE("Nextendo::CompatibleTitles Sonic Racing: CrossWorlds needs exactly 1.43", "[common][nextendo]") {
+    using Nextendo::CompatibleTitles::IsVersionOk;
+
+    // Display version of update v720896, read from its NACP.
+    REQUIRE(Nextendo::CompatibleTitles::Table().at(SonicRacingCrossWorlds) == "1.43");
+    REQUIRE(IsVersionOk(SonicRacingCrossWorlds, "1.43"));
+    REQUIRE_FALSE(IsVersionOk(SonicRacingCrossWorlds, "1.00")); // the base game
+    REQUIRE_FALSE(IsVersionOk(SonicRacingCrossWorlds, "1.42"));
+    REQUIRE_FALSE(IsVersionOk(SonicRacingCrossWorlds, "1.44"));
 }
 
 TEST_CASE("Nextendo::CompatibleTitles NSO Classics need their exact application version",
